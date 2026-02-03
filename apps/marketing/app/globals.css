@@ -2838,7 +2838,7 @@ body{
   overflow: hidden;
   background:
     radial-gradient(900px circle at 20% 10%, rgba(255,255,255,0.06), transparent 55%),
-    radial-gradient(circle at 50% 38%, rgba(212,175,55,0.14), transparent 60%),
+    radial-gradient(circle at 50% 38%, rgba(212,175,55,0.16), transparent 58%),
     linear-gradient(180deg, #070A12 0%, #050915 45%, #040817 100%);
 }
 
@@ -2858,9 +2858,11 @@ body{
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at center,
-    rgba(0,0,0,0) 40%,
-    rgba(0,0,0,0.55) 100%);
+  background:
+    radial-gradient(circle at center,
+      rgba(0,0,0,0) 38%,
+      rgba(0,0,0,0.6) 100%),
+    radial-gradient(1200px circle at 50% 45%, rgba(0,0,0,0.15), transparent 60%);
   pointer-events: none;
   z-index: 2;
 }
@@ -2868,9 +2870,9 @@ body{
 .hero-watermark-glow {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 40%,
-    rgba(212,175,55,0.18),
-    transparent 62%);
+  background: radial-gradient(circle at 50% 42%,
+    rgba(212,175,55,0.22),
+    transparent 58%);
   z-index: 0;
   pointer-events: none;
 }
@@ -2878,11 +2880,11 @@ body{
 .hero-watermark {
   position: absolute;
   left: 50%;
-  top: 42%;
+  top: 40%;
   transform: translate(-50%, -50%);
-  width: clamp(680px, 70vw, 980px);
-  opacity: 0.13;
-  filter: blur(0.4px);
+  width: clamp(820px, 78vw, 1100px);
+  opacity: 0.15;
+  filter: blur(0.7px);
   z-index: 1;
 }
 
@@ -2902,6 +2904,7 @@ body{
   font-size: clamp(52px, 5.2vw, 76px);
   color: rgba(255,255,255,0.95);
   margin: 0;
+  text-shadow: 0 8px 30px rgba(0,0,0,0.35);
 }
 
 .hero-title .gold {
