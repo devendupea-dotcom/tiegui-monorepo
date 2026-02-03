@@ -27,13 +27,13 @@ export default function RootLayout({
       <head>
         <Script
           async
-          src="https://www.googletagmanager.com/gtag/js?id=G-LBC04SEZJJ"
+          src="https://www.googletagmanager.com/gtag/js?id=G-REALMARCUSID"
         />
         <Script id="ga4-init" strategy="afterInteractive">
           {`window.dataLayer = window.dataLayer || [];
 function gtag(){dataLayer.push(arguments);}
 gtag('js', new Date());
-gtag('config', 'G-LBC04SEZJJ');`}
+gtag('config', 'G-REALMARCUSID');`}
         </Script>
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
