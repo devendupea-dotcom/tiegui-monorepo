@@ -2935,6 +2935,13 @@ body{
   font-weight: 700;
   box-shadow: 0 18px 40px rgba(0,0,0,0.35);
   transition: transform 160ms ease, filter 160ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  position: relative;
+  z-index: 5;
 }
 
 .hero-cta:hover {
@@ -2955,6 +2962,15 @@ body{
 
 .navbar .links a:hover {
   opacity: 1;
+}
+
+.nav-cta,
+.drawer-cta,
+.btn.primary {
+  cursor: pointer;
+  touch-action: manipulation;
+  position: relative;
+  z-index: 5;
 }
 
 /* Home proof + SMS section */
