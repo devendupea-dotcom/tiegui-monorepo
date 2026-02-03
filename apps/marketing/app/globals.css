@@ -2837,8 +2837,8 @@ body{
   height: 88vh;
   overflow: hidden;
   background:
-    radial-gradient(900px circle at 20% 10%, rgba(255,255,255,0.06), transparent 55%),
-    radial-gradient(circle at 50% 38%, rgba(212,175,55,0.16), transparent 58%),
+    radial-gradient(900px circle at 20% 10%, rgba(255,255,255,0.05), transparent 55%),
+    radial-gradient(circle at 50% 40%, rgba(212,175,55,0.14), transparent 60%),
     linear-gradient(180deg, #070A12 0%, #050915 45%, #040817 100%);
 }
 
@@ -2860,9 +2860,9 @@ body{
   inset: 0;
   background:
     radial-gradient(circle at center,
-      rgba(0,0,0,0) 38%,
-      rgba(0,0,0,0.6) 100%),
-    radial-gradient(1200px circle at 50% 45%, rgba(0,0,0,0.15), transparent 60%);
+      rgba(0,0,0,0) 40%,
+      rgba(0,0,0,0.55) 100%),
+    radial-gradient(1100px circle at 50% 45%, rgba(0,0,0,0.12), transparent 62%);
   pointer-events: none;
   z-index: 2;
 }
@@ -2871,8 +2871,8 @@ body{
   position: absolute;
   inset: 0;
   background: radial-gradient(circle at 50% 42%,
-    rgba(212,175,55,0.22),
-    transparent 58%);
+    rgba(212,175,55,0.18),
+    transparent 62%);
   z-index: 0;
   pointer-events: none;
 }
@@ -2880,11 +2880,11 @@ body{
 .hero-watermark {
   position: absolute;
   left: 50%;
-  top: 40%;
+  top: 41%;
   transform: translate(-50%, -50%);
-  width: clamp(820px, 78vw, 1100px);
-  opacity: 0.15;
-  filter: blur(0.7px);
+  width: clamp(760px, 74vw, 1020px);
+  opacity: 0.12;
+  filter: blur(0.6px);
   z-index: 1;
 }
 
@@ -2894,6 +2894,8 @@ body{
   text-align: center;
   transform: translateY(-18px);
   padding: 0 24px;
+  max-width: 980px;
+  margin: 0 auto;
 }
 
 .hero-title {
@@ -2901,7 +2903,7 @@ body{
   font-weight: 700;
   line-height: 1.06;
   letter-spacing: -0.01em;
-  font-size: clamp(52px, 5.2vw, 76px);
+  font-size: clamp(54px, 5.4vw, 78px);
   color: rgba(255,255,255,0.95);
   margin: 0;
   text-shadow: 0 8px 30px rgba(0,0,0,0.35);
@@ -2916,17 +2918,17 @@ body{
 }
 
 .hero-sub {
-  margin-top: 18px;
-  font-size: clamp(18px, 1.4vw, 22px);
-  color: rgba(255,255,255,0.82);
+  margin-top: 16px;
+  font-size: clamp(18px, 1.35vw, 21px);
+  color: rgba(255,255,255,0.8);
   margin-bottom: 0;
 }
 
 .hero-cta {
-  margin-top: 30px;
-  height: 58px;
-  padding: 14px 28px;
-  border-radius: 16px;
+  margin-top: 26px;
+  height: 54px;
+  padding: 12px 26px;
+  border-radius: 15px;
   border: 1px solid rgba(255,255,255,0.12);
   background: linear-gradient(180deg, #F0D07A 0%, #C99734 100%);
   color: #0A1022;
