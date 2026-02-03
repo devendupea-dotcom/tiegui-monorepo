@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    function isAllowed() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          "deven.dupea@gmail.com",
+          "yaloturnt@gmail.com"
+        ];
+    }
+
+    function isStaff() {
+      return signedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.token.email)).data.isStaff == true;
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (userId == request.auth.token.email || isStaff());
+      allow write: if false;
+    }
+
+    match /clients/{clientId} {
+      allow read: if signedIn()
+        && (request.auth.token.email in resource.data.allowedEmails || isStaff());
+
+      allow write: if isStaff();
+    }
+
+    match /jobs/{jobId} {
+      allow read, write: if isAllowed();
+    }
+  }
+}

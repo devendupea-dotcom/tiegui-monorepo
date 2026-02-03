@@ -48,3 +48,90 @@ a {
     display: unset;
   }
 }
+
+body {
+  font-family: "Inter", system-ui, -apple-system, Segoe UI, sans-serif;
+  line-height: 1.6;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 48px 20px;
+  display: grid;
+  gap: 24px;
+}
+
+.card {
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.list {
+  list-style: none;
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.muted {
+  color: rgba(237,237,237,0.7);
+}
+
+.btn.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 0;
+  background: #d6b45a;
+  color: #111;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-card {
+  max-width: 460px;
+  margin: 0 auto;
+  padding: 28px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.auth-form input,
+.auth-form select,
+.auth-form textarea {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.2);
+  color: #fff;
+}
+
+.form-status {
+  font-size: 0.9rem;
+  color: rgba(237,237,237,0.7);
+}
