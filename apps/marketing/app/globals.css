@@ -271,7 +271,7 @@ a{color:inherit;text-decoration:none}
   content:"";
   position:absolute;
   inset:0;
-  background-image:url("/brand/tiger-watermark.svg");
+  background-image:url("/logo/tiegui-tiger.png");
   background-repeat:no-repeat;
   background-size:800px;
   background-position:center 45%;
@@ -1982,7 +1982,7 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
   content:"";
   position:absolute;
   inset:0;
-  background-image:url("/brand/tiger-watermark.svg");
+  background-image:url("/logo/tiegui-tiger.png");
   background-repeat:no-repeat;
   background-position:center 40%;
   background-size:min(900px, 120vw);
@@ -2284,7 +2284,7 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
   content:"";
   position:absolute;
   inset:0;
-  background-image:url("/brand/tiger-watermark.svg");
+  background-image:url("/logo/tiegui-tiger.png");
   background-repeat:no-repeat;
   background-position:center 40%;
   background-size:min(1000px, 80vw);
@@ -2838,7 +2838,7 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
 .hero-watermark{
   position:absolute;
   inset:0;
-  background: url('/brand/tiger-watermark.svg') center 90px / 740px no-repeat;
+  background: url('/logo/tiegui-tiger.png') center 90px / 740px no-repeat;
   opacity: 0.08;
   filter: blur(1px);
 }

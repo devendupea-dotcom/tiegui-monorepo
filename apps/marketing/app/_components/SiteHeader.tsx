@@ -22,7 +22,7 @@ export default function SiteHeader() {
     <header className="nav navbar">
       <div className="container nav-inner">
         <Link className="brand" href="/" aria-label="TieGui Home">
-          <Image src="/brand/tiger-mark.svg" alt="" className="brand-logo" width={1536} height={1024} priority />
+          <Image src="/logo/tiegui-tiger.png" alt="" className="brand-logo" width={1536} height={1024} priority />
           <span className="brand-name">TieGui</span>
         </Link>
         <nav className="links" aria-label="Primary navigation">
