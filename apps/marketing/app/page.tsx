@@ -6,8 +6,14 @@ export default function HomePage() {
     <div className="page">
       <SiteHeader />
       <main className="hero" id="top">
-        <div className="hero-watermark-glow"></div>
-        <img className="hero-watermark" src="/logo/tiegui-tiger.png" alt="" />
+        <div className="hero-bg" aria-hidden="true">
+          <div className="hero-base" />
+          <div className="hero-glow" />
+          <div className="hero-watermark" aria-hidden="true" />
+          <div className="hero-vignette" />
+          <div className="hero-noise" />
+        </div>
+
         <div className="hero-content">
           <h1 className="hero-title">
             Make your website a <span className="gold">revenue engine.</span>

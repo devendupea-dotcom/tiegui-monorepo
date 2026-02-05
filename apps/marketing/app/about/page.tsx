@@ -1,4 +1,5 @@
 import SiteHeader from "../_components/SiteHeader";
+import Image from "next/image";
 
 export default function AboutPage() {
   return (
@@ -41,11 +42,12 @@ export default function AboutPage() {
                 <p>That combination became the foundation of TieGui Solutions.</p>
               </div>
               <div className="origin-media">
-                <img
+                <Image
                   src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1200&q=80"
                   alt="Workspace with laptop and planning notes"
-                  loading="lazy"
-                  decoding="async"
+                  width={1200}
+                  height={800}
+                  sizes="(max-width: 980px) 100vw, 40vw"
                 />
               </div>
             </div>
@@ -79,15 +81,19 @@ export default function AboutPage() {
                 </div>
                 <h3>Marcus Johnson</h3>
                 <div className="founder-certs">
-                  <img
+                  <Image
                     src="/logo/google-ads-certified.png"
                     alt="Google Ads Search Certified"
                     className="founder-cert"
+                    width={400}
+                    height={400}
                   />
-                  <img
+                  <Image
                     src="/logo/google-analytics-certified.png"
                     alt="Google Analytics Certified"
                     className="founder-cert"
+                    width={400}
+                    height={400}
                   />
                 </div>
                 <p className="founder-title">Co-Founder • Google Ads Strategy</p>

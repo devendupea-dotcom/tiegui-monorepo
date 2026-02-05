@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
 import { CTA_LABEL, NAV_LINKS } from "../_content";
 
 export default function SiteHeader() {
@@ -17,32 +19,33 @@ export default function SiteHeader() {
   }, [mobileMenuOpen]);
 
   return (
-    <header className="nav hero-nav navbar">
+    <header className="nav navbar">
       <div className="container nav-inner">
-        <div className="brand">
-          <img src="/logo/tiegui-mark.png" alt="TieGui Solutions" className="brand-logo" />
+        <Link className="brand" href="/" aria-label="TieGui Home">
+          <Image src="/logo/tiegui-mark.png" alt="" className="brand-logo" width={1521} height={1023} priority />
           <span className="brand-name">TieGui</span>
-        </div>
-        <div className="brand-center">TieGui</div>
-        <nav className="links">
+        </Link>
+        <nav className="links" aria-label="Primary navigation">
           {NAV_LINKS.map((link) => (
-            <a key={link.href} href={link.href}>{link.label}</a>
+            <Link key={link.href} href={link.href}>{link.label}</Link>
           ))}
         </nav>
-        <a className="btn primary nav-cta" href="/contact">
-          {CTA_LABEL}
-        </a>
-        <button
-          className="nav-toggle"
-          type="button"
-          aria-label="Toggle menu"
-          aria-expanded={mobileMenuOpen}
-          onClick={() => setMobileMenuOpen((prev) => !prev)}
-        >
-          <span />
-          <span />
-          <span />
-        </button>
+        <div className="nav-actions">
+          <Link className="btn primary nav-cta" href="/contact">
+            {CTA_LABEL}
+          </Link>
+          <button
+            className="nav-toggle"
+            type="button"
+            aria-label="Toggle menu"
+            aria-expanded={mobileMenuOpen}
+            onClick={() => setMobileMenuOpen((prev) => !prev)}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+        </div>
       </div>
       <button
         className={`drawer-backdrop${mobileMenuOpen ? " open" : ""}`}
@@ -59,14 +62,14 @@ export default function SiteHeader() {
         </div>
         <nav className="drawer-links">
           {NAV_LINKS.map((link) => (
-            <a key={link.href} href={link.href} onClick={() => setMobileMenuOpen(false)}>
+            <Link key={link.href} href={link.href} onClick={() => setMobileMenuOpen(false)}>
               {link.label}
-            </a>
+            </Link>
           ))}
         </nav>
-        <a className="btn primary drawer-cta" href="/contact">
+        <Link className="btn primary drawer-cta" href="/contact">
           {CTA_LABEL}
-        </a>
+        </Link>
       </aside>
     </header>
   );

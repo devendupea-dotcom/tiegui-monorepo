@@ -1,4 +1,4 @@
-export const CTA_LABEL = "Get More Calls";
+export const CTA_LABEL = "Request a Consultation";
 
 export const TRUST_POINTS = [
   "Conversion-first website build",
@@ -107,10 +107,8 @@ export const SMS_EXAMPLE = {
 };
 
 export const NAV_LINKS = [
-  { label: "Home", href: "/" },
   { label: "How It Works", href: "/how-it-works" },
-  { label: "Examples", href: "/examples" },
-  { label: "About", href: "/about" },
-  { label: "FAQ", href: "/faq" },
+  { label: "System", href: "/system" },
+  { label: "Case Studies", href: "/case-studies" },
   { label: "Contact", href: "/contact" },
 ];

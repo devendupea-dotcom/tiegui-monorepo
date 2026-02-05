@@ -1,15 +1,15 @@
 import SiteHeader from "../_components/SiteHeader";
 import Image from "next/image";
 
-export default function ExamplesPage() {
+export default function CaseStudiesPage() {
   return (
     <div className="page">
       <SiteHeader />
       <section className="section example-section alt">
         <div className="container">
           <div className="section-head">
-            <h1>Examples</h1>
-            <p className="muted">Sample scenarios that show how the system works.</p>
+            <h1>Case Studies</h1>
+            <p className="muted">Real examples of the system in action.</p>
           </div>
           <div className="example-card single">
             <div className="example-media">
