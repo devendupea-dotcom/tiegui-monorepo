@@ -63,9 +63,7 @@ a{color:inherit;text-decoration:none}
   height:32px;
   width:auto;
   display:block;
-  /* Removes the white PNG backdrop so the mark feels "native" on dark. */
-  mix-blend-mode:multiply;
-  filter:brightness(1.35) saturate(1.12) contrast(1.05) drop-shadow(0 10px 22px rgba(212,175,55,0.18));
+  filter:drop-shadow(0 10px 22px rgba(212,175,55,0.16));
 }
 .brand-name{
   font-weight:700;
@@ -273,7 +271,7 @@ a{color:inherit;text-decoration:none}
   content:"";
   position:absolute;
   inset:0;
-  background-image:url("/logo/tiegui-tiger.png");
+  background-image:url("/brand/tiger-watermark.svg");
   background-repeat:no-repeat;
   background-size:800px;
   background-position:center 45%;
@@ -1984,7 +1982,7 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
   content:"";
   position:absolute;
   inset:0;
-  background-image:url("/logo/tiegui-tiger.png");
+  background-image:url("/brand/tiger-watermark.svg");
   background-repeat:no-repeat;
   background-position:center 40%;
   background-size:min(900px, 120vw);
@@ -2286,7 +2284,7 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
   content:"";
   position:absolute;
   inset:0;
-  background-image:url("/logo/tiegui-tiger.png");
+  background-image:url("/brand/tiger-watermark.svg");
   background-repeat:no-repeat;
   background-position:center 40%;
   background-size:min(1000px, 80vw);
@@ -2840,7 +2838,7 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
 .hero-watermark{
   position:absolute;
   inset:0;
-  background: url('/logo/tiegui-tiger.png') center 90px / 740px no-repeat;
+  background: url('/brand/tiger-watermark.svg') center 90px / 740px no-repeat;
   opacity: 0.08;
   filter: blur(1px);
 }
