@@ -2,6 +2,18 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
+type LeadRow = {
+  id: string;
+  phoneNumber: string;
+  status: string;
+};
+
+type CallRow = {
+  id: string;
+  fromNumber: string;
+  status: string;
+};
+
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
 
@@ -23,12 +35,12 @@ export default async function DashboardPage() {
       where: { organizationId },
       orderBy: { createdAt: "desc" },
       take: 10,
-    }),
+    }) as Promise<LeadRow[]>,
     prisma.call.findMany({
       where: { organizationId },
       orderBy: { createdAt: "desc" },
       take: 10,
-    }),
+    }) as Promise<CallRow[]>,
   ]);
 
   return (
