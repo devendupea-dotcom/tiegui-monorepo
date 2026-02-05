@@ -2832,21 +2832,28 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
 .hero-glow{
   position:absolute;
   inset:0;
-  background: radial-gradient(600px 380px at 50% 220px, rgba(212,175,55,0.20), transparent 65%);
+  background:
+    radial-gradient(640px 420px at 50% 210px, rgba(212,175,55,0.18), transparent 62%),
+    radial-gradient(1200px 700px at 50% 0%, rgba(255,255,255,0.04), transparent 60%);
 }
 
 .hero-watermark{
   position:absolute;
   inset:0;
-  background: url('/logo/tiegui-tiger.png') center 90px / 740px no-repeat;
-  opacity: 0.08;
-  filter: blur(1px);
+  background-image: url('/logo/tiegui-tiger.png');
+  background-repeat: no-repeat;
+  background-position: center 70px;
+  background-size: min(980px, 92vw);
+  opacity: 0.07;
+  filter: blur(2px) saturate(0.72) brightness(0.72) contrast(1.12);
+  mask-image: radial-gradient(650px 520px at 50% 250px, rgba(0,0,0,1) 34%, rgba(0,0,0,0) 82%);
+  -webkit-mask-image: radial-gradient(650px 520px at 50% 250px, rgba(0,0,0,1) 34%, rgba(0,0,0,0) 82%);
 }
 
 .hero-vignette{
   position:absolute;
   inset:0;
-  background: radial-gradient(1200px 700px at 50% 25%, transparent 30%, rgba(0,0,0,0.68) 88%);
+  background: radial-gradient(1200px 700px at 50% 25%, transparent 28%, rgba(0,0,0,0.72) 90%);
 }
 
 .hero-noise{
@@ -2913,7 +2920,12 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
 /* MOBILE TUNING */
 @media (max-width: 640px){
   .hero{ padding: 92px 18px 64px; min-height: 640px; }
-  .hero-watermark{ background-size: 440px; background-position: center 120px; }
+  .hero-watermark{
+    background-size: 520px;
+    background-position: center 110px;
+    mask-image: radial-gradient(520px 420px at 50% 260px, rgba(0,0,0,1) 36%, rgba(0,0,0,0) 82%);
+    -webkit-mask-image: radial-gradient(520px 420px at 50% 260px, rgba(0,0,0,1) 36%, rgba(0,0,0,0) 82%);
+  }
   .hero-cta{ width: 100%; max-width: 360px; }
 }
 
