@@ -1,4 +1,5 @@
 import SiteHeader from "./_components/SiteHeader";
+import HeroShowcase from "./_components/HeroShowcase";
 import { CTA_LABEL, HOW_IT_WORKS, SMS_EXAMPLE, TRUST_POINTS, FAQS } from "./_content";
 
 export default function HomePage() {
@@ -14,13 +15,7 @@ export default function HomePage() {
           <div className="hero-noise" />
         </div>
 
-        <div className="hero-content">
-          <h1 className="hero-title">
-            Make your website a <span className="gold">revenue engine.</span>
-          </h1>
-          <p className="hero-sub">We build websites that get contractors paid.</p>
-          <a className="hero-cta" href="/contact">{CTA_LABEL}</a>
-        </div>
+        <HeroShowcase />
       </main>
 
       <section className="trust-strip">
