@@ -110,5 +110,6 @@ export const NAV_LINKS = [
   { label: "How It Works", href: "/how-it-works" },
   { label: "System", href: "/system" },
   { label: "Case Studies", href: "/case-studies" },
+  { label: "About", href: "/about" },
   { label: "Contact", href: "/contact" },
 ];
