@@ -44,7 +44,7 @@ function PortalPreviewShell({
   active,
   children,
 }: {
-  active: "dashboard" | "leads" | "performance";
+  active: "dashboard" | "leads" | "calendar" | "projects" | "performance";
   children: React.ReactNode;
 }) {
   return (
@@ -70,7 +70,12 @@ function PortalPreviewShell({
           <div className={`portal-shot-nav-item${active === "leads" ? " active" : ""}`}>
             New Calls
           </div>
-          <div className="portal-shot-nav-item">Calendar</div>
+          <div className={`portal-shot-nav-item${active === "calendar" ? " active" : ""}`}>
+            Calendar
+          </div>
+          <div className={`portal-shot-nav-item${active === "projects" ? " active" : ""}`}>
+            Projects
+          </div>
           <div className={`portal-shot-nav-item${active === "performance" ? " active" : ""}`}>
             Performance
           </div>
@@ -222,29 +227,106 @@ function PortalPreviewPerformance() {
   );
 }
 
+function PortalPreviewSchedulingJobs() {
+  const hours = ["8 AM", "9 AM", "10 AM", "11 AM", "12 PM"] as const;
+
+  return (
+    <PortalPreviewShell active="calendar">
+      <div className="portal-shot-top">
+        <div>
+          <div className="portal-shot-kicker">Scheduling</div>
+          <div className="portal-shot-title">Calendar</div>
+          <div className="portal-shot-meta">Tap a job → open the project folder (notes, photos, measurements).</div>
+        </div>
+        <div className="portal-shot-pill">Open project</div>
+      </div>
+
+      <div className="portal-shot-workspace" aria-hidden="true">
+        <div className="portal-shot-calendar">
+          <div className="portal-shot-calendar-bar">
+            <div className="portal-shot-calendar-day">Saturday, Feb 7</div>
+            <div className="portal-shot-calendar-meta">Day • All Staff</div>
+          </div>
+          <div className="portal-shot-calendar-grid">
+            {hours.map((hour, idx) => (
+              <div key={hour} className="portal-shot-calendar-row">
+                <div className="portal-shot-calendar-hour">{hour}</div>
+                <div className="portal-shot-calendar-slot">
+                  {idx === 1 ? (
+                    <div className="portal-shot-calendar-event selected">
+                      <div className="portal-shot-calendar-event-time">9:00 AM</div>
+                      <div className="portal-shot-calendar-event-title">Front yard cleanup</div>
+                      <div className="portal-shot-calendar-event-sub">Work · High</div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="portal-shot-project">
+          <div className="portal-shot-project-head">
+            <div>
+              <div className="portal-shot-project-kicker">Project Folder</div>
+              <div className="portal-shot-project-title">Front yard cleanup</div>
+              <div className="portal-shot-project-meta">Everything for the job — in one place.</div>
+            </div>
+            <div className="portal-shot-badge badge-scheduled">Scheduled</div>
+          </div>
+
+          <div className="portal-shot-project-tabs">
+            <div className="portal-shot-tab active">Overview</div>
+            <div className="portal-shot-tab">Notes</div>
+            <div className="portal-shot-tab">Photos</div>
+            <div className="portal-shot-tab">Measurements</div>
+          </div>
+
+          <div className="portal-shot-project-sections">
+            <div className="portal-shot-project-section">
+              <div className="portal-shot-project-section-title">Notes</div>
+              <div className="portal-shot-project-card">Gate code: 2187 • Watch for sprinkler heads</div>
+              <div className="portal-shot-project-card">Mulch refresh + edge beds + haul debris</div>
+            </div>
+
+            <div className="portal-shot-project-section">
+              <div className="portal-shot-project-section-title">Photos</div>
+              <div className="portal-shot-photo-grid">
+                {["Before", "Before", "After"].map((label, idx) => (
+                  <div key={`${label}-${idx}`} className="portal-shot-photo">
+                    <div className="portal-shot-photo-label">{label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="portal-shot-project-section">
+              <div className="portal-shot-project-section-title">Measurements</div>
+              <div className="portal-shot-measure-list">
+                <div className="portal-shot-measure-row">
+                  <div>Mulch bed</div>
+                  <div className="portal-shot-measure-value">18 ft</div>
+                </div>
+                <div className="portal-shot-measure-row">
+                  <div>Sod patch</div>
+                  <div className="portal-shot-measure-value">120 sq ft</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="portal-shot-note">
+        Every scheduled job becomes a project folder — no lost photos, notes, or PDFs.
+      </div>
+    </PortalPreviewShell>
+  );
+}
+
 export default function HeroShowcase() {
   const slides = useMemo<HeroSlide[]>(
     () => [
-      {
-        id: "website",
-        kicker: "Website",
-        headline: "Make your website a",
-        highlight: "revenue engine.",
-        subhead: "Your site is the entry point — built to convert calls and quote requests.",
-        urlLabel: "pnwlandscapingco.com",
-        content: (
-          <div className="hero-shot-image">
-            <Image
-              src="/logo/PNW-demo.jpeg"
-              alt="Website entry point preview"
-              fill
-              sizes="(max-width: 980px) 100vw, 700px"
-              className="hero-shot-img"
-              priority
-            />
-          </div>
-        ),
-      },
       {
         id: "dashboard",
         kicker: "Client Portal",
@@ -262,6 +344,15 @@ export default function HeroShowcase() {
         subhead: "One-tap call/text, proof view, and an immutable timeline for attribution.",
         urlLabel: "app.tieguisolutions.com/new-calls",
         content: <PortalPreviewLeads />,
+      },
+      {
+        id: "scheduling",
+        kicker: "Scheduling & Jobs",
+        headline: "From Lead to Scheduled Job —",
+        highlight: "Automatically",
+        subhead: "Book jobs, track progress, and store everything in one project folder.",
+        urlLabel: "app.tieguisolutions.com/calendar",
+        content: <PortalPreviewSchedulingJobs />,
       },
       {
         id: "performance",
