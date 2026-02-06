@@ -3,8 +3,15 @@ import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
 export async function middleware(req: NextRequest) {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
   const pathname = req.nextUrl.pathname;
+
+  let token: Awaited<ReturnType<typeof getToken>> | null = null;
+  try {
+    token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+  } catch (error) {
+    console.error("middleware:getToken failed", error);
+    token = null;
+  }
 
   if (!token) {
     const loginUrl = new URL("/login", req.url);

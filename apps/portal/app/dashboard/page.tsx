@@ -1,6 +1,16 @@
-import { getServerSession } from "next-auth";
+import { getServerSession, type Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { redirect } from "next/navigation";
+
+export const dynamic = "force-dynamic";
+
+type AppSession = Session & {
+  user?: (Session["user"] & {
+    role?: string;
+    organizationId?: string;
+  }) | null;
+};
 
 type LeadRow = {
   id: string;
@@ -15,7 +25,17 @@ type CallRow = {
 };
 
 export default async function DashboardPage() {
-  const session = await getServerSession(authOptions);
+  let session: AppSession | null = null;
+  try {
+    session = (await getServerSession(authOptions)) as AppSession | null;
+  } catch (error) {
+    console.error("dashboard:getServerSession failed", error);
+    redirect("/login?next=/dashboard");
+  }
+
+  if (!session?.user) {
+    redirect("/login?next=/dashboard");
+  }
 
   if (!session?.user?.organizationId) {
     return (
@@ -30,18 +50,26 @@ export default async function DashboardPage() {
 
   const organizationId = session.user.organizationId;
 
-  const [leads, calls] = await Promise.all([
-    prisma.lead.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: "desc" },
-      take: 10,
-    }) as Promise<LeadRow[]>,
-    prisma.call.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: "desc" },
-      take: 10,
-    }) as Promise<CallRow[]>,
-  ]);
+  let leads: LeadRow[] = [];
+  let calls: CallRow[] = [];
+  let dataError = false;
+  try {
+    [leads, calls] = await Promise.all([
+      prisma.lead.findMany({
+        where: { organizationId },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      }) as Promise<LeadRow[]>,
+      prisma.call.findMany({
+        where: { organizationId },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      }) as Promise<CallRow[]>,
+    ]);
+  } catch (error) {
+    console.error("dashboard: data load failed", error);
+    dataError = true;
+  }
 
   return (
     <main className="page">
@@ -49,6 +77,19 @@ export default async function DashboardPage() {
         <h1>Dashboard</h1>
         <p className="muted">Welcome back. Here’s the latest activity for your workspace.</p>
       </section>
+
+      {dataError && (
+        <section className="card">
+          <h2>Setup needed</h2>
+          <p className="muted">
+            We couldn&apos;t load your organization data. This usually means the database isn&apos;t
+            reachable or hasn&apos;t been initialized yet.
+          </p>
+          <p className="muted" style={{ marginTop: 10 }}>
+            Check `DATABASE_URL` in Vercel env vars and ensure Prisma tables exist.
+          </p>
+        </section>
+      )}
 
       <section className="grid">
         <div className="card">
