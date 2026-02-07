@@ -3,71 +3,146 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-enum Role {
-  SUPERADMIN
-  CLIENT
-}
-
-enum LeadStatus {
-  NEW
-  QUALIFIED
-  WON
-  LOST
-}
-
-enum CallStatus {
-  NEW
-  CONNECTED
-  MISSED
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Organization {
-  id            String  @id @default(uuid())
-  name          String
-  twilioNumber  String  @unique
-  missedCallMsg String?
-  ga4PropertyId String?
-  googleAdsId   String?
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
 
-  users User[]
-  leads Lead[]
-  calls Call[]
+  users    User[]
+  leads    Lead[]
+  calls    Call[]
+  messages Message[]
+  events   Event[]
 }
 
 model User {
-  id             String   @id @default(uuid())
-  email          String   @unique
-  role           Role     @default(CLIENT)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  id                 String    @id @default(uuid())
+  name               String?
+  email              String    @unique
+  role               Role      @default(CLIENT)
+  orgId              String?
+  passwordHash       String?
+  mustChangePassword Boolean   @default(false)
+  emailVerified      DateTime?
+  createdAt          DateTime  @default(now())
 
-  accounts Account[]
-  sessions Session[]
+  org            Organization?        @relation(fields: [orgId], references: [id])
+  assignedLeads  Lead[]               @relation("LeadAssignee")
+  assignedEvents Event[]              @relation("EventAssignee")
+  accounts       Account[]
+  sessions       Session[]
+  resetTokens    PasswordResetToken[]
+
+  @@index([orgId])
 }
 
 model Lead {
-  id             String      @id @default(uuid())
-  phoneNumber    String
-  status         LeadStatus  @default(NEW)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  createdAt      DateTime    @default(now())
+  id               String       @id @default(uuid())
+  orgId            String
+  assignedToUserId String?
+  status           LeadStatus   @default(NEW)
+  priority         LeadPriority @default(MEDIUM)
+  businessName     String?
+  contactName      String?
+  phoneE164        String
+  city             String?
+  businessType     String?
+  leadSource       LeadSource   @default(OTHER)
+  firstContactedAt DateTime?
+  lastContactedAt  DateTime?
+  nextFollowUpAt   DateTime?
+  notes            String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assignedTo User?        @relation("LeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  calls      Call[]
+  messages   Message[]
+  events     Event[]
+
+  @@index([orgId, status, createdAt])
+  @@index([orgId, nextFollowUpAt])
+  @@index([assignedToUserId, nextFollowUpAt])
 }
 
 model Call {
-  id             String     @id @default(uuid())
-  fromNumber     String
-  status         CallStatus @default(NEW)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  createdAt      DateTime   @default(now())
+  id             String        @id @default(uuid())
+  orgId          String
+  leadId         String?
+  fromNumberE164 String
+  toNumberE164   String
+  direction      CallDirection
+  status         CallStatus
+  twilioCallSid  String?       @unique
+  startedAt      DateTime
+  endedAt        DateTime?
+  createdAt      DateTime      @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, startedAt])
+  @@index([leadId, startedAt])
 }
 
-// NextAuth models
+model Message {
+  id                 String           @id @default(uuid())
+  orgId              String
+  leadId             String
+  direction          MessageDirection
+  fromNumberE164     String
+  toNumberE164       String
+  body               String
+  provider           MessageProvider  @default(TWILIO)
+  providerMessageSid String?          @unique
+  status             MessageStatus?
+  createdAt          DateTime         @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([leadId, createdAt])
+}
+
+model Event {
+  id               String    @id @default(uuid())
+  orgId            String
+  leadId           String?
+  type             EventType
+  title            String
+  description      String?
+  startAt          DateTime
+  endAt            DateTime?
+  assignedToUserId String?
+  createdAt        DateTime  @default(now())
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead       Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  assignedTo User?        @relation("EventAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, startAt])
+  @@index([assignedToUserId, startAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -81,8 +156,7 @@ model Account {
   scope             String?
   id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -92,8 +166,7 @@ model Session {
   sessionToken String   @unique
   userId       String
   expires      DateTime
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
@@ -102,4 +175,69 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+enum Role {
+  INTERNAL
+  CLIENT
+}
+
+enum LeadStatus {
+  NEW
+  CALLED_NO_ANSWER
+  VOICEMAIL
+  INTERESTED
+  FOLLOW_UP
+  BOOKED
+  NOT_INTERESTED
+  DNC
+}
+
+enum LeadPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum LeadSource {
+  CALL
+  FORM
+  FB
+  REFERRAL
+  OTHER
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  RINGING
+  ANSWERED
+  MISSED
+  VOICEMAIL
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageProvider {
+  TWILIO
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+enum EventType {
+  FOLLOW_UP
+  DEMO
+  ONBOARDING
+  TASK
 }

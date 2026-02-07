@@ -2,15 +2,17 @@ import type { NextAuthOptions } from "next-auth";
 import type { Adapter } from "next-auth/adapters";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import EmailProvider from "next-auth/providers/email";
+import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "./prisma";
-import { randomUUID } from "crypto";
 import { normalizeEnvValue } from "./env";
+import { verifyPassword } from "./passwords";
 
 // Prefer SMTP_URL (our canonical name) but allow EMAIL_SERVER for compatibility.
 // Also strip accidental wrapping quotes from Vercel env vars.
 const emailServer = normalizeEnvValue(process.env.SMTP_URL) || normalizeEnvValue(process.env.EMAIL_SERVER);
 const emailFrom = normalizeEnvValue(process.env.EMAIL_FROM);
 const nextAuthSecret = normalizeEnvValue(process.env.NEXTAUTH_SECRET);
+const adminEmails = parseAdminEmails(process.env.ADMIN_EMAILS);
 
 function parseAdminEmails(value: string | undefined): string[] {
   if (!value) return [];
@@ -26,7 +28,6 @@ function withEmailVerified<T extends { [key: string]: unknown }>(user: T | null)
   return { ...user, emailVerified: null };
 }
 
-const adminEmails = parseAdminEmails(process.env.ADMIN_EMAILS);
 const baseAdapter = PrismaAdapter(prisma);
 
 const adapter: Adapter = {
@@ -35,29 +36,33 @@ const adapter: Adapter = {
     const email = data.email?.trim().toLowerCase();
     if (!email) throw new Error("Missing email");
 
-    // Bootstrap a minimal org + user so email sign-in can work on a fresh database.
-    const [domain] = email.split("@").slice(1);
-    const organizationName = domain || "New Organization";
-
-    const organization = await prisma.organization.create({
-      data: {
-        name: organizationName,
-        twilioNumber: `pending-${randomUUID()}`,
-      },
-    });
-
     const hasAnyUser = Boolean(
       await prisma.user.findFirst({
         select: { id: true },
       }),
     );
 
-    const role = !hasAnyUser || adminEmails.includes(email) ? "SUPERADMIN" : "CLIENT";
+    // Invite-only: do NOT create users automatically via auth. The only exception is
+    // a one-time bootstrap of the very first INTERNAL user on a brand new database.
+    const isBootstrapAllowed = !hasAnyUser && (adminEmails.length === 0 || adminEmails.includes(email));
+    if (!isBootstrapAllowed) {
+      throw new Error("Invite required");
+    }
+
+    const localPart = email.split("@")[0] ?? "";
+    const fallbackName = localPart
+      .split(/[._-]/g)
+      .filter((part: string): part is string => Boolean(part))
+      .map((part: string) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+
     const user = await prisma.user.create({
       data: {
+        name: fallbackName || null,
         email,
-        role,
-        organizationId: organization.id,
+        role: "INTERNAL",
+        orgId: null,
+        mustChangePassword: true,
       },
     });
 
@@ -99,6 +104,34 @@ const adapter: Adapter = {
   },
 };
 
+type RateLimitBucket = { count: number; resetAt: number };
+const loginBuckets = new Map<string, RateLimitBucket>();
+
+function getClientIp(req: any): string {
+  const headers = req?.headers;
+  const xff =
+    typeof headers?.get === "function"
+      ? headers.get("x-forwarded-for")
+      : headers?.["x-forwarded-for"];
+  if (typeof xff === "string" && xff.length) return xff.split(",")[0]!.trim();
+  const realIp =
+    typeof headers?.get === "function" ? headers.get("x-real-ip") : headers?.["x-real-ip"];
+  if (typeof realIp === "string" && realIp.length) return realIp.trim();
+  return "unknown";
+}
+
+function isRateLimited(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  const bucket = loginBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    loginBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return false;
+  }
+
+  bucket.count += 1;
+  return bucket.count > limit;
+}
+
 export const authOptions: NextAuthOptions = {
   secret: nextAuthSecret,
   adapter,
@@ -109,23 +142,89 @@ export const authOptions: NextAuthOptions = {
     verifyRequest: "/login?verify=1",
   },
   providers: [
-    EmailProvider({
-      server: emailServer,
-      from: emailFrom,
+    CredentialsProvider({
+      name: "Email + Password",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials, req) {
+        const email = credentials?.email?.trim().toLowerCase();
+        const password = credentials?.password;
+
+        if (!email || typeof password !== "string" || password.length === 0) return null;
+
+        const ip = getClientIp(req);
+        const bucketKey = `credentials:${ip}:${email}`;
+        if (isRateLimited(bucketKey, 10, 60_000)) {
+          return null;
+        }
+
+        const user = await prisma.user.findUnique({
+          where: { email },
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            orgId: true,
+            passwordHash: true,
+            mustChangePassword: true,
+          },
+        });
+
+        if (!user?.passwordHash) return null;
+
+        const ok = await verifyPassword(password, user.passwordHash);
+        if (!ok) return null;
+
+        return {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          orgId: user.orgId,
+          mustChangePassword: user.mustChangePassword,
+        } as any;
+      },
     }),
+    ...(emailServer && emailFrom
+      ? [
+          EmailProvider({
+            server: emailServer,
+            from: emailFrom,
+          }),
+        ]
+      : []),
   ],
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
         token.role = (user as any).role;
-        token.organizationId = (user as any).organizationId;
+        token.orgId = (user as any).orgId ?? null;
+        token.mustChangePassword = (user as any).mustChangePassword ?? false;
+        return token;
+      }
+
+      // If the user is forced to change their password, keep checking the DB so we can
+      // clear the flag immediately after /set-password succeeds.
+      if ((token as any).mustChangePassword && token.sub) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: token.sub },
+          select: { role: true, orgId: true, mustChangePassword: true },
+        });
+        if (dbUser) {
+          token.role = dbUser.role;
+          token.orgId = dbUser.orgId ?? null;
+          (token as any).mustChangePassword = dbUser.mustChangePassword;
+        }
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
+        (session.user as any).id = token.sub;
         (session.user as any).role = token.role;
-        (session.user as any).organizationId = token.organizationId;
+        (session.user as any).orgId = token.orgId ?? null;
+        (session.user as any).mustChangePassword = (token as any).mustChangePassword ?? false;
       }
       return session;
     },

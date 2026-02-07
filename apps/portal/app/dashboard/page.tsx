@@ -2,26 +2,34 @@ import { getServerSession, type Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 type AppSession = Session & {
-  user?: (Session["user"] & {
-    role?: string;
-    organizationId?: string;
-  }) | null;
+  user?:
+    | (Session["user"] & {
+        role?: string;
+        orgId?: string | null;
+      })
+    | null;
 };
 
 type LeadRow = {
   id: string;
-  phoneNumber: string;
+  phoneE164: string;
   status: string;
+  contactName: string | null;
+  nextFollowUpAt: Date | null;
 };
 
 type CallRow = {
   id: string;
-  fromNumber: string;
+  fromNumberE164: string;
+  toNumberE164: string;
+  direction: string;
   status: string;
+  startedAt: Date;
 };
 
 export default async function DashboardPage() {
@@ -37,18 +45,22 @@ export default async function DashboardPage() {
     redirect("/login?next=/dashboard");
   }
 
-  if (!session?.user?.organizationId) {
+  if (session.user.role === "INTERNAL") {
+    redirect("/hq");
+  }
+
+  if (!session.user.orgId) {
     return (
       <main className="page">
         <section className="card">
           <h1>Access denied</h1>
-          <p className="muted">Your account is not assigned to an organization.</p>
+          <p className="muted">Your account is not assigned to a business workspace.</p>
         </section>
       </main>
     );
   }
 
-  const organizationId = session.user.organizationId;
+  const orgId = session.user.orgId;
 
   let leads: LeadRow[] = [];
   let calls: CallRow[] = [];
@@ -56,14 +68,29 @@ export default async function DashboardPage() {
   try {
     [leads, calls] = await Promise.all([
       prisma.lead.findMany({
-        where: { organizationId },
+        where: { orgId },
         orderBy: { createdAt: "desc" },
         take: 10,
+        select: {
+          id: true,
+          phoneE164: true,
+          status: true,
+          contactName: true,
+          nextFollowUpAt: true,
+        },
       }) as Promise<LeadRow[]>,
       prisma.call.findMany({
-        where: { organizationId },
-        orderBy: { createdAt: "desc" },
+        where: { orgId },
+        orderBy: { startedAt: "desc" },
         take: 10,
+        select: {
+          id: true,
+          fromNumberE164: true,
+          toNumberE164: true,
+          direction: true,
+          status: true,
+          startedAt: true,
+        },
       }) as Promise<CallRow[]>,
     ]);
   } catch (error) {
@@ -74,19 +101,16 @@ export default async function DashboardPage() {
   return (
     <main className="page">
       <section className="card">
-        <h1>Dashboard</h1>
-        <p className="muted">Welcome back. Here’s the latest activity for your workspace.</p>
+        <h1>Client Dashboard</h1>
+        <p className="muted">Latest leads and call activity for your business.</p>
       </section>
 
       {dataError && (
         <section className="card">
           <h2>Setup needed</h2>
           <p className="muted">
-            We couldn&apos;t load your organization data. This usually means the database isn&apos;t
-            reachable or hasn&apos;t been initialized yet.
-          </p>
-          <p className="muted" style={{ marginTop: 10 }}>
-            Check `DATABASE_URL` in Vercel env vars and ensure Prisma tables exist.
+            We couldn&apos;t load your workspace data. Check `DATABASE_URL` and ensure Prisma
+            migrations have been applied.
           </p>
         </section>
       )}
@@ -98,7 +122,11 @@ export default async function DashboardPage() {
             {leads.length === 0 && <li className="muted">No leads yet.</li>}
             {leads.map((lead) => (
               <li key={lead.id}>
-                <strong>{lead.phoneNumber}</strong>
+                <strong>
+                  <Link className="table-link" href={`/app/leads/${lead.id}?tab=messages`}>
+                    {lead.contactName || lead.phoneE164}
+                  </Link>
+                </strong>
                 <span className="muted">{lead.status}</span>
               </li>
             ))}
@@ -110,8 +138,8 @@ export default async function DashboardPage() {
             {calls.length === 0 && <li className="muted">No calls yet.</li>}
             {calls.map((call) => (
               <li key={call.id}>
-                <strong>{call.fromNumber}</strong>
-                <span className="muted">{call.status}</span>
+                <strong>{call.fromNumberE164}</strong>
+                <span className="muted">{call.direction} • {call.status}</span>
               </li>
             ))}
           </ul>

@@ -2,24 +2,30 @@
 
 import { useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 function getFriendlyAuthError(errorCode: string): string {
   switch (errorCode) {
     case "Configuration":
-      return "Sign-in isn’t configured yet. Check EMAIL_SERVER/SMTP_URL, EMAIL_FROM, NEXTAUTH_SECRET, and DATABASE_URL in Vercel.";
+      return "Sign-in isn’t configured yet. Check SMTP_URL, EMAIL_FROM, NEXTAUTH_SECRET, and DATABASE_URL in Vercel.";
     case "EmailSignin":
       return "We couldn’t send the email. Double-check your SMTP credentials and sender settings.";
     case "Verification":
       return "That sign-in link is invalid or expired. Request a new one.";
     case "AccessDenied":
       return "Access denied.";
+    case "CredentialsSignin":
+      return "Incorrect email or password.";
     default:
       return "Sign-in failed. Please try again.";
   }
 }
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [nextPath, setNextPath] = useState("/dashboard");
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -64,7 +70,26 @@ export default function LoginPage() {
     window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handlePasswordSignIn = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setStatus("Signing in…");
+
+    const result = await signIn("credentials", {
+      email,
+      password,
+      redirect: false,
+      callbackUrl: nextPath,
+    });
+
+    if (result?.error) {
+      setStatus(getFriendlyAuthError(result.error));
+      return;
+    }
+
+    router.push(result?.url || nextPath);
+  };
+
+  const handleMagicLink = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setStatus("Sending login link...");
     const result = await signIn("email", {
@@ -84,7 +109,7 @@ export default function LoginPage() {
       <section className="auth-card">
         <h1>Client Portal Login</h1>
         <p className="muted">Invite-only access. Use the email on your account.</p>
-        <form onSubmit={handleSubmit} className="auth-form">
+        <form onSubmit={handlePasswordSignIn} className="auth-form">
           <label>
             Email
             <input
@@ -95,9 +120,40 @@ export default function LoginPage() {
               required
             />
           </label>
-          <button className="btn primary" type="submit">Send login link</button>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Your password"
+              required
+            />
+          </label>
+
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+            <Link className="muted" href={`/forgot-password?email=${encodeURIComponent(email)}`}>
+              Forgot password?
+            </Link>
+          </div>
+
+          <button className="btn primary" type="submit">Sign in</button>
+          <p className="form-status">
+            New here? We’ll send you a temporary password when your account is created — you can change it after your
+            first login.
+          </p>
           {status && <p className="form-status">{status}</p>}
         </form>
+
+        <div className="auth-divider" />
+
+        <div className="auth-secondary">
+          <h2>Or</h2>
+          <p className="muted">Use a secure sign-in link (magic link).</p>
+          <form onSubmit={handleMagicLink} className="auth-form" style={{ marginTop: 12 }}>
+            <button className="btn secondary" type="submit">Send login link</button>
+          </form>
+        </div>
 
         <div className="auth-divider" />
 
