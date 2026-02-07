@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+import { normalizeEnvValue } from "./lib/env";
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   let token: Awaited<ReturnType<typeof getToken>> | null = null;
   try {
-    token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+    token = await getToken({ req, secret: normalizeEnvValue(process.env.NEXTAUTH_SECRET) });
   } catch (error) {
     console.error("middleware:getToken failed", error);
     token = null;

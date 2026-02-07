@@ -4,26 +4,13 @@ import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import EmailProvider from "next-auth/providers/email";
 import { prisma } from "./prisma";
 import { randomUUID } from "crypto";
-
-function normalizeEnvValue(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-
-  return trimmed;
-}
+import { normalizeEnvValue } from "./env";
 
 // Prefer SMTP_URL (our canonical name) but allow EMAIL_SERVER for compatibility.
 // Also strip accidental wrapping quotes from Vercel env vars.
 const emailServer = normalizeEnvValue(process.env.SMTP_URL) || normalizeEnvValue(process.env.EMAIL_SERVER);
 const emailFrom = normalizeEnvValue(process.env.EMAIL_FROM);
+const nextAuthSecret = normalizeEnvValue(process.env.NEXTAUTH_SECRET);
 
 function parseAdminEmails(value: string | undefined): string[] {
   if (!value) return [];
@@ -113,7 +100,7 @@ const adapter: Adapter = {
 };
 
 export const authOptions: NextAuthOptions = {
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: nextAuthSecret,
   adapter,
   session: { strategy: "jwt" },
   pages: {
