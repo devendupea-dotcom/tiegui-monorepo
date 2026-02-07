@@ -5,8 +5,25 @@ import EmailProvider from "next-auth/providers/email";
 import { prisma } from "./prisma";
 import { randomUUID } from "crypto";
 
-const emailServer = process.env.EMAIL_SERVER || process.env.SMTP_URL;
-const emailFrom = process.env.EMAIL_FROM;
+function normalizeEnvValue(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
+// Prefer SMTP_URL (our canonical name) but allow EMAIL_SERVER for compatibility.
+// Also strip accidental wrapping quotes from Vercel env vars.
+const emailServer = normalizeEnvValue(process.env.SMTP_URL) || normalizeEnvValue(process.env.EMAIL_SERVER);
+const emailFrom = normalizeEnvValue(process.env.EMAIL_FROM);
 
 function parseAdminEmails(value: string | undefined): string[] {
   if (!value) return [];
