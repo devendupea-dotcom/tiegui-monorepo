@@ -104,6 +104,25 @@ body {
   cursor: pointer;
 }
 
+.btn.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  color: rgba(237,237,237,0.92);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn.primary:disabled,
+.btn.secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .auth-card {
   max-width: 460px;
   margin: 0 auto;
@@ -111,6 +130,27 @@ body {
   border-radius: 18px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.04);
+}
+
+.auth-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.10);
+  margin: 22px 0;
+}
+
+.auth-secondary {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-secondary h2 {
+  font-size: 1rem;
+}
+
+.auth-secondary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .auth-form {
