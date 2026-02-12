@@ -26,8 +26,9 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [nextPath, setNextPath] = useState("/dashboard");
+  const [nextPath, setNextPath] = useState("/");
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [verify, setVerify] = useState(false);
   const [showRequestAccess, setShowRequestAccess] = useState(false);
@@ -38,7 +39,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setNextPath(params.get("next") || "/dashboard");
+    setNextPath(params.get("next") || "/");
     setErrorCode(params.get("error"));
     setVerify(params.has("verify"));
   }, []);
@@ -105,10 +106,10 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="page">
+    <main className="page auth-surface">
       <section className="auth-card">
-        <h1>Client Portal Login</h1>
-        <p className="muted">Invite-only access. Use the email on your account.</p>
+        <h1>Client Command Center</h1>
+        <p className="muted">Invite-only access for active TieGui clients.</p>
         <form onSubmit={handlePasswordSignIn} className="auth-form">
           <label>
             Email
@@ -122,13 +123,25 @@ export default function LoginPage() {
           </label>
           <label>
             Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Your password"
-              required
-            />
+            <div className="auth-password-field">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Your password"
+                autoComplete="current-password"
+                required
+              />
+              <button
+                type="button"
+                className="auth-password-toggle"
+                onClick={() => setShowPassword((current) => !current)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </label>
 
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
@@ -137,7 +150,7 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <button className="btn primary" type="submit">Sign in</button>
+          <button className="btn primary" type="submit">Access Dashboard</button>
           <p className="form-status">
             New here? We’ll send you a temporary password when your account is created — you can change it after your
             first login.
@@ -148,7 +161,7 @@ export default function LoginPage() {
         <div className="auth-divider" />
 
         <div className="auth-secondary">
-          <h2>Or</h2>
+          <p className="auth-secondary-kicker">Prefer passwordless access?</p>
           <p className="muted">Use a secure sign-in link (magic link).</p>
           <form onSubmit={handleMagicLink} className="auth-form" style={{ marginTop: 12 }}>
             <button className="btn secondary" type="submit">Send login link</button>

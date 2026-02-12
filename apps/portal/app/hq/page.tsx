@@ -64,7 +64,8 @@ export default async function HqDashboardPage() {
       </section>
 
       <section className="card">
-        <h2>Quick Links</h2>
+        <h2>HQ Command Center</h2>
+        <p className="muted">Cross-org controls for inbox, scheduling, and business workspaces.</p>
         <div className="quick-links" style={{ marginTop: 12 }}>
           <Link className="btn secondary" href="/hq/inbox">
             Open Inbox
@@ -74,6 +75,9 @@ export default async function HqDashboardPage() {
           </Link>
           <Link className="btn secondary" href="/hq/businesses">
             View Businesses
+          </Link>
+          <Link className="btn secondary" href="/hq/integrations/google/health">
+            Google Sync Health
           </Link>
         </div>
       </section>

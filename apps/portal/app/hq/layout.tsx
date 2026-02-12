@@ -1,11 +1,13 @@
 import Link from "next/link";
+import { getGoogleSyncAlertState } from "@/lib/integrations/google-sync";
 import { requireInternalUser } from "@/lib/session";
 
 const links = [
-  { href: "/hq", label: "Dashboard" },
+  { href: "/hq", label: "Command Center" },
   { href: "/hq/inbox", label: "Inbox" },
   { href: "/hq/calendar", label: "Calendar" },
   { href: "/hq/businesses", label: "Businesses" },
+  { href: "/hq/integrations/google/health", label: "Sync Health" },
 ];
 
 export default async function HqLayout({
@@ -14,6 +16,33 @@ export default async function HqLayout({
   children: React.ReactNode;
 }>) {
   await requireInternalUser("/hq");
+  const syncAlert = await getGoogleSyncAlertState({
+    cronStaleMinutes: 15,
+    queueDepthThreshold: 80,
+    errorRateThreshold: 0.25,
+    errorRateWindowMinutes: 60,
+  }).catch(() => null);
+
+  const alertReasons: string[] = [];
+  if (syncAlert?.flags.staleCron) {
+    if (syncAlert.lastCronMinutesAgo === null) {
+      alertReasons.push("No cron run has been recorded yet");
+    } else {
+      alertReasons.push(
+        `Last cron run ${syncAlert.lastCronMinutesAgo}m ago (threshold ${syncAlert.thresholds.cronStaleMinutes}m)`,
+      );
+    }
+  }
+  if (syncAlert?.flags.queueDepthExceeded) {
+    alertReasons.push(
+      `Queue depth ${syncAlert.queueDepth.totalOpen} (threshold ${syncAlert.thresholds.queueDepthThreshold})`,
+    );
+  }
+  if (syncAlert?.flags.errorRateExceeded) {
+    alertReasons.push(
+      `Recent error rate ${(syncAlert.recent.errorRate * 100).toFixed(1)}% over ${syncAlert.recent.windowMinutes}m`,
+    );
+  }
 
   return (
     <main className="page">
@@ -30,6 +59,25 @@ export default async function HqLayout({
           ))}
         </nav>
       </header>
+      {syncAlert?.showBanner ? (
+        <section
+          className="card"
+          style={{
+            borderColor: "rgba(255, 107, 107, 0.55)",
+            background: "rgba(71, 19, 19, 0.35)",
+          }}
+        >
+          <h2 style={{ marginBottom: 8 }}>Google Sync Warning</h2>
+          <p className="muted">
+            {alertReasons.join(" • ")}. Review sync health to run recovery actions.
+          </p>
+          <div className="quick-links" style={{ marginTop: 12 }}>
+            <Link className="btn secondary" href="/hq/integrations/google/health">
+              Open Sync Health
+            </Link>
+          </div>
+        </section>
+      ) : null}
       {children}
     </main>
   );

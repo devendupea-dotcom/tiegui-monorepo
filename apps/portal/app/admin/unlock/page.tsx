@@ -19,12 +19,12 @@ export default async function AdminUnlockPage() {
     select: { id: true, role: true },
   });
 
-  if (!user || user.role !== "INTERNAL") redirect("/dashboard");
+  if (!user || user.role !== "INTERNAL") redirect("/app");
 
   const vaultKey = normalizeEnvValue(process.env.ADMIN_VAULT_KEY);
   if (!vaultKey) {
     return (
-      <main className="page">
+      <main className="page auth-surface">
         <section className="auth-card">
           <h1>Admin vault not configured</h1>
           <p className="muted">
@@ -42,7 +42,7 @@ export default async function AdminUnlockPage() {
   }
 
   return (
-    <main className="page">
+    <main className="page auth-surface">
       <section className="auth-card">
         <h1>Unlock Admin</h1>
         <p className="muted">Enter the admin vault key to access admin tools.</p>

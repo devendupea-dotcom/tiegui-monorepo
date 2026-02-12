@@ -11,14 +11,14 @@ export default function SetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [status, setStatus] = useState<string | null>(null);
-  const [nextPath, setNextPath] = useState("/dashboard");
+  const [nextPath, setNextPath] = useState("/");
   const [submitting, setSubmitting] = useState(false);
 
   const mustChangePassword = Boolean((session?.user as any)?.mustChangePassword);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setNextPath(params.get("next") || "/dashboard");
+    setNextPath(params.get("next") || "/");
   }, []);
 
   useEffect(() => {
@@ -85,7 +85,7 @@ export default function SetPasswordPage() {
   };
 
   return (
-    <main className="page">
+    <main className="page auth-surface">
       <section className="auth-card">
         <h1>Set your password</h1>
         <p className="muted">
@@ -126,4 +126,3 @@ export default function SetPasswordPage() {
     </main>
   );
 }
-

@@ -33,7 +33,7 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <main className="page">
+    <main className="page auth-surface">
       <section className="auth-card">
         <h1>Forgot password</h1>
         <p className="muted">We’ll email you a reset link.</p>
@@ -64,4 +64,3 @@ export default function ForgotPasswordPage() {
     </main>
   );
 }
-

@@ -14,9 +14,17 @@ type ThreadMessage = {
   createdAt: string;
 };
 
+type ThreadTemplate = {
+  id: string;
+  name: string;
+  body: string;
+};
+
 type LeadMessageThreadProps = {
   leadId: string;
   initialMessages: ThreadMessage[];
+  templates?: ThreadTemplate[];
+  senderNumber?: string | null;
   canSend?: boolean;
 };
 
@@ -33,6 +41,8 @@ function formatMessageTimestamp(value: string): string {
 export default function LeadMessageThread({
   leadId,
   initialMessages,
+  templates = [],
+  senderNumber = null,
   canSend = true,
 }: LeadMessageThreadProps) {
   const [messages, setMessages] = useState<ThreadMessage[]>(initialMessages);
@@ -92,6 +102,7 @@ export default function LeadMessageThread({
       const payload = (await response.json()) as {
         ok?: boolean;
         error?: string;
+        notice?: string;
         message?: Omit<ThreadMessage, "createdAt"> & { createdAt: string | Date };
       };
 
@@ -110,7 +121,13 @@ export default function LeadMessageThread({
       setMessages((current) =>
         current.map((message) => (message.id === tempId ? confirmedMessage : message)),
       );
-      setStatus("Message sent.");
+      if (confirmedMessage.status === "FAILED") {
+        setStatus(payload.notice || "Message failed to send.");
+      } else if (confirmedMessage.status === "QUEUED") {
+        setStatus(payload.notice || "Message queued.");
+      } else {
+        setStatus(payload.notice || "Message sent.");
+      }
     } catch {
       setMessages((current) => current.filter((message) => message.id !== tempId));
       setStatus("Could not send message.");
@@ -144,17 +161,43 @@ export default function LeadMessageThread({
 
       {canSend ? (
         <form className="message-compose" onSubmit={handleSend}>
+          {senderNumber ? (
+            <p className="muted">
+              Sending from <code>{senderNumber}</code>
+            </p>
+          ) : (
+            <p className="muted">No org SMS sender configured yet.</p>
+          )}
+          {templates.length > 0 ? (
+            <div className="template-pills">
+              {templates.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  className="template-chip"
+                  onClick={() => setDraft(template.body)}
+                  disabled={submitting}
+                >
+                  {template.name}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Type a message"
             rows={3}
             maxLength={1600}
-            disabled={submitting}
+            disabled={submitting || !senderNumber}
           />
           <div className="message-compose-actions">
             <span className="muted">{draft.length}/1600</span>
-            <button className="btn primary" type="submit" disabled={submitting || !draft.trim()}>
+            <button
+              className="btn primary"
+              type="submit"
+              disabled={submitting || !draft.trim() || !senderNumber}
+            >
               Send
             </button>
           </div>

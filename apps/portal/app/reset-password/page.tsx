@@ -59,7 +59,7 @@ export default function ResetPasswordPage() {
   };
 
   return (
-    <main className="page">
+    <main className="page auth-surface">
       <section className="auth-card">
         <h1>Reset password</h1>
         <p className="muted">Choose a new password for your account.</p>
@@ -103,4 +103,3 @@ export default function ResetPasswordPage() {
     </main>
   );
 }
-

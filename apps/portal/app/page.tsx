@@ -21,5 +21,5 @@ export default async function HomePage() {
     redirect("/hq");
   }
 
-  redirect("/dashboard");
+  redirect("/app");
 }

@@ -124,7 +124,18 @@ export default async function LeadDetailPage({
     prisma.lead.findUnique({
       where: { id: params.leadId },
       include: {
-        org: { select: { id: true, name: true } },
+        org: {
+          select: {
+            id: true,
+            name: true,
+            smsFromNumberE164: true,
+            smsTemplates: {
+              where: { isActive: true },
+              select: { id: true, name: true, body: true },
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        },
         assignedTo: { select: { id: true, name: true, email: true } },
         calls: {
           select: {
@@ -371,6 +382,8 @@ export default async function LeadDetailPage({
           <p className="muted">Thread for this lead only.</p>
           <LeadMessageThread
             leadId={lead.id}
+            senderNumber={lead.org.smsFromNumberE164 || process.env.DEFAULT_OUTBOUND_FROM_E164 || null}
+            templates={lead.org.smsTemplates}
             initialMessages={lead.messages.map((message) => ({
               ...message,
               createdAt: message.createdAt.toISOString(),

@@ -11,6 +11,7 @@ export default async function HqBusinessesPage() {
         id: true,
         name: true,
         createdAt: true,
+        smsFromNumberE164: true,
         _count: {
           select: {
             users: true,
@@ -39,7 +40,7 @@ export default async function HqBusinessesPage() {
   return (
     <section className="card">
       <h2>Businesses</h2>
-      <p className="muted">Project folders for every org.</p>
+      <p className="muted">Job workspaces for every org.</p>
 
       {organizations.length === 0 ? (
         <p className="muted" style={{ marginTop: 12 }}>
@@ -56,6 +57,8 @@ export default async function HqBusinessesPage() {
                 <th>Calls</th>
                 <th>Messages</th>
                 <th>Events</th>
+                <th>SMS Number</th>
+                <th>Portal</th>
                 <th>Created</th>
               </tr>
             </thead>
@@ -72,6 +75,12 @@ export default async function HqBusinessesPage() {
                   <td>{organization._count.calls}</td>
                   <td>{organization._count.messages}</td>
                   <td>{organization._count.events}</td>
+                  <td>{organization.smsFromNumberE164 || "-"}</td>
+                  <td>
+                    <Link className="table-link" href={`/app?orgId=${organization.id}`}>
+                      Open
+                    </Link>
+                  </td>
                   <td>{formatDateTime(organization.createdAt)}</td>
                 </tr>
               ))}
