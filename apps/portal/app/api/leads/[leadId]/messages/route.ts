@@ -3,32 +3,19 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isInternalRole } from "@/lib/session";
+import { normalizeE164 } from "@/lib/phone";
+import { sendOutboundSms } from "@/lib/sms";
 
 type RouteContext = {
   params: { leadId: string };
 };
 
-// Twilio next phase design:
+// Twilio inbound webhook plan:
 // 1) Normalize inbound From number to E.164.
 // 2) Resolve orgId from the destination Twilio number.
 // 3) Find lead by { orgId, phoneE164: fromNumber }.
 // 4) If found, create INBOUND Message linked to that lead.
 // 5) If not found, create Lead first, then create linked Message.
-// Outbound integration should still write the OUTBOUND Message row immediately.
-
-function normalizeE164(value: string | undefined | null): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  if (trimmed.startsWith("+")) {
-    return trimmed;
-  }
-
-  const digitsOnly = trimmed.replace(/\D/g, "");
-  if (!digitsOnly) return null;
-  return `+${digitsOnly}`;
-}
 
 async function getScopedLeadOrResponse(leadId: string) {
   const session = await getServerSession(authOptions);
@@ -43,6 +30,7 @@ async function getScopedLeadOrResponse(leadId: string) {
       id: true,
       orgId: true,
       phoneE164: true,
+      status: true,
     },
   });
 
@@ -75,6 +63,7 @@ export async function GET(_req: Request, { params }: RouteContext) {
       fromNumberE164: true,
       toNumberE164: true,
       body: true,
+      type: true,
       provider: true,
       providerMessageSid: true,
       status: true,
@@ -111,36 +100,85 @@ export async function POST(req: Request, { params }: RouteContext) {
     return NextResponse.json({ ok: false, error: "Message body is required." }, { status: 400 });
   }
 
+  if (scoped.lead.status === "DNC") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "This contact has opted out (DNC/STOP). Sending is blocked until they reply START.",
+      },
+      { status: 403 },
+    );
+  }
+
   if (cleanedBody.length > 1600) {
     return NextResponse.json({ ok: false, error: "Message must be 1600 characters or less." }, { status: 400 });
   }
 
-  const defaultFromNumber =
-    normalizeE164(process.env.DEFAULT_OUTBOUND_FROM_E164 || null) || "+10000000000";
-
-  const created = await prisma.message.create({
-    data: {
-      orgId: scoped.lead.orgId,
-      leadId: scoped.lead.id,
-      direction: "OUTBOUND",
-      fromNumberE164: fromNumberE164 || defaultFromNumber,
-      toNumberE164: scoped.lead.phoneE164,
-      body: cleanedBody,
-      provider: "TWILIO",
-      status: "SENT",
-    },
-    select: {
-      id: true,
-      direction: true,
-      fromNumberE164: true,
-      toNumberE164: true,
-      body: true,
-      provider: true,
-      providerMessageSid: true,
-      status: true,
-      createdAt: true,
-    },
+  const organization = await prisma.organization.findUnique({
+    where: { id: scoped.lead.orgId },
+    select: { smsFromNumberE164: true },
   });
 
-  return NextResponse.json({ ok: true, message: created });
+  const defaultFromNumber = normalizeE164(process.env.DEFAULT_OUTBOUND_FROM_E164 || null);
+  const resolvedFromNumber =
+    fromNumberE164 || normalizeE164(organization?.smsFromNumberE164 || null) || defaultFromNumber;
+
+  if (!resolvedFromNumber) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "No outbound SMS number is configured for this business yet.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const now = new Date();
+
+  const providerResult = await sendOutboundSms({
+    fromNumberE164: resolvedFromNumber,
+    toNumberE164: scoped.lead.phoneE164,
+    body: cleanedBody,
+  });
+
+  const created = await prisma.$transaction(async (tx) => {
+    const message = await tx.message.create({
+      data: {
+        orgId: scoped.lead.orgId,
+        leadId: scoped.lead.id,
+        direction: "OUTBOUND",
+        type: "MANUAL",
+        fromNumberE164: resolvedFromNumber,
+        toNumberE164: scoped.lead.phoneE164,
+        body: cleanedBody,
+        provider: "TWILIO",
+        providerMessageSid: providerResult.providerMessageSid,
+        status: providerResult.status,
+      },
+      select: {
+        id: true,
+        direction: true,
+        type: true,
+        fromNumberE164: true,
+        toNumberE164: true,
+        body: true,
+        provider: true,
+        providerMessageSid: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    await tx.lead.update({
+      where: { id: scoped.lead.id },
+      data: {
+        lastContactedAt: now,
+        lastOutboundAt: now,
+      },
+    });
+
+    return message;
+  });
+
+  return NextResponse.json({ ok: true, message: created, notice: providerResult.notice });
 }
