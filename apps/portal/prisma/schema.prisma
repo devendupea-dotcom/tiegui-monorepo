@@ -9,80 +9,229 @@ datasource db {
 }
 
 model Organization {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now())
+  id                      String   @id @default(uuid())
+  name                    String
+  invoiceSequence         Int      @default(0)
+  ghostBustingEnabled     Boolean  @default(false)
+  voiceNotesEnabled       Boolean  @default(false)
+  metaCapiEnabled         Boolean  @default(false)
+  offlineModeEnabled      Boolean  @default(false)
+  ghostBustingQuietHoursStart Int  @default(1260)
+  ghostBustingQuietHoursEnd Int    @default(480)
+  ghostBustingMaxNudges   Int      @default(2)
+  ghostBustingTemplateText String?
+  allowWorkerLeadCreate   Boolean  @default(true)
+  onboardingStep          Int      @default(0)
+  onboardingCompletedAt   DateTime?
+  onboardingSkippedAt     DateTime?
+  smsFromNumberE164       String?
+  messageLanguage         MessageLanguage @default(EN)
+  missedCallAutoReplyOn   Boolean  @default(false)
+  missedCallAutoReplyBody String?
+  missedCallAutoReplyBodyEn String?
+  missedCallAutoReplyBodyEs String?
+  intakeAutomationEnabled Boolean  @default(false)
+  intakeAskLocationBody   String?
+  intakeAskLocationBodyEn String?
+  intakeAskLocationBodyEs String?
+  intakeAskWorkTypeBody   String?
+  intakeAskWorkTypeBodyEn String?
+  intakeAskWorkTypeBodyEs String?
+  intakeAskCallbackBody   String?
+  intakeAskCallbackBodyEn String?
+  intakeAskCallbackBodyEs String?
+  intakeCompletionBody    String?
+  intakeCompletionBodyEn String?
+  intakeCompletionBodyEs String?
+  createdAt               DateTime @default(now())
 
-  users    User[]
-  leads    Lead[]
-  calls    Call[]
-  messages Message[]
-  events   Event[]
+  users                    User[]
+  customers                Customer[]
+  leads                    Lead[]
+  calls                    Call[]
+  messages                 Message[]
+  events                   Event[]
+  smsTemplates             SmsTemplate[]
+  dashboardConfig          OrgDashboardConfig?
+  budgetRequests           BudgetRequest[]
+  adSpendEntries           AdSpendEntry[]
+  leadNotes                LeadNote[]
+  leadPhotos               LeadPhoto[]
+  leadMeasurements         LeadMeasurement[]
+  integrationAccounts      IntegrationAccount[]
+  integrationOAuthStates   IntegrationOAuthState[]
+  importRuns               ImportRun[]
+  portableCustomers        PortableCustomer[]
+  portableJobs             PortableJob[]
+  portableInvoices         PortableInvoice[]
+  portableInvoiceLineItems PortableInvoiceLineItem[]
+  portablePayments         PortablePayment[]
+  portableNotes            PortableNote[]
+  calendarWorkerHours      WorkingHours[]
+  calendarTimeOff          TimeOff[]
+  calendarHolds            CalendarHold[]
+  calendarEventWorkers     CalendarEventWorker[]
+  googleAccounts           GoogleAccount[]
+  googleOAuthStates        GoogleOAuthState[]
+  googleSyncJobs           GoogleSyncJob[]
+  googleSyncJobAttempts    GoogleSyncJobAttempt[]
+  invoices                 Invoice[]
+  cronRunLogs              InternalCronRunLog[]
+  metaCapiEvents           MetaCapiEvent[]
+  clientMutationReceipts   ClientMutationReceipt[]
 }
 
 model User {
-  id                 String    @id @default(uuid())
+  id                 String             @id @default(uuid())
   name               String?
-  email              String    @unique
-  role               Role      @default(CLIENT)
+  email              String             @unique
+  phoneE164          String?
+  role               Role               @default(CLIENT)
+  calendarAccessRole CalendarAccessRole @default(WORKER)
+  timezone           String?
   orgId              String?
   passwordHash       String?
-  mustChangePassword Boolean   @default(false)
+  mustChangePassword Boolean            @default(false)
   emailVerified      DateTime?
-  createdAt          DateTime  @default(now())
+  createdAt          DateTime           @default(now())
 
-  org            Organization?        @relation(fields: [orgId], references: [id])
-  assignedLeads  Lead[]               @relation("LeadAssignee")
-  assignedEvents Event[]              @relation("EventAssignee")
-  accounts       Account[]
-  sessions       Session[]
-  resetTokens    PasswordResetToken[]
+  org                    Organization?         @relation(fields: [orgId], references: [id])
+  assignedLeads          Lead[]                @relation("LeadAssignee")
+  assignedEvents         Event[]               @relation("EventAssignee")
+  requestedBudgetChanges BudgetRequest[]       @relation("BudgetRequestRequester")
+  reviewedBudgetChanges  BudgetRequest[]       @relation("BudgetRequestReviewer")
+  adSpendEntries         AdSpendEntry[]        @relation("AdSpendEntryCreator")
+  createdLeads           Lead[]                @relation("LeadCreator")
+  createdCustomers       Customer[]            @relation("CustomerCreator")
+  leadNotes              LeadNote[]            @relation("LeadNoteCreator")
+  leadPhotos             LeadPhoto[]           @relation("LeadPhotoCreator")
+  leadMeasurements       LeadMeasurement[]     @relation("LeadMeasurementCreator")
+  calendarCreatedEvents  Event[]               @relation("EventCreator")
+  calendarAssignedEvents CalendarEventWorker[] @relation("CalendarEventWorker")
+  workingHours           WorkingHours[]        @relation("WorkingHoursWorker")
+  timeOffEntries         TimeOff[]             @relation("TimeOffWorker")
+  calendarHolds          CalendarHold[]        @relation("CalendarHoldWorker")
+  createdCalendarHolds   CalendarHold[]        @relation("CalendarHoldCreator")
+  googleAccounts         GoogleAccount[]       @relation("GoogleAccountUser")
+  googleOAuthStates      GoogleOAuthState[]    @relation("GoogleOAuthStateUser")
+  googleSyncJobs         GoogleSyncJob[]       @relation("GoogleSyncJobUser")
+  googleSyncRunsTriggered GoogleSyncRun[]      @relation("GoogleSyncRunTrigger")
+  googleSyncJobAttempts  GoogleSyncJobAttempt[] @relation("GoogleSyncJobAttemptUser")
+  createdInvoices        Invoice[]             @relation("InvoiceCreator")
+  accounts               Account[]
+  sessions               Session[]
+  resetTokens            PasswordResetToken[]
 
   @@index([orgId])
 }
 
 model Lead {
-  id               String       @id @default(uuid())
-  orgId            String
-  assignedToUserId String?
-  status           LeadStatus   @default(NEW)
-  priority         LeadPriority @default(MEDIUM)
-  businessName     String?
-  contactName      String?
-  phoneE164        String
-  city             String?
-  businessType     String?
-  leadSource       LeadSource   @default(OTHER)
-  firstContactedAt DateTime?
-  lastContactedAt  DateTime?
-  nextFollowUpAt   DateTime?
-  notes            String?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  id                        String          @id @default(uuid())
+  orgId                     String
+  customerId                String?
+  createdByUserId           String?
+  assignedToUserId          String?
+  status                    LeadStatus      @default(NEW)
+  priority                  LeadPriority    @default(MEDIUM)
+  businessName              String?
+  contactName               String?
+  phoneE164                 String
+  sourceType                LeadSourceType  @default(ORGANIC)
+  preferredLanguage         LeadPreferredLanguage?
+  sourceDetail              String?
+  attributionLocked         Boolean         @default(true)
+  commissionEligible        Boolean         @default(false)
+  city                      String?
+  businessType              String?
+  leadSource                LeadSource      @default(OTHER)
+  firstContactedAt          DateTime?
+  lastContactedAt           DateTime?
+  lastInboundAt             DateTime?
+  lastOutboundAt            DateTime?
+  ghostNudgeCount           Int             @default(0)
+  lastGhostNudgeAt          DateTime?
+  nextFollowUpAt            DateTime?
+  intakeStage               LeadIntakeStage @default(NONE)
+  intakeLocationText        String?
+  intakeWorkTypeText        String?
+  intakePreferredCallbackAt DateTime?
+  estimatedRevenueCents     Int?
+  invoiceStatus             InvoiceStatus   @default(NONE)
+  invoiceDraftText          String?
+  invoiceDueAt              DateTime?
+  invoiceLastAutoTaskAt     DateTime?
+  notes                     String?
+  fbClickId                 String?
+  fbBrowserId               String?
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
 
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  assignedTo User?        @relation("LeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  calls      Call[]
-  messages   Message[]
-  events     Event[]
+  org           Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer      Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdBy     User?             @relation("LeadCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  assignedTo    User?             @relation("LeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  calls         Call[]
+  messages      Message[]
+  events        Event[]
+  leadNotes     LeadNote[]
+  leadPhotos    LeadPhoto[]
+  measurements  LeadMeasurement[]
+  calendarHolds CalendarHold[]
+  invoices      Invoice[]
+  metaCapiEvents MetaCapiEvent[]
 
   @@index([orgId, status, createdAt])
   @@index([orgId, nextFollowUpAt])
+  @@index([orgId, intakeStage])
   @@index([assignedToUserId, nextFollowUpAt])
+  @@index([orgId, lastInboundAt])
+  @@index([orgId, lastOutboundAt])
+  @@index([orgId, ghostNudgeCount, lastGhostNudgeAt])
+  @@index([orgId, invoiceStatus, updatedAt])
+  @@index([customerId, updatedAt])
+  @@index([createdByUserId, createdAt])
+  @@index([orgId, sourceType, createdAt])
+}
+
+model Customer {
+  id              String   @id @default(uuid())
+  orgId           String
+  createdByUserId String?
+  name            String
+  phoneE164       String
+  email           String?
+  addressLine     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("CustomerCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  leads     Lead[]
+  events    Event[]
+  invoices  Invoice[]
+
+  @@index([orgId, phoneE164])
+  @@index([orgId, name])
+  @@index([orgId, createdAt])
 }
 
 model Call {
-  id             String        @id @default(uuid())
-  orgId          String
-  leadId         String?
-  fromNumberE164 String
-  toNumberE164   String
-  direction      CallDirection
-  status         CallStatus
-  twilioCallSid  String?       @unique
-  startedAt      DateTime
-  endedAt        DateTime?
-  createdAt      DateTime      @default(now())
+  id                 String            @id @default(uuid())
+  orgId              String
+  leadId             String?
+  fromNumberE164     String
+  toNumberE164       String
+  trackingNumberE164 String?
+  landingPageUrl     String?
+  utmCampaign        String?
+  gclid              String?
+  attributionSource  AttributionSource @default(UNKNOWN)
+  direction          CallDirection
+  status             CallStatus
+  twilioCallSid      String?           @unique
+  startedAt          DateTime
+  endedAt            DateTime?
+  createdAt          DateTime          @default(now())
 
   org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   lead Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
@@ -96,6 +245,7 @@ model Message {
   orgId              String
   leadId             String
   direction          MessageDirection
+  type               MessageType      @default(MANUAL)
   fromNumberE164     String
   toNumberE164       String
   body               String
@@ -109,26 +259,752 @@ model Message {
 
   @@index([orgId, createdAt])
   @@index([leadId, createdAt])
+  @@index([leadId, type, createdAt])
+}
+
+model SmsTemplate {
+  id        String   @id @default(uuid())
+  orgId     String
+  name      String
+  body      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, isActive, createdAt])
 }
 
 model Event {
-  id               String    @id @default(uuid())
+  id               String              @id @default(uuid())
   orgId            String
   leadId           String?
+  customerId       String?
   type             EventType
+  provider         EventProvider       @default(LOCAL)
+  googleEventId    String?
+  googleCalendarId String?
+  syncStatus       EventSyncStatus     @default(PENDING)
+  lastSyncedAt     DateTime?
+  status           CalendarEventStatus @default(SCHEDULED)
+  busy             Boolean             @default(true)
+  customerName     String?
+  addressLine      String?
+  allDay           Boolean             @default(false)
   title            String
   description      String?
   startAt          DateTime
   endAt            DateTime?
   assignedToUserId String?
-  createdAt        DateTime  @default(now())
+  createdByUserId  String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  lead       Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  assignedTo User?        @relation("EventAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  org               Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead              Lead?                 @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  customer          Customer?             @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  assignedTo        User?                 @relation("EventAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  createdBy         User?                 @relation("EventCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  workerAssignments CalendarEventWorker[]
+  googleSyncJobs    GoogleSyncJob[]       @relation("GoogleSyncJobEvent")
 
+  @@unique([orgId, googleCalendarId, googleEventId])
   @@index([orgId, startAt])
   @@index([assignedToUserId, startAt])
+  @@index([orgId, type, startAt])
+  @@index([orgId, provider, startAt])
+  @@index([assignedToUserId, provider, startAt])
+  @@index([customerId, startAt])
+}
+
+model Invoice {
+  id              String               @id @default(uuid())
+  orgId           String
+  jobId           String?
+  customerId      String
+  invoiceNumber   Int
+  status          BillingInvoiceStatus @default(DRAFT)
+  subtotal        Decimal              @default(0) @db.Decimal(12, 2)
+  taxRate         Decimal              @default(0) @db.Decimal(6, 4)
+  taxAmount       Decimal              @default(0) @db.Decimal(12, 2)
+  total           Decimal              @default(0) @db.Decimal(12, 2)
+  amountPaid      Decimal              @default(0) @db.Decimal(12, 2)
+  balanceDue      Decimal              @default(0) @db.Decimal(12, 2)
+  issueDate       DateTime
+  dueDate         DateTime
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  org       Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job       Lead?             @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  customer  Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  createdBy User?             @relation("InvoiceCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  lineItems InvoiceLineItem[]
+  payments  InvoicePayment[]
+  metaCapiEvents MetaCapiEvent[]
+
+  @@unique([orgId, invoiceNumber])
+  @@index([orgId, status, dueDate])
+  @@index([jobId, createdAt])
+  @@index([customerId, createdAt])
+}
+
+model InvoiceLineItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  description String
+  quantity    Decimal  @default(1) @db.Decimal(10, 2)
+  unitPrice   Decimal  @default(0) @db.Decimal(12, 2)
+  lineTotal   Decimal  @default(0) @db.Decimal(12, 2)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId, sortOrder])
+}
+
+model InvoicePayment {
+  id        String               @id @default(uuid())
+  invoiceId String
+  amount    Decimal              @default(0) @db.Decimal(12, 2)
+  date      DateTime
+  method    InvoicePaymentMethod
+  note      String?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId, date])
+}
+
+model MetaCapiEvent {
+  id             String         @id @default(uuid())
+  orgId          String
+  leadId         String?
+  invoiceId      String?
+  eventName      String
+  eventId        String
+  status         MetaCapiStatus @default(PENDING)
+  payloadJson    Json?
+  responseJson   Json?
+  errorMessage   String?
+  sentAt         DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead    Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  invoice Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, eventId])
+  @@index([orgId, status, createdAt])
+  @@index([invoiceId, createdAt])
+  @@index([leadId, createdAt])
+}
+
+model InternalCronRunLog {
+  id            String       @id @default(uuid())
+  orgId         String?
+  route         String
+  status        CronLogStatus @default(OK)
+  startedAt     DateTime     @default(now())
+  finishedAt    DateTime?
+  processedCount Int         @default(0)
+  successCount  Int          @default(0)
+  failureCount  Int          @default(0)
+  metricsJson   Json?
+  errorMessage  String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  org Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+
+  @@index([route, createdAt])
+  @@index([status, createdAt])
+  @@index([orgId, createdAt])
+}
+
+model ClientMutationReceipt {
+  id             String   @id @default(uuid())
+  orgId          String
+  idempotencyKey String
+  route          String
+  responseJson   Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, idempotencyKey])
+  @@index([route, createdAt])
+}
+
+model OrgDashboardConfig {
+  orgId                    String   @id
+  adsPaused                Boolean  @default(false)
+  dailyBudgetCents         Int      @default(25000)
+  defaultTaxRate           Decimal  @default(0) @db.Decimal(6, 4)
+  missedCallMessage        String?
+  jobReminderMinutesBefore Int      @default(120)
+  googleReviewUrl          String?
+  allowOverlaps            Boolean  @default(false)
+  roundRobinLastWorkerId   String?
+  weekStartsOn             Int      @default(0)
+  defaultSlotMinutes       Int      @default(30)
+  defaultUntimedStartHour  Int      @default(9)
+  calendarTimezone         String   @default("America/Los_Angeles")
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model WorkingHours {
+  id           String   @id @default(uuid())
+  orgId        String
+  workerUserId String
+  dayOfWeek    Int
+  startMinute  Int
+  endMinute    Int
+  isWorking    Boolean  @default(true)
+  timezone     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  worker User         @relation("WorkingHoursWorker", fields: [workerUserId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, workerUserId, dayOfWeek])
+  @@index([orgId, workerUserId, dayOfWeek])
+}
+
+model TimeOff {
+  id           String   @id @default(uuid())
+  orgId        String
+  workerUserId String
+  startAt      DateTime
+  endAt        DateTime
+  reason       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  worker User         @relation("TimeOffWorker", fields: [workerUserId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, workerUserId, startAt, endAt])
+}
+
+model CalendarHold {
+  id              String             @id @default(uuid())
+  orgId           String
+  workerUserId    String
+  leadId          String?
+  customerName    String?
+  title           String?
+  addressLine     String?
+  startAt         DateTime
+  endAt           DateTime
+  source          CalendarHoldSource @default(MANUAL)
+  status          CalendarHoldStatus @default(ACTIVE)
+  createdByUserId String?
+  expiresAt       DateTime
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  worker    User         @relation("CalendarHoldWorker", fields: [workerUserId], references: [id], onDelete: Cascade)
+  lead      Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  createdBy User?        @relation("CalendarHoldCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, workerUserId, startAt, endAt])
+  @@index([orgId, status, expiresAt])
+}
+
+model GoogleAccount {
+  id                         String                  @id @default(uuid())
+  orgId                      String
+  userId                     String
+  googleEmail                String?
+  accessTokenEncrypted       String
+  refreshTokenEncrypted      String?
+  expiresAt                  DateTime?
+  scopes                     String[]
+  connectedAt                DateTime                @default(now())
+  isEnabled                  Boolean                 @default(true)
+  writeCalendarId            String?
+  readCalendarIdsJson        Json?
+  blockAvailabilityRulesJson Json?
+  lastSyncAt                 DateTime?
+  syncStatus                 GoogleAccountSyncStatus @default(IDLE)
+  syncError                  String?
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation("GoogleAccountUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@index([orgId, isEnabled])
+  @@index([userId, isEnabled])
+  @@index([expiresAt])
+}
+
+model GoogleOAuthState {
+  id          String    @id @default(uuid())
+  orgId       String
+  userId      String
+  state       String    @unique
+  redirectUri String
+  scopes      String[]
+  wantsWrite  Boolean   @default(false)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation("GoogleOAuthStateUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, userId, expiresAt])
+}
+
+model GoogleSyncJob {
+  id           String              @id @default(uuid())
+  orgId        String
+  userId       String
+  eventId      String?
+  action       GoogleSyncAction
+  status       GoogleSyncJobStatus @default(PENDING)
+  payloadJson  Json?
+  attemptCount Int                 @default(0)
+  backoffMs    Int                 @default(0)
+  runAfter     DateTime            @default(now())
+  lastError    String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user  User         @relation("GoogleSyncJobUser", fields: [userId], references: [id], onDelete: Cascade)
+  event Event?       @relation("GoogleSyncJobEvent", fields: [eventId], references: [id], onDelete: SetNull)
+  attempts GoogleSyncJobAttempt[]
+
+  @@index([status, runAfter])
+  @@index([orgId, userId, status])
+  @@index([eventId, status])
+}
+
+model GoogleSyncJobAttempt {
+  id            String              @id @default(uuid())
+  jobId          String
+  orgId          String
+  userId         String
+  action         GoogleSyncAction
+  status         GoogleSyncJobStatus
+  attemptNumber  Int
+  retryable      Boolean?
+  backoffMs      Int?
+  nextRunAt      DateTime?
+  errorMessage   String?
+  createdAt      DateTime            @default(now())
+
+  job  GoogleSyncJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  org  Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User          @relation("GoogleSyncJobAttemptUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([orgId, createdAt])
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+}
+
+model GoogleSyncRun {
+  id               String              @id @default(uuid())
+  source           GoogleSyncRunSource @default(CRON)
+  status           GoogleSyncRunStatus @default(RUNNING)
+  triggeredByUserId String?
+  maxJobs          Int?
+  maxAccounts      Int?
+  jobsProcessed    Int                 @default(0)
+  jobsCompleted    Int                 @default(0)
+  jobsFailed       Int                 @default(0)
+  accountsProcessed Int                @default(0)
+  accountsFailed   Int                 @default(0)
+  lastError        String?
+  startedAt        DateTime            @default(now())
+  finishedAt       DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  triggeredBy User? @relation("GoogleSyncRunTrigger", fields: [triggeredByUserId], references: [id], onDelete: SetNull)
+
+  @@index([source, startedAt])
+  @@index([status, startedAt])
+}
+
+model GoogleSyncHealthAlert {
+  id             String   @id @default(uuid())
+  cronStale      Boolean  @default(false)
+  queueHigh      Boolean  @default(false)
+  errorRateHigh  Boolean  @default(false)
+  metricsSnapshot Json
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([cronStale, createdAt])
+  @@index([queueHigh, createdAt])
+  @@index([errorRateHigh, createdAt])
+}
+
+model CalendarEventWorker {
+  id           String   @id @default(uuid())
+  orgId        String
+  eventId      String
+  workerUserId String
+  createdAt    DateTime @default(now())
+
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  event  Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  worker User         @relation("CalendarEventWorker", fields: [workerUserId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, workerUserId])
+  @@index([orgId, workerUserId, createdAt])
+}
+
+model BudgetRequest {
+  id                  String              @id @default(uuid())
+  orgId               String
+  requestedByUserId   String?
+  reviewedByUserId    String?
+  requestedDailyCents Int
+  note                String?
+  status              BudgetRequestStatus @default(PENDING)
+  createdAt           DateTime            @default(now())
+  reviewedAt          DateTime?
+
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  requestedBy User?        @relation("BudgetRequestRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  reviewedBy  User?        @relation("BudgetRequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status, createdAt])
+}
+
+model AdSpendEntry {
+  id              String   @id @default(uuid())
+  orgId           String
+  createdByUserId String?
+  spendDate       DateTime
+  amountCents     Int
+  source          String?
+  note            String?
+  createdAt       DateTime @default(now())
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("AdSpendEntryCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, spendDate])
+}
+
+model LeadNote {
+  id              String   @id @default(uuid())
+  orgId           String
+  leadId          String
+  createdByUserId String?
+  body            String
+  createdAt       DateTime @default(now())
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead      Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("LeadNoteCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([leadId, createdAt])
+}
+
+model LeadPhoto {
+  id              String   @id @default(uuid())
+  orgId           String
+  leadId          String
+  createdByUserId String?
+  fileName        String
+  mimeType        String
+  imageDataUrl    String
+  caption         String?
+  createdAt       DateTime @default(now())
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead      Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("LeadPhotoCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([leadId, createdAt])
+}
+
+model LeadMeasurement {
+  id              String   @id @default(uuid())
+  orgId           String
+  leadId          String
+  createdByUserId String?
+  label           String
+  value           String
+  unit            String?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead      Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("LeadMeasurementCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([leadId, createdAt])
+}
+
+model IntegrationAccount {
+  id                    String                   @id @default(uuid())
+  orgId                 String
+  provider              IntegrationProvider
+  accessTokenEncrypted  String
+  refreshTokenEncrypted String?
+  expiresAt             DateTime?
+  providerAccountId     String?
+  realmId               String?
+  scopes                String[]
+  connectedAt           DateTime                 @default(now())
+  status                IntegrationAccountStatus @default(CONNECTED)
+  syncEnabled           Boolean                  @default(false)
+  lastSyncedAt          DateTime?
+  lastError             String?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, provider])
+  @@index([orgId, status])
+  @@index([provider, expiresAt])
+}
+
+model IntegrationOAuthState {
+  id           String              @id @default(uuid())
+  orgId        String
+  provider     IntegrationProvider
+  state        String              @unique
+  codeVerifier String?
+  redirectUri  String
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime            @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, provider, expiresAt])
+}
+
+model ImportRun {
+  id         String              @id @default(uuid())
+  orgId      String
+  provider   IntegrationProvider
+  startedAt  DateTime            @default(now())
+  finishedAt DateTime?
+  status     ImportRunStatus     @default(RUNNING)
+  statsJson  Json?
+  errorJson  Json?
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, provider, startedAt])
+  @@index([orgId, status, createdAt])
+}
+
+model PortableCustomer {
+  id                String              @id @default(uuid())
+  orgId             String
+  provider          IntegrationProvider
+  externalId        String
+  displayName       String
+  email             String?
+  phone             String?
+  possibleDuplicate Boolean             @default(false)
+  createdAtSource   DateTime?
+  updatedAtSource   DateTime?
+  lastSyncedAt      DateTime            @default(now())
+  rawJson           Json?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  org      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  jobs     PortableJob[]     @relation("PortableCustomerJobs")
+  invoices PortableInvoice[] @relation("PortableCustomerInvoices")
+  payments PortablePayment[] @relation("PortableCustomerPayments")
+  notes    PortableNote[]    @relation("PortableCustomerNotes")
+
+  @@unique([orgId, provider, externalId])
+  @@index([orgId, provider, displayName])
+}
+
+model PortableJob {
+  id                 String              @id @default(uuid())
+  orgId              String
+  provider           IntegrationProvider
+  externalId         String
+  customerId         String?
+  customerExternalId String?
+  title              String
+  status             String?
+  description        String?
+  startAt            DateTime?
+  endAt              DateTime?
+  createdAtSource    DateTime?
+  updatedAtSource    DateTime?
+  lastSyncedAt       DateTime            @default(now())
+  rawJson            Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  org      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer PortableCustomer? @relation("PortableCustomerJobs", fields: [customerId], references: [id], onDelete: SetNull)
+  invoices PortableInvoice[] @relation("PortableJobInvoices")
+  notes    PortableNote[]    @relation("PortableJobNotes")
+
+  @@unique([orgId, provider, externalId])
+  @@index([orgId, provider, status])
+  @@index([customerId])
+}
+
+model PortableInvoice {
+  id                 String              @id @default(uuid())
+  orgId              String
+  provider           IntegrationProvider
+  externalId         String
+  customerId         String?
+  customerExternalId String?
+  jobId              String?
+  jobExternalId      String?
+  invoiceNumber      String?
+  status             String?
+  issuedAt           DateTime?
+  dueAt              DateTime?
+  currency           String?
+  subtotalCents      Int?
+  taxCents           Int?
+  totalCents         Int?
+  balanceCents       Int?
+  createdAtSource    DateTime?
+  updatedAtSource    DateTime?
+  lastSyncedAt       DateTime            @default(now())
+  rawJson            Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  org       Organization              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer  PortableCustomer?         @relation("PortableCustomerInvoices", fields: [customerId], references: [id], onDelete: SetNull)
+  job       PortableJob?              @relation("PortableJobInvoices", fields: [jobId], references: [id], onDelete: SetNull)
+  lineItems PortableInvoiceLineItem[]
+  payments  PortablePayment[]         @relation("PortableInvoicePayments")
+  notes     PortableNote[]            @relation("PortableInvoiceNotes")
+
+  @@unique([orgId, provider, externalId])
+  @@index([orgId, provider, status])
+  @@index([customerId])
+  @@index([jobId])
+}
+
+model PortableInvoiceLineItem {
+  id                String              @id @default(uuid())
+  orgId             String
+  provider          IntegrationProvider
+  externalId        String
+  invoiceId         String?
+  invoiceExternalId String
+  description       String?
+  quantityDecimal   String?
+  unitPriceCents    Int?
+  amountCents       Int?
+  position          Int?
+  createdAtSource   DateTime?
+  updatedAtSource   DateTime?
+  lastSyncedAt      DateTime            @default(now())
+  rawJson           Json?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  org     Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invoice PortableInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, provider, externalId])
+  @@index([orgId, provider, invoiceExternalId])
+  @@index([invoiceId, position])
+}
+
+model PortablePayment {
+  id                 String              @id @default(uuid())
+  orgId              String
+  provider           IntegrationProvider
+  externalId         String
+  customerId         String?
+  customerExternalId String?
+  invoiceId          String?
+  invoiceExternalId  String?
+  amountCents        Int?
+  currency           String?
+  paidAt             DateTime?
+  status             String?
+  method             String?
+  reference          String?
+  createdAtSource    DateTime?
+  updatedAtSource    DateTime?
+  lastSyncedAt       DateTime            @default(now())
+  rawJson            Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  org      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer PortableCustomer? @relation("PortableCustomerPayments", fields: [customerId], references: [id], onDelete: SetNull)
+  invoice  PortableInvoice?  @relation("PortableInvoicePayments", fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, provider, externalId])
+  @@index([orgId, provider, paidAt])
+  @@index([customerId])
+  @@index([invoiceId])
+}
+
+model PortableNote {
+  id                 String              @id @default(uuid())
+  orgId              String
+  provider           IntegrationProvider
+  externalId         String
+  customerId         String?
+  customerExternalId String?
+  jobId              String?
+  jobExternalId      String?
+  invoiceId          String?
+  invoiceExternalId  String?
+  body               String
+  authoredBy         String?
+  notedAt            DateTime?
+  createdAtSource    DateTime?
+  updatedAtSource    DateTime?
+  lastSyncedAt       DateTime            @default(now())
+  rawJson            Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  org      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer PortableCustomer? @relation("PortableCustomerNotes", fields: [customerId], references: [id], onDelete: SetNull)
+  job      PortableJob?      @relation("PortableJobNotes", fields: [jobId], references: [id], onDelete: SetNull)
+  invoice  PortableInvoice?  @relation("PortableInvoiceNotes", fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, provider, externalId])
+  @@index([orgId, provider, notedAt])
+  @@index([customerId])
+  @@index([jobId])
+  @@index([invoiceId])
 }
 
 model PasswordResetToken {
@@ -193,6 +1069,15 @@ enum LeadStatus {
   DNC
 }
 
+enum LeadIntakeStage {
+  NONE
+  INTRO_SENT
+  WAITING_LOCATION
+  WAITING_WORK_TYPE
+  WAITING_CALLBACK
+  COMPLETED
+}
+
 enum LeadPriority {
   HIGH
   MEDIUM
@@ -207,6 +1092,26 @@ enum LeadSource {
   OTHER
 }
 
+enum LeadSourceType {
+  PAID
+  ORGANIC
+  REFERRAL
+  WALKIN
+  REPEAT
+  UNKNOWN
+}
+
+enum MessageLanguage {
+  EN
+  ES
+  AUTO
+}
+
+enum LeadPreferredLanguage {
+  EN
+  ES
+}
+
 enum CallDirection {
   INBOUND
   OUTBOUND
@@ -219,9 +1124,21 @@ enum CallStatus {
   VOICEMAIL
 }
 
+enum AttributionSource {
+  PAID
+  ORGANIC
+  UNKNOWN
+}
+
 enum MessageDirection {
   INBOUND
   OUTBOUND
+}
+
+enum MessageType {
+  MANUAL
+  SYSTEM_NUDGE
+  AUTOMATION
 }
 
 enum MessageProvider {
@@ -235,9 +1152,147 @@ enum MessageStatus {
   FAILED
 }
 
+enum BudgetRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum EventType {
+  JOB
+  ESTIMATE
+  CALL
+  BLOCK
+  ADMIN
+  TRAVEL
   FOLLOW_UP
   DEMO
   ONBOARDING
   TASK
+  GCAL_BLOCK
+}
+
+enum EventProvider {
+  LOCAL
+  GOOGLE
+}
+
+enum EventSyncStatus {
+  PENDING
+  OK
+  ERROR
+}
+
+enum InvoiceStatus {
+  NONE
+  DRAFT_READY
+  SENT
+}
+
+enum BillingInvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  PARTIAL
+  OVERDUE
+}
+
+enum InvoicePaymentMethod {
+  CASH
+  CHECK
+  CARD
+  TRANSFER
+  OTHER
+}
+
+enum MetaCapiStatus {
+  PENDING
+  SENT
+  ERROR
+}
+
+enum CronLogStatus {
+  OK
+  ERROR
+}
+
+enum IntegrationProvider {
+  JOBBER
+  QBO
+}
+
+enum IntegrationAccountStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum ImportRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum CalendarEventStatus {
+  SCHEDULED
+  CONFIRMED
+  EN_ROUTE
+  ON_SITE
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum CalendarAccessRole {
+  OWNER
+  ADMIN
+  WORKER
+  READ_ONLY
+}
+
+enum CalendarHoldStatus {
+  ACTIVE
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+}
+
+enum CalendarHoldSource {
+  MANUAL
+  SMS_AGENT
+  GOOGLE_SYNC
+}
+
+enum GoogleAccountSyncStatus {
+  IDLE
+  RUNNING
+  OK
+  ERROR
+  DISCONNECTED
+}
+
+enum GoogleSyncAction {
+  UPSERT_EVENT
+  DELETE_EVENT
+  PULL_CALENDARS
+}
+
+enum GoogleSyncJobStatus {
+  PENDING
+  PROCESSING
+  DONE
+  ERROR
+}
+
+enum GoogleSyncRunSource {
+  CRON
+  MANUAL
+  SYSTEM
+}
+
+enum GoogleSyncRunStatus {
+  RUNNING
+  OK
+  ERROR
 }
