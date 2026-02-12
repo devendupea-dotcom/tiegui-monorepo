@@ -31,7 +31,7 @@ export async function requireSessionUser(nextPath: string): Promise<AppSessionUs
 export async function requireInternalUser(nextPath: string): Promise<AppSessionUser> {
   const user = await requireSessionUser(nextPath);
   if (!isInternalRole(user.role)) {
-    redirect("/dashboard");
+    redirect("/app");
   }
   return user;
 }

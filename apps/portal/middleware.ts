@@ -6,6 +6,7 @@ import { normalizeEnvValue } from "./lib/env";
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
   const isInternal = (role: unknown) => role === "INTERNAL";
+  const isClient = (role: unknown) => role === "CLIENT";
 
   let token: Awaited<ReturnType<typeof getToken>> | null = null;
   try {
@@ -27,17 +28,15 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(setPasswordUrl);
   }
 
-  if (pathname.startsWith("/hq") && !isInternal(token.role)) {
-    return NextResponse.redirect(new URL("/dashboard", req.url));
-  }
-
-  if (pathname.startsWith("/app") && isInternal(token.role)) {
-    return NextResponse.redirect(new URL("/hq", req.url));
+  // CLIENT users are blocked from internal HQ/admin areas.
+  // INTERNAL users can access both /hq and /app.
+  if (pathname.startsWith("/hq") && isClient(token.role)) {
+    return NextResponse.redirect(new URL("/app", req.url));
   }
 
   if (pathname.startsWith("/admin")) {
-    if (!isInternal(token.role)) {
-      return NextResponse.redirect(new URL("/dashboard", req.url));
+    if (isClient(token.role) || !isInternal(token.role)) {
+      return NextResponse.redirect(new URL("/app", req.url));
     }
 
     // Admin routes are locked behind an additional vault key.

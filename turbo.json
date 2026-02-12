@@ -12,7 +12,16 @@
         "NEXTAUTH_URL",
         "NEXTAUTH_SECRET",
         "EMAIL_FROM",
-        "SMTP_URL"
+        "SMTP_URL",
+        "EMAIL_SERVER",
+        "ADMIN_EMAILS",
+        "ADMIN_VAULT_KEY",
+        "DEFAULT_OUTBOUND_FROM_E164",
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN",
+        "TWILIO_SEND_ENABLED",
+        "TWILIO_VALIDATE_SIGNATURE",
+        "CRON_SECRET"
       ]
     },
     "lint": {
