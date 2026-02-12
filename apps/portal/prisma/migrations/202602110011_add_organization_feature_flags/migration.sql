@@ -1,0 +1,23 @@
+ALTER TABLE "Organization"
+  ADD COLUMN IF NOT EXISTS "ghostBustingEnabled" BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE "Organization"
+  ADD COLUMN IF NOT EXISTS "voiceNotesEnabled" BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE "Organization"
+  ADD COLUMN IF NOT EXISTS "metaCapiEnabled" BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE "Organization"
+  ADD COLUMN IF NOT EXISTS "offlineModeEnabled" BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE "Organization"
+  ADD COLUMN IF NOT EXISTS "ghostBustingQuietHoursStart" INTEGER NOT NULL DEFAULT 1260;
+
+ALTER TABLE "Organization"
+  ADD COLUMN IF NOT EXISTS "ghostBustingQuietHoursEnd" INTEGER NOT NULL DEFAULT 480;
+
+ALTER TABLE "Organization"
+  ADD COLUMN IF NOT EXISTS "ghostBustingMaxNudges" INTEGER NOT NULL DEFAULT 2;
+
+ALTER TABLE "Organization"
+  ADD COLUMN IF NOT EXISTS "ghostBustingTemplateText" TEXT;
