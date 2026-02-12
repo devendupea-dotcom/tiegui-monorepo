@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { CTA_LABEL, NAV_LINKS } from "../_content";
+import { NAV_CTA_LABEL, NAV_LINKS } from "../_content";
 
 export default function SiteHeader() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -31,8 +31,8 @@ export default function SiteHeader() {
           ))}
         </nav>
         <div className="nav-actions">
-          <Link className="btn primary nav-cta" href="/contact">
-            {CTA_LABEL}
+          <Link className="nav-cta" href="/contact">
+            {NAV_CTA_LABEL}
           </Link>
           <button
             className="nav-toggle"
@@ -67,8 +67,8 @@ export default function SiteHeader() {
             </Link>
           ))}
         </nav>
-        <Link className="btn primary drawer-cta" href="/contact">
-          {CTA_LABEL}
+        <Link className="cta-button drawer-cta" href="/contact">
+          {NAV_CTA_LABEL}
         </Link>
       </aside>
     </header>

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { CTA_LABEL } from "../_content";
+import { PRIMARY_CTA_LABEL } from "../_content";
 
 type HeroSlide = {
   id: string;
@@ -418,8 +418,8 @@ export default function HeroShowcase() {
           <p className="hero-sub">{active.subhead}</p>
 
           <div className="hero-controls">
-            <Link className="hero-cta" href="/contact">
-              {CTA_LABEL}
+            <Link className="hero-cta cta-button gold" href="/contact">
+              {PRIMARY_CTA_LABEL}
             </Link>
             <div className="hero-dots" aria-label="Hero carousel navigation">
               {slides.map((slide, idx) => (

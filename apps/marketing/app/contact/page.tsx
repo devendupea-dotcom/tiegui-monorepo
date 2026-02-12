@@ -1,5 +1,6 @@
 import SiteHeader from "../_components/SiteHeader";
 import ContactForm from "../_components/ContactForm";
+import SiteFooter from "../_components/SiteFooter";
 
 export default function ContactPage() {
   return (
@@ -15,6 +16,7 @@ export default function ContactPage() {
           <ContactForm />
         </div>
       </section>
+      <SiteFooter />
     </div>
   );
 }

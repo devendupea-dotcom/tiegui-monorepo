@@ -1,5 +1,6 @@
 import SiteHeader from "../_components/SiteHeader";
-import { CTA_LABEL, SYSTEM_STEPS } from "../_content";
+import SiteFooter from "../_components/SiteFooter";
+import { PRIMARY_CTA_LABEL, SYSTEM_STEPS } from "../_content";
 
 export default function HowItWorksPage() {
   return (
@@ -25,9 +26,10 @@ export default function HowItWorksPage() {
         <div className="container">
           <h2>Let’s see if we’re a fit</h2>
           <p className="muted">We’ll review your current setup and recommend next steps.</p>
-          <a className="btn primary" href="/contact">{CTA_LABEL}</a>
+          <a className="cta-button gold" href="/contact">{PRIMARY_CTA_LABEL}</a>
         </div>
       </section>
+      <SiteFooter />
     </div>
   );
 }

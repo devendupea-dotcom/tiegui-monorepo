@@ -1,4 +1,5 @@
 import SiteHeader from "../_components/SiteHeader";
+import SiteFooter from "../_components/SiteFooter";
 import { FAQS } from "../_content";
 
 export default function FAQPage() {
@@ -21,6 +22,7 @@ export default function FAQPage() {
           </div>
         </div>
       </section>
+      <SiteFooter />
     </div>
   );
 }
