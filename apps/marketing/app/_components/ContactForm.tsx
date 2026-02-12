@@ -1,6 +1,6 @@
 "use client";
 
-import { CTA_LABEL } from "../_content";
+import { PRIMARY_CTA_LABEL } from "../_content";
 
 export default function ContactForm() {
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -34,7 +34,7 @@ export default function ContactForm() {
         Message (optional)
         <textarea name="message" rows={3} placeholder="Tell us a bit about your goals" />
       </label>
-      <button className="btn primary" type="submit">{CTA_LABEL}</button>
+      <button className="cta-button gold" type="submit">{PRIMARY_CTA_LABEL}</button>
       <p className="cta-note">We’ll reach out quickly.</p>
       <p className="form-status" aria-live="polite"></p>
     </form>
