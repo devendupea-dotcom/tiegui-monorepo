@@ -1,4 +1,5 @@
 import SiteHeader from "../_components/SiteHeader";
+import SiteFooter from "../_components/SiteFooter";
 import Image from "next/image";
 
 export default function ExamplesPage() {
@@ -33,7 +34,7 @@ export default function ExamplesPage() {
                 <li>Designed for local Google traffic</li>
               </ul>
               <div className="example-actions">
-                <a className="btn primary small" href="https://pnw-landscape-demo.web.app/" target="_blank" rel="noreferrer">
+                <a className="cta-button gold" href="https://pnw-landscape-demo.web.app/" target="_blank" rel="noreferrer">
                   View Live Site
                 </a>
               </div>
@@ -46,6 +47,7 @@ export default function ExamplesPage() {
           </div>
         </div>
       </section>
+      <SiteFooter />
     </div>
   );
 }
