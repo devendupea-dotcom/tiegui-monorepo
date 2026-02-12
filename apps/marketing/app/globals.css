@@ -4208,3 +4208,321 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
     padding-top: 48px;
   }
 }
+
+/* === Pricing Sheet Hardening (site + PDF parity) === */
+
+.pricing-sheet .pricing-hero .section-head {
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+
+.pricing-beta-section {
+  padding-top: 0;
+}
+
+.beta-notice-card {
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  background: linear-gradient(180deg, rgba(212, 175, 55, 0.14), rgba(212, 175, 55, 0.06));
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 16px 34px rgba(7, 12, 24, 0.35);
+}
+
+.beta-notice-card h2 {
+  margin: 0 0 8px;
+}
+
+.beta-notice-card p {
+  margin: 0;
+  color: rgba(245, 247, 251, 0.88);
+}
+
+.beta-spots {
+  margin-top: 10px !important;
+  font-weight: 700;
+  color: #f1d58a !important;
+}
+
+.pricing-card-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 0;
+}
+
+.pricing-card-fields div {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.pricing-card-fields dt {
+  margin: 0;
+  color: rgba(245, 247, 251, 0.75);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.pricing-card-fields dd {
+  margin: 6px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pricing-card-ad-note {
+  margin: 12px 0 0;
+  border: 1px solid rgba(212, 175, 55, 0.32);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(212, 175, 55, 0.11);
+  color: rgba(245, 247, 251, 0.92);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.pricing-card-features {
+  margin-top: 14px;
+}
+
+.pricing-policy-block {
+  margin-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 12px;
+}
+
+.pricing-policy-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(245, 247, 251, 0.8);
+  font-weight: 700;
+}
+
+.pricing-policy-block p {
+  margin: 0;
+  color: rgba(245, 247, 251, 0.86);
+  font-size: 14px;
+}
+
+.pricing-policy-note {
+  margin-top: 6px !important;
+  color: rgba(245, 247, 251, 0.72) !important;
+}
+
+.commission-block {
+  margin-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 12px;
+}
+
+.commission-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.commission-option {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.commission-option h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.commission-line {
+  margin: 0;
+  color: rgba(245, 247, 251, 0.92);
+  font-size: 14px;
+}
+
+.commission-note {
+  margin-top: 6px;
+  color: rgba(245, 247, 251, 0.68);
+  font-size: 12px;
+}
+
+.commission-rules {
+  margin-top: 10px;
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  border-radius: 10px;
+  background: rgba(212, 175, 55, 0.07);
+  padding: 10px;
+}
+
+.commission-rules p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(245, 247, 251, 0.88);
+}
+
+.commission-rules p + p {
+  margin-top: 4px;
+}
+
+.commission-toggle {
+  margin-top: 10px;
+}
+
+.commission-toggle-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.commission-toggle-button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.commission-toggle-button:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.04);
+  transform: translateY(-1px);
+}
+
+.commission-toggle-button.active {
+  border-color: rgba(212, 175, 55, 0.48);
+  background: rgba(212, 175, 55, 0.1);
+}
+
+.commission-toggle-label {
+  display: block;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.commission-toggle-summary {
+  display: block;
+  margin-top: 2px;
+  color: rgba(245, 247, 251, 0.76);
+  font-size: 13px;
+}
+
+.commission-toggle-panel {
+  margin-top: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px;
+}
+
+.commission-toggle-selected {
+  margin: 0;
+  color: rgba(245, 247, 251, 0.92);
+  font-size: 14px;
+}
+
+.commission-toggle-rules {
+  margin: 8px 0 0;
+  color: rgba(245, 247, 251, 0.78);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.commission-toggle-muted {
+  margin: 8px 0 0;
+  color: rgba(245, 247, 251, 0.68);
+  font-size: 13px;
+}
+
+.pricing-pdf-page {
+  padding: 28px 0 46px;
+}
+
+.pricing-pdf-actions {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.pricing-pdf-actions .muted {
+  text-align: center;
+  margin: 0;
+}
+
+.pricing-sheet-pdf .section {
+  padding-top: 26px;
+  padding-bottom: 26px;
+}
+
+.pricing-sheet-pdf .faq-item {
+  break-inside: avoid;
+}
+
+@media (max-width: 980px) {
+  .pricing-card-fields,
+  .commission-toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .commission-toggle-buttons {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media print {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    background: #070b14 !important;
+    color: #f2f4f7 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .nav,
+  .footer,
+  .no-print,
+  .site-only {
+    display: none !important;
+  }
+
+  .pricing-sheet .section {
+    padding-top: 16px !important;
+    padding-bottom: 16px !important;
+  }
+
+  .pricing-sheet .container {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  .pricing-table-wrap {
+    overflow: visible !important;
+  }
+
+  .pricing-table {
+    min-width: 0 !important;
+  }
+
+  .package-card,
+  .pricing-card,
+  .pricing-table-wrap,
+  .faq-item,
+  .beta-notice-card,
+  .guarantee-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

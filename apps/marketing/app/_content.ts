@@ -99,19 +99,31 @@ export const FAQS = [
 
 export const PRICING_PREVIEW = [
   {
-    name: "Starter Engine",
-    price: "$1,500 setup + $497/mo",
-    bullets: ["Website + conversion tracking", "Call capture + follow-up basics", "Best for owner-operators getting organized"],
+    name: "Foundation",
+    price: "$1,200 setup",
+    bullets: [
+      "Conversion-focused website + tracking",
+      "Consolidated revision policy to keep delivery on schedule",
+      "Best for owner-operators getting organized",
+    ],
   },
   {
-    name: "Growth Engine",
-    price: "$2,500 setup + $997/mo",
-    bullets: ["Everything in Starter + managed Google Ads", "Lead attribution + booking workflows", "Best for crews ready to scale booked work"],
+    name: "Growth",
+    price: "$1,500 setup + $600/mo",
+    bullets: [
+      "Google Ads management + local targeting limits",
+      "Ad spend paid directly to Google ($500-$1,000/mo recommended)",
+      "Best for crews ready to scale booked work",
+    ],
   },
   {
-    name: "Performance Partner",
-    price: "$3,500 setup + base + commission",
-    bullets: ["Includes growth stack + deeper optimization", "Commission options tied to tracked outcomes", "Best for teams prioritizing ROI rigor"],
+    name: "Command Center",
+    price: "$2,000 setup + $900/mo",
+    bullets: [
+      "Advanced workflow automation + reporting depth",
+      "Standard and commission-based options available",
+      "Best for teams prioritizing tight lead accountability",
+    ],
   },
 ];
 
