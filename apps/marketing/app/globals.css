@@ -2919,6 +2919,11 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
   flex-wrap:wrap;
 }
 
+.hero-controls .hero-cta{
+  /* The CTA component has legacy margin-top; keep layout stable inside flex controls. */
+  margin-top:0;
+}
+
 .hero-bullets{
   margin:18px 0 0;
   padding:0;
@@ -3764,7 +3769,7 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
 
 /* MOBILE TUNING */
 @media (max-width: 640px){
-  .hero{ padding: 92px 18px 64px; min-height: 640px; }
+  .hero{ padding: 80px 18px 56px; min-height: 620px; }
   .hero-watermark{
     background-size: 520px;
     background-position: center 110px;
@@ -3772,6 +3777,14 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
     -webkit-mask-image: radial-gradient(520px 420px at 50% 260px, rgba(0,0,0,1) 36%, rgba(0,0,0,0) 82%);
   }
   .hero-cta{ width: 100%; max-width: 360px; }
+  .hero-controls{ margin-top: 18px; }
+  .hero-bullets{ font-size: 15px; gap: 8px; }
+  .hero-bullets li{ line-height: 1.45; }
+}
+
+@media (max-width: 420px){
+  .hero-bullets li:nth-child(3){ display:none; }
+  .hero-sub{ font-size: 17px; }
 }
 
 .navbar{
@@ -4169,6 +4182,7 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
   color:rgba(245,247,251,0.78);
   font-size:14px;
   line-height:1.5;
+  min-height:52px;
 }
 
 .loss-grid{
@@ -4238,6 +4252,11 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
   .portal-demo-carousel .hero-screen-body {
     height: 420px;
   }
+}
+
+/* Anchor targets should not hide behind the sticky header. */
+#portal-demo{
+  scroll-margin-top:96px;
 }
 
 .portfolio-section {
