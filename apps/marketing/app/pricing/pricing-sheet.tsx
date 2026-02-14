@@ -197,7 +197,7 @@ export default function PricingSheet({ mode = "web" }: PricingSheetProps) {
               <Link className="cta-button gold" href="/contact">
                 {PRIMARY_CTA_LABEL}
               </Link>
-              <Link className="cta-button-outline" href="/contact">
+              <Link className="cta-button-outline" href="/#portal-demo">
                 {SECONDARY_CTA_LABEL}
               </Link>
             </div>

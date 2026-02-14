@@ -3,14 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { PRIMARY_CTA_LABEL } from "../_content";
 
 type HeroSlide = {
   id: string;
-  kicker: string;
-  headline: string;
-  highlight?: string;
-  subhead: string;
+  label: string;
   urlLabel: string;
   content: React.ReactNode;
 };
@@ -18,6 +14,38 @@ type HeroSlide = {
 function clampIndex(index: number, length: number) {
   if (length <= 0) return 0;
   return ((index % length) + length) % length;
+}
+
+function usePortalSlides() {
+  return useMemo<HeroSlide[]>(
+    () => [
+      {
+        id: "dashboard",
+        label: "Today",
+        urlLabel: "app.tieguisolutions.com/dashboard",
+        content: <PortalPreviewDashboard />,
+      },
+      {
+        id: "leads",
+        label: "New Calls",
+        urlLabel: "app.tieguisolutions.com/new-calls",
+        content: <PortalPreviewLeads />,
+      },
+      {
+        id: "scheduling",
+        label: "Calendar + Jobs",
+        urlLabel: "app.tieguisolutions.com/calendar",
+        content: <PortalPreviewSchedulingJobs />,
+      },
+      {
+        id: "performance",
+        label: "Performance",
+        urlLabel: "app.tieguisolutions.com/performance",
+        content: <PortalPreviewPerformance />,
+      },
+    ],
+    [],
+  );
 }
 
 function ScreenWindow({
@@ -325,47 +353,7 @@ function PortalPreviewSchedulingJobs() {
 }
 
 export default function HeroShowcase() {
-  const slides = useMemo<HeroSlide[]>(
-    () => [
-      {
-        id: "dashboard",
-        kicker: "Client Portal",
-        headline: "Open the portal.",
-        highlight: "Run the day.",
-        subhead: "Today view, schedule, unscheduled calls, and money — at a glance.",
-        urlLabel: "app.tieguisolutions.com/dashboard",
-        content: <PortalPreviewDashboard />,
-      },
-      {
-        id: "leads",
-        kicker: "Lead Tracking",
-        headline: "Never lose a lead.",
-        highlight: "Follow up fast.",
-        subhead: "One-tap call/text, proof view, and an immutable timeline for attribution.",
-        urlLabel: "app.tieguisolutions.com/new-calls",
-        content: <PortalPreviewLeads />,
-      },
-      {
-        id: "scheduling",
-        kicker: "Scheduling & Jobs",
-        headline: "From Lead to Scheduled Job —",
-        highlight: "Automatically",
-        subhead: "Book jobs, track progress, and store everything in one project folder.",
-        urlLabel: "app.tieguisolutions.com/calendar",
-        content: <PortalPreviewSchedulingJobs />,
-      },
-      {
-        id: "performance",
-        kicker: "Ads & Performance",
-        headline: "Know what’s working.",
-        highlight: "Prove ROI.",
-        subhead: "Spend, booked jobs, revenue, and simple reporting that contractors trust.",
-        urlLabel: "app.tieguisolutions.com/performance",
-        content: <PortalPreviewPerformance />,
-      },
-    ],
-    [],
-  );
+  const slides = usePortalSlides();
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -373,7 +361,6 @@ export default function HeroShowcase() {
   const lastTouchX = useRef<number | null>(null);
 
   const safeIndex = clampIndex(activeIndex, slides.length);
-  const active = slides[safeIndex] ?? slides[0]!;
 
   useEffect(() => {
     if (paused) return undefined;
@@ -411,28 +398,42 @@ export default function HeroShowcase() {
     <div className="container hero-showcase">
       <div className="hero-showcase-grid">
         <div className="hero-left">
-          <div className="hero-kicker">{active.kicker}</div>
+          <div className="hero-kicker">TieGui for service businesses</div>
           <h1 className="hero-title">
-            {active.headline} {active.highlight ? <span className="gold">{active.highlight}</span> : null}
+            Get More Calls and Booked Jobs — <span className="gold">Without Wasting Ad Spend.</span>
           </h1>
-          <p className="hero-sub">{active.subhead}</p>
+          <p className="hero-sub">Conversion-first website + instant SMS follow-up + ROI tracking built for service businesses.</p>
+
+          <ul className="hero-bullets">
+            <li>Respond to leads in under 60 seconds</li>
+            <li>Turn missed calls into booked estimates</li>
+            <li>Track ad spend → calls → revenue (real ROI)</li>
+          </ul>
 
           <div className="hero-controls">
             <Link className="hero-cta cta-button gold" href="/contact">
-              {PRIMARY_CTA_LABEL}
+              Book a 7-Minute Lead Flow Audit
             </Link>
-            <div className="hero-dots" aria-label="Hero carousel navigation">
-              {slides.map((slide, idx) => (
-                <button
-                  key={slide.id}
-                  type="button"
-                  className={`hero-dot${idx === clampIndex(activeIndex, slides.length) ? " active" : ""}`}
-                  aria-label={`Show ${slide.kicker}`}
-                  aria-current={idx === clampIndex(activeIndex, slides.length) ? "true" : undefined}
-                  onClick={() => goTo(idx)}
-                />
-              ))}
-            </div>
+            <a className="cta-button-outline" href="#portal-demo">
+              Watch 2-Minute Demo
+            </a>
+          </div>
+
+          <p className="hero-fineprint muted">
+            Optional: We onboard <strong>3 businesses per city</strong> to avoid overlap.
+          </p>
+
+          <div className="hero-dots" aria-label="Hero carousel navigation">
+            {slides.map((slide, idx) => (
+              <button
+                key={slide.id}
+                type="button"
+                className={`hero-dot${idx === safeIndex ? " active" : ""}`}
+                aria-label={`Show ${slide.label}`}
+                aria-current={idx === safeIndex ? "true" : undefined}
+                onClick={() => goTo(idx)}
+              />
+            ))}
           </div>
         </div>
 
@@ -453,7 +454,7 @@ export default function HeroShowcase() {
           >
             <div
               className="hero-carousel-track"
-              style={{ transform: `translateX(-${clampIndex(activeIndex, slides.length) * 100}%)` }}
+              style={{ transform: `translateX(-${safeIndex * 100}%)` }}
             >
               {slides.map((slide) => (
                 <div key={slide.id} className="hero-carousel-slide">
@@ -474,6 +475,117 @@ export default function HeroShowcase() {
           <div className="hero-carousel-hint">Swipe on mobile • Hover to pause</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+export function PortalDemoCarousel() {
+  const slides = usePortalSlides();
+  const [activeIndex, setActiveIndex] = useState(1);
+  const [paused, setPaused] = useState(false);
+  const touchStartX = useRef<number | null>(null);
+  const lastTouchX = useRef<number | null>(null);
+
+  const safeIndex = clampIndex(activeIndex, slides.length);
+  const active = slides[safeIndex] ?? slides[0]!;
+
+  useEffect(() => {
+    if (paused) return undefined;
+    const timer = window.setInterval(() => {
+      setActiveIndex((prev) => clampIndex(prev + 1, slides.length));
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [paused, slides.length]);
+
+  const goPrev = () => setActiveIndex((prev) => clampIndex(prev - 1, slides.length));
+  const goNext = () => setActiveIndex((prev) => clampIndex(prev + 1, slides.length));
+  const goTo = (index: number) => setActiveIndex(clampIndex(index, slides.length));
+
+  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    touchStartX.current = event.touches[0]?.clientX ?? null;
+    lastTouchX.current = touchStartX.current;
+  };
+
+  const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    lastTouchX.current = event.touches[0]?.clientX ?? lastTouchX.current;
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartX.current == null || lastTouchX.current == null) return;
+    const delta = lastTouchX.current - touchStartX.current;
+    touchStartX.current = null;
+    lastTouchX.current = null;
+
+    if (Math.abs(delta) < 40) return;
+    if (delta < 0) goNext();
+    else goPrev();
+  };
+
+  const caption = (() => {
+    switch (active.id) {
+      case "leads":
+        return "New Calls: one-tap call/text, proof view, and fast follow-up so leads don’t go cold.";
+      case "scheduling":
+        return "Calendar + Jobs: schedule without chaos, keep crews aligned, and prevent double-booking.";
+      case "performance":
+        return "Performance: track ad spend → calls → booked revenue so ROI is clear and disputes disappear.";
+      case "dashboard":
+      default:
+        return "Today: see next actions, unscheduled calls, and what matters most at a glance.";
+    }
+  })();
+
+  return (
+    <div className="portal-demo">
+      <div className="portal-demo-tabs" role="tablist" aria-label="Portal demo steps">
+        {slides.map((slide, idx) => (
+          <button
+            key={slide.id}
+            type="button"
+            className={`portal-demo-tab${idx === safeIndex ? " active" : ""}`}
+            role="tab"
+            aria-selected={idx === safeIndex}
+            aria-controls="portal-demo-panel"
+            onClick={() => goTo(idx)}
+          >
+            {slide.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className="hero-carousel portal-demo-carousel"
+        role="region"
+        aria-label="Portal demo preview"
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+        onFocusCapture={() => setPaused(true)}
+        onBlurCapture={() => setPaused(false)}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <div className="hero-carousel-track" style={{ transform: `translateX(-${safeIndex * 100}%)` }}>
+          {slides.map((slide) => (
+            <div key={slide.id} className="hero-carousel-slide">
+              <ScreenWindow urlLabel={slide.urlLabel}>{slide.content}</ScreenWindow>
+            </div>
+          ))}
+        </div>
+
+        <div className="hero-carousel-arrows">
+          <button type="button" className="hero-carousel-arrow" onClick={goPrev} aria-label="Previous demo step">
+            ‹
+          </button>
+          <button type="button" className="hero-carousel-arrow" onClick={goNext} aria-label="Next demo step">
+            ›
+          </button>
+        </div>
+      </div>
+
+      <p className="portal-demo-caption" id="portal-demo-panel" role="tabpanel" aria-live="polite">
+        {caption}
+      </p>
     </div>
   );
 }

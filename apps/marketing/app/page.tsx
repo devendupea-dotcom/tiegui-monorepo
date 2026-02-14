@@ -1,17 +1,51 @@
 import Image from "next/image";
 import SiteHeader from "./_components/SiteHeader";
 import SiteFooter from "./_components/SiteFooter";
-import HeroShowcase from "./_components/HeroShowcase";
+import HeroShowcase, { PortalDemoCarousel } from "./_components/HeroShowcase";
 import {
   BETA_CTA_LABEL,
   FAQS,
   HOW_IT_WORKS_TIMELINE,
+  MAP_CTA_LABEL,
   PRICING_PREVIEW,
   PRIMARY_CTA_LABEL,
   SECONDARY_CTA_LABEL,
   SMS_EXAMPLE,
   TRUST_POINTS,
 } from "./_content";
+
+const DELIVERY_MILESTONES = [
+  {
+    title: "Lead Flow Audit + Offer Map",
+    window: "Days 1–2",
+    desc: "We review your current lead flow, market, and offer so we can stop wasted spend fast.",
+    bullets: ["Map your first 5 calls", "Define your service area + targeting limits", "Set measurable milestones"],
+  },
+  {
+    title: "Conversion Website + Tracking Installed",
+    window: "Days 3–7",
+    desc: "A booking-first site built for mobile callers with tracking wired end-to-end.",
+    bullets: ["Click-to-call + fast forms", "UTMs + call tracking", "Clear booking path on every page"],
+  },
+  {
+    title: "Instant Follow-Up (Missed Call → Text Back)",
+    window: "Days 8–10",
+    desc: "If you miss a call, the lead gets a fast text so you still win the job.",
+    bullets: ["Missed-call text-back", "Basic intake questions", "Follow-up prompts for your team"],
+  },
+  {
+    title: "Launch + Command Center Dashboard",
+    window: "Days 11–14",
+    desc: "You get a clean dashboard that ties ad spend to calls, booked jobs, and ROI.",
+    bullets: ["Leads + job log", "Revenue + ROI scorecard", "Simple weekly performance view"],
+  },
+] as const;
+
+const SYSTEM_PROOF_METRICS = [
+  { label: "Leads", value: "42", note: "Last 30 days" },
+  { label: "Won", value: "$18,900", note: "Revenue (won)" },
+  { label: "ROI", value: "3.2×", note: "Spend → revenue" },
+] as const;
 
 export default function HomePage() {
   return (
@@ -29,19 +63,128 @@ export default function HomePage() {
         <HeroShowcase />
       </main>
 
+      <section className="section proof-section" id="system-proof">
+        <div className="container">
+          <div className="section-head">
+            <p className="section-eyebrow">System proof</p>
+            <h2>Proof beats promises.</h2>
+            <p className="muted">Demo metrics shown — your dashboard will track the same.</p>
+          </div>
+
+          <div className="proof-metrics-grid">
+            {SYSTEM_PROOF_METRICS.map((metric) => (
+              <article className="proof-metric" key={metric.label}>
+                <div className="proof-metric-label">{metric.label}</div>
+                <div className="proof-metric-value">{metric.value}</div>
+                <div className="proof-metric-note">{metric.note}</div>
+              </article>
+            ))}
+            <article className="proof-metric proof-metric-wide">
+              <div className="proof-metric-label">What gets tracked</div>
+              <ul className="proof-metric-list">
+                <li>Ad spend → calls → booked jobs → revenue</li>
+                <li>Lead source + landing page + UTM proof view</li>
+                <li>Immutable activity timeline for accountability</li>
+              </ul>
+            </article>
+          </div>
+
+          <div className="section-actions center">
+            <a className="cta-button gold" href="/contact">
+              {PRIMARY_CTA_LABEL}
+            </a>
+            <a className="cta-button-outline" href="#portal-demo">
+              {SECONDARY_CTA_LABEL}
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className="section delivery-section" id="what-you-get">
+        <div className="container">
+          <div className="section-head">
+            <p className="section-eyebrow">What you get</p>
+            <h2>What You Get in 14 Days</h2>
+            <p className="muted">
+              Clear deliverables, measurable milestones, and a simple revision loop that protects your time.
+            </p>
+          </div>
+
+          <div className="milestone-grid">
+            {DELIVERY_MILESTONES.map((milestone) => (
+              <article className="milestone-card" key={milestone.title}>
+                <div className="milestone-window">{milestone.window}</div>
+                <h3>{milestone.title}</h3>
+                <p className="muted">{milestone.desc}</p>
+                <ul>
+                  {milestone.bullets.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+
+          <p className="muted delivery-note">
+            Revision policy: 1 round of <strong>consolidated revisions</strong> (submit all changes together in one list).
+          </p>
+
+          <div className="section-actions center">
+            <a className="cta-button gold" href="/contact">
+              {MAP_CTA_LABEL}
+            </a>
+            <a className="cta-button-outline" href="/pricing">
+              {BETA_CTA_LABEL}
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className="section portal-demo-section alt" id="portal-demo">
+        <div className="container portal-demo-grid">
+          <div className="portal-demo-copy">
+            <p className="section-eyebrow">Watch the flow</p>
+            <h2>New Call → Scheduled Job → Project Folder → Proof</h2>
+            <p className="muted">
+              This is the contractor workflow that reduces ghosting, speeds up booking, and makes ROI visible.
+            </p>
+            <ul className="proof-list">
+              <li>See exactly where every call came from (UTMs + tracking).</li>
+              <li>Book fast from mobile without calendar chaos.</li>
+              <li>Store notes, photos, and measurements in the job folder.</li>
+            </ul>
+            <div className="section-actions">
+              <a className="cta-button gold" href="/contact">
+                {PRIMARY_CTA_LABEL}
+              </a>
+              <a className="cta-button-outline" href="/pricing">
+                {BETA_CTA_LABEL}
+              </a>
+            </div>
+            <p className="muted portal-demo-note">
+              See which calls turned into booked revenue — not vanity clicks.
+            </p>
+          </div>
+
+          <div className="portal-demo-media">
+            <PortalDemoCarousel />
+          </div>
+        </div>
+      </section>
+
       <section className="section portfolio-section" id="portfolio-showcase">
         <div className="container portfolio-grid">
           <div className="portfolio-copy">
-            <p className="section-eyebrow">Portfolio showcase</p>
-            <h2>Real contractor site. Real conversion flow.</h2>
+            <p className="section-eyebrow">Case study</p>
+            <h2>PNW Landscaping — booking-first layout + follow-up automation</h2>
             <p className="muted">
-              This is the quality bar for TieGui builds: clear offer, local trust signals, and a booking-first layout designed for
-              mobile callers.
+              A demo example of the TieGui quality bar: clear offer, local trust signals, and a booking path designed for
+              mobile callers. Demo metrics shown — your dashboard will track the same.
             </p>
             <ul className="proof-list">
-              <li>Built for high-intent local traffic and fast lead capture.</li>
-              <li>Designed for contractors that need calls, not vanity pageviews.</li>
-              <li>Integrated with follow-up workflows so leads do not go cold.</li>
+              <li>Response-time workflow under 60 seconds (missed-call text-back).</li>
+              <li>Booking-first mobile layout built for calls, not vanity traffic.</li>
+              <li>Tracking installed: UTMs + call records + proof view for attribution.</li>
             </ul>
             <div className="section-actions">
               <a className="cta-button-outline" href="https://pnw-landscape-demo.web.app" target="_blank" rel="noreferrer">
@@ -54,13 +197,56 @@ export default function HomePage() {
           </div>
           <div className="portfolio-media">
             <Image
-              src="/images/pnw-site-preview.png"
-              alt="PNW landscaping website preview"
+              src="/images/pnw-site-screenshot.png"
+              alt="PNW landscaping website screenshot"
               width={1600}
               height={1000}
               sizes="(max-width: 980px) 100vw, 55vw"
               priority
             />
+          </div>
+        </div>
+      </section>
+
+      <section className="section loss-section" id="why-contractors-lose-leads">
+        <div className="container">
+          <div className="section-head">
+            <p className="section-eyebrow">Why leads get lost</p>
+            <h2>Why Most Contractors Lose Leads</h2>
+            <p className="muted">It’s usually not “bad ads.” It’s the lead flow.</p>
+          </div>
+
+          <div className="loss-grid">
+            <article className="loss-card">
+              <h3>Three killers</h3>
+              <ul className="loss-list">
+                <li>
+                  <strong>Slow response time</strong> (the first 5 minutes)
+                </li>
+                <li>
+                  <strong>No booking path on mobile</strong> (clicks become dead ends)
+                </li>
+                <li>
+                  <strong>No attribution</strong> (ads feel like gambling)
+                </li>
+              </ul>
+            </article>
+
+            <article className="loss-card highlight">
+              <h3>Revenue engines, not brochure sites.</h3>
+              <p className="muted">
+                TieGui is built for one thing: turning demand into booked work. We install fast follow-up, clean
+                scheduling, and ROI tracking so you can see what’s working and stop guessing.
+              </p>
+              <div className="section-actions">
+                <a className="cta-button gold" href="/contact">
+                  {PRIMARY_CTA_LABEL}
+                </a>
+                <a className="cta-button-outline" href="#portal-demo">
+                  {SECONDARY_CTA_LABEL}
+                </a>
+              </div>
+            </article>
           </div>
         </div>
       </section>
@@ -123,7 +309,7 @@ export default function HomePage() {
               {BETA_CTA_LABEL}
             </a>
             <a className="cta-button-outline" href="/contact">
-              {SECONDARY_CTA_LABEL}
+              {MAP_CTA_LABEL}
             </a>
           </div>
         </div>
@@ -136,7 +322,7 @@ export default function HomePage() {
             <h2>{SMS_EXAMPLE.title}</h2>
             <p className="muted">{SMS_EXAMPLE.subtitle}</p>
             <p className="sms-trust">{SMS_EXAMPLE.trustLine}</p>
-            <a className="cta-button-outline" href="/contact">
+            <a className="cta-button-outline" href="#portal-demo">
               {SECONDARY_CTA_LABEL}
             </a>
           </div>

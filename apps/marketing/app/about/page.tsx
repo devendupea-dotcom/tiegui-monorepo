@@ -1,7 +1,7 @@
 import Image from "next/image";
 import SiteHeader from "../_components/SiteHeader";
 import SiteFooter from "../_components/SiteFooter";
-import { PRIMARY_CTA_LABEL, SECONDARY_CTA_LABEL } from "../_content";
+import { PRIMARY_CTA_LABEL } from "../_content";
 
 export default function AboutPage() {
   return (
@@ -43,7 +43,7 @@ export default function AboutPage() {
                   {PRIMARY_CTA_LABEL}
                 </a>
                 <a className="cta-button-outline" href="/case-studies">
-                  {SECONDARY_CTA_LABEL}
+                  View Case Studies
                 </a>
               </div>
             </div>

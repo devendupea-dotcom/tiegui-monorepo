@@ -1,15 +1,16 @@
-export const PRIMARY_CTA_LABEL = "Get a Free Quote";
-export const SECONDARY_CTA_LABEL = "See If This Fits Your Business";
+export const PRIMARY_CTA_LABEL = "Get My Lead Flow Audit";
+export const SECONDARY_CTA_LABEL = "See the Live Demo";
 export const BETA_CTA_LABEL = "Lock In Beta Pricing";
-export const NAV_CTA_LABEL = "Let's Talk";
+export const MAP_CTA_LABEL = "Map My First 5 Calls";
+export const NAV_CTA_LABEL = "Get My Lead Flow Audit";
 
 export const TRUST_POINTS = [
-  "Conversion-first website build",
-  "Local-intent Google Ads setup",
-  "Call tracking installed",
-  "Missed-call capture",
-  "Lead routing",
-  "Simple weekly reporting",
+  "Respond to leads in under 60 seconds",
+  "Missed calls become booked estimates automatically",
+  "Know exactly which ads produce money",
+  "Track ad spend → calls → revenue (real ROI)",
+  "Booking-first mobile flow (no dead ends)",
+  "Simple scorecard: leads, booked, revenue, ROI",
 ];
 
 export const HOW_IT_WORKS_TIMELINE = [
@@ -38,27 +39,27 @@ export const HOW_IT_WORKS_TIMELINE = [
 export const SYSTEM_STEPS = [
   {
     title: "Conversion Website",
-    desc: "Call-focused layout and mobile-first structure that drives inquiries.",
+    desc: "A booking-first layout built for mobile callers so clicks become calls and scheduled work.",
   },
   {
     title: "Google Intent Traffic",
-    desc: "Google Ads built around local intent and high-value searches.",
+    desc: "Ads structured around local intent and your best jobs, not random clicks.",
   },
   {
     title: "Call and Lead Tracking",
-    desc: "Tracking numbers and attribution so you know which calls convert.",
+    desc: "Know exactly which ads produced calls, booked jobs, and revenue so marketing stops feeling like gambling.",
   },
   {
     title: "Missed-Call Capture",
-    desc: "Automatic text follow-up so missed calls become booked jobs.",
+    desc: "If you miss a call, leads get texted back automatically so you still win the job.",
   },
   {
     title: "Lead Routing",
-    desc: "Routes each lead to the right person for a fast response.",
+    desc: "The right person gets the lead fast so response time stays under 5 minutes.",
   },
   {
     title: "Weekly Reporting",
-    desc: "Simple weekly updates on calls, sources, and performance.",
+    desc: "One scorecard: leads, booked, revenue, ROI. No fluff metrics.",
   },
 ];
 
