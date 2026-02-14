@@ -2,6 +2,7 @@
   --bg-900: #070B14;
   --bg-850: #0B1020;
   --line: rgba(255,255,255,.08);
+  --nav-height: 72px;
 
   --text: rgba(255,255,255,.92);
   --muted: rgba(255,255,255,.70);
@@ -34,7 +35,7 @@ a{color:inherit;text-decoration:none}
 .nav{
   position:sticky;
   top:0;
-  height:72px;
+  height:var(--nav-height);
   display:flex;
   align-items:center;
   padding:0;
@@ -45,14 +46,14 @@ a{color:inherit;text-decoration:none}
   z-index:40;
 }
 .hero-nav{
-  height:72px;
+  height:var(--nav-height);
 }
 .nav-inner{
   display:grid;
   grid-template-columns:auto 1fr auto;
   align-items:center;
   gap:18px;
-  height:72px;
+  height:var(--nav-height);
 }
 .brand{
   display:flex;
@@ -4254,9 +4255,15 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
   }
 }
 
+@media (max-width: 640px) {
+  .portal-demo-caption {
+    min-height: 44px;
+  }
+}
+
 /* Anchor targets should not hide behind the sticky header. */
 #portal-demo{
-  scroll-margin-top:96px;
+  scroll-margin-top:calc(var(--nav-height, 72px) + 16px);
 }
 
 .portfolio-section {

@@ -68,7 +68,7 @@ export default function HomePage() {
           <div className="section-head">
             <p className="section-eyebrow">System proof</p>
             <h2>Proof beats promises.</h2>
-            <p className="muted">Demo metrics shown — your dashboard will track these metrics.</p>
+            <p className="muted">Demo metrics shown — your dashboard tracks these metrics.</p>
           </div>
 
           <div className="proof-metrics-grid">
@@ -179,7 +179,7 @@ export default function HomePage() {
             <h2>PNW Landscaping — booking-first layout + follow-up automation</h2>
             <p className="muted">
               A demo example of the TieGui quality bar: clear offer, local trust signals, and a booking path designed for
-              mobile callers. Demo metrics shown — your dashboard will track these metrics.
+              mobile callers. Demo metrics shown — your dashboard tracks these metrics.
             </p>
             <ul className="proof-list">
               <li>Response-time workflow under 60 seconds (missed-call text-back).</li>

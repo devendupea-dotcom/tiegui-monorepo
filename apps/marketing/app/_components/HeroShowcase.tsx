@@ -406,8 +406,8 @@ export default function HeroShowcase() {
 
           <ul className="hero-bullets">
             <li>Respond to leads in under 60 seconds</li>
-            <li>Turn missed calls into booked estimates</li>
             <li>Track ad spend → calls → revenue (real ROI)</li>
+            <li>Turn missed calls into booked estimates</li>
           </ul>
 
           <div className="hero-controls">
