@@ -136,6 +136,7 @@ export async function POST(req: Request, { params }: RouteContext) {
   const now = new Date();
 
   const providerResult = await sendOutboundSms({
+    orgId: scoped.lead.orgId,
     fromNumberE164: resolvedFromNumber,
     toNumberE164: scoped.lead.phoneE164,
     body: cleanedBody,

@@ -2,6 +2,8 @@ import { advanceLeadIntakeFromInbound } from "@/lib/intake-automation";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { validateTwilioWebhook } from "@/lib/twilio";
+import { startOfUtcMonth } from "@/lib/usage";
+import { normalizeEnvValue } from "@/lib/env";
 
 const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
 const START_KEYWORDS = new Set(["START", "UNSTOP"]);
@@ -35,6 +37,11 @@ export async function POST(req: Request) {
     return twimlOk();
   }
   const now = new Date();
+  const periodStart = startOfUtcMonth(now);
+  const smsCostEstimateCents = Math.max(
+    0,
+    Math.round(Number(normalizeEnvValue(process.env.TWILIO_SMS_COST_ESTIMATE_CENTS)) || 1),
+  );
 
   const organization = await prisma.organization.findFirst({
     where: { smsFromNumberE164: toNumber },
@@ -132,6 +139,19 @@ export async function POST(req: Request) {
           status: "DELIVERED",
         },
       });
+      await prisma.organizationUsage.upsert({
+        where: { orgId_periodStart: { orgId: organization.id, periodStart } },
+        create: {
+          orgId: organization.id,
+          periodStart,
+          smsReceivedCount: 1,
+          smsCostEstimateCents,
+        },
+        update: {
+          smsReceivedCount: { increment: 1 },
+          smsCostEstimateCents: { increment: smsCostEstimateCents },
+        },
+      });
       shouldAdvanceIntakeFlow = true;
     }
   } else {
@@ -146,6 +166,19 @@ export async function POST(req: Request) {
         body,
         provider: "TWILIO",
         status: "DELIVERED",
+      },
+    });
+    await prisma.organizationUsage.upsert({
+      where: { orgId_periodStart: { orgId: organization.id, periodStart } },
+      create: {
+        orgId: organization.id,
+        periodStart,
+        smsReceivedCount: 1,
+        smsCostEstimateCents,
+      },
+      update: {
+        smsReceivedCount: { increment: 1 },
+        smsCostEstimateCents: { increment: smsCostEstimateCents },
       },
     });
     shouldAdvanceIntakeFlow = true;

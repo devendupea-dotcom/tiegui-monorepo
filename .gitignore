@@ -78,6 +78,9 @@ web_modules/
 .next
 out
 
+# Serwist service worker build output (generated during production builds)
+**/public/sw.js
+
 # Nuxt.js build / generate output
 .nuxt
 dist

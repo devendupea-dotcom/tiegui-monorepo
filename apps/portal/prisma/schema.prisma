@@ -25,6 +25,11 @@ model Organization {
   onboardingCompletedAt   DateTime?
   onboardingSkippedAt     DateTime?
   smsFromNumberE164       String?
+  smsMonthlyLimit         Int      @default(3000)
+  smsHardStop             Boolean  @default(true)
+  aiMonthlyBudgetCents    Int      @default(1000)
+  aiHardStop              Boolean  @default(true)
+  aiUserDailyRequestLimit Int      @default(25)
   messageLanguage         MessageLanguage @default(EN)
   missedCallAutoReplyOn   Boolean  @default(false)
   missedCallAutoReplyBody String?
@@ -57,6 +62,7 @@ model Organization {
   adSpendEntries           AdSpendEntry[]
   leadNotes                LeadNote[]
   leadPhotos               LeadPhoto[]
+  photos                   Photo[]
   leadMeasurements         LeadMeasurement[]
   integrationAccounts      IntegrationAccount[]
   integrationOAuthStates   IntegrationOAuthState[]
@@ -79,6 +85,9 @@ model Organization {
   cronRunLogs              InternalCronRunLog[]
   metaCapiEvents           MetaCapiEvent[]
   clientMutationReceipts   ClientMutationReceipt[]
+  usageByMonth             OrganizationUsage[]
+  aiUsageByMonth           AiUsage[]
+  aiUserDayUsage           AiUserDayUsage[]
 }
 
 model User {
@@ -121,6 +130,7 @@ model User {
   accounts               Account[]
   sessions               Session[]
   resetTokens            PasswordResetToken[]
+  aiUserDayUsage         AiUserDayUsage[]
 
   @@index([orgId])
 }
@@ -445,6 +455,61 @@ model ClientMutationReceipt {
   @@index([route, createdAt])
 }
 
+model OrganizationUsage {
+  id                  String   @id @default(uuid())
+  orgId               String
+  periodStart         DateTime
+  smsSentCount        Int      @default(0)
+  smsReceivedCount    Int      @default(0)
+  smsCostEstimateCents Int     @default(0)
+  smsAlert80At        DateTime?
+  smsAlert100At       DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, periodStart])
+  @@index([orgId, periodStart])
+}
+
+model AiUsage {
+  id                 String   @id @default(uuid())
+  orgId              String
+  periodStart        DateTime
+  requestsCount      Int      @default(0)
+  inputTokens        Int      @default(0)
+  outputTokens       Int      @default(0)
+  estimatedCostCents Int      @default(0)
+  alert80At          DateTime?
+  alert100At         DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, periodStart])
+  @@index([orgId, periodStart])
+}
+
+model AiUserDayUsage {
+  id                 String   @id @default(uuid())
+  orgId              String
+  userId             String
+  dayStart           DateTime
+  requestsCount      Int      @default(0)
+  estimatedCostCents Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId, dayStart])
+  @@index([orgId, dayStart])
+  @@index([userId, dayStart])
+}
+
 model OrgDashboardConfig {
   orgId                    String   @id
   adsPaused                Boolean  @default(false)
@@ -725,23 +790,43 @@ model LeadNote {
   @@index([leadId, createdAt])
 }
 
+model Photo {
+  id           String   @id @default(uuid())
+  orgId        String
+  key          String
+  contentType  String
+  sizeBytes    Int
+  originalName String?
+  createdAt    DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  leadPhotos LeadPhoto[]
+
+  @@unique([orgId, key])
+  @@index([orgId, createdAt])
+}
+
 model LeadPhoto {
   id              String   @id @default(uuid())
   orgId           String
   leadId          String
+  photoId         String?
   createdByUserId String?
   fileName        String
   mimeType        String
-  imageDataUrl    String
+  imageDataUrl    String?
   caption         String?
   createdAt       DateTime @default(now())
 
   org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   lead      Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  photo     Photo?       @relation(fields: [photoId], references: [id], onDelete: SetNull)
   createdBy User?        @relation("LeadPhotoCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([orgId, createdAt])
   @@index([leadId, createdAt])
+  @@index([photoId])
 }
 
 model LeadMeasurement {

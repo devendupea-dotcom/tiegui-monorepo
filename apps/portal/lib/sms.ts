@@ -1,7 +1,12 @@
 import type { MessageStatus } from "@prisma/client";
 import { normalizeEnvValue } from "./env";
+import { prisma } from "@/lib/prisma";
+import { startOfUtcMonth } from "@/lib/usage";
+import { maybeSendSmsQuotaAlerts } from "@/lib/usage-alerts";
+import { checkSlidingWindowLimit } from "@/lib/rate-limit";
 
 type SendSmsInput = {
+  orgId: string;
   fromNumberE164: string;
   toNumberE164: string;
   body: string;
@@ -36,6 +41,10 @@ function isTwilioSendEnabled(): boolean {
 export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResult> {
   const accountSid = normalizeEnvValue(process.env.TWILIO_ACCOUNT_SID);
   const authToken = normalizeEnvValue(process.env.TWILIO_AUTH_TOKEN);
+  const smsCostEstimateCents = Math.max(
+    0,
+    Math.round(Number(normalizeEnvValue(process.env.TWILIO_SMS_COST_ESTIMATE_CENTS)) || 1),
+  );
 
   // Safe default for development: persist outbound rows without calling Twilio.
   if (!isTwilioSendEnabled() || !accountSid || !authToken) {
@@ -44,6 +53,95 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
       status: "QUEUED",
       notice: "Twilio sending is disabled. Message saved in CRM and marked QUEUED.",
     };
+  }
+
+  const toRate = await checkSlidingWindowLimit({
+    identifier: `${input.orgId}:${input.toNumberE164}`,
+    prefix: "rl:sms:to",
+    limit: 6,
+    windowSeconds: 60,
+  });
+
+  if (!toRate.ok) {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      notice: "Too many messages to this number. Try again in a minute.",
+    };
+  }
+
+  const organization = await prisma.organization.findUnique({
+    where: { id: input.orgId },
+    select: {
+      smsMonthlyLimit: true,
+      smsHardStop: true,
+    },
+  });
+
+  if (!organization) {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      notice: "Organization not found.",
+    };
+  }
+
+  const limit = organization.smsMonthlyLimit || 0;
+  const hardStop = organization.smsHardStop ?? true;
+  const periodStart = startOfUtcMonth(new Date());
+
+  await prisma.organizationUsage.upsert({
+    where: { orgId_periodStart: { orgId: input.orgId, periodStart } },
+    create: { orgId: input.orgId, periodStart },
+    update: {},
+  });
+
+  if (limit > 0 && hardStop) {
+    const updated = await prisma.organizationUsage.updateMany({
+      where: {
+        orgId: input.orgId,
+        periodStart,
+        smsSentCount: { lt: limit },
+      },
+      data: {
+        smsSentCount: { increment: 1 },
+        smsCostEstimateCents: { increment: smsCostEstimateCents },
+      },
+    });
+
+    if (updated.count === 0) {
+      return {
+        providerMessageSid: null,
+        status: "FAILED",
+        notice: `SMS quota exceeded (${limit}/month). Sending blocked to prevent surprise charges.`,
+      };
+    }
+  } else {
+    await prisma.organizationUsage.updateMany({
+      where: { orgId: input.orgId, periodStart },
+      data: {
+        smsSentCount: { increment: 1 },
+        smsCostEstimateCents: { increment: smsCostEstimateCents },
+      },
+    });
+  }
+
+  const usage = await prisma.organizationUsage.findUnique({
+    where: { orgId_periodStart: { orgId: input.orgId, periodStart } },
+    select: { smsSentCount: true },
+  });
+
+  if (usage && limit > 0) {
+    try {
+      await maybeSendSmsQuotaAlerts({
+        orgId: input.orgId,
+        periodStart,
+        used: usage.smsSentCount,
+        limit,
+      });
+    } catch (error) {
+      console.warn("Failed to send SMS quota alert email.", error);
+    }
   }
 
   const response = await fetch(

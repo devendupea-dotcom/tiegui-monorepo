@@ -2,6 +2,8 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime, formatLabel, isOverdueFollowUp } from "@/lib/hq";
 import {
@@ -11,10 +13,12 @@ import {
   reserveNextInvoiceNumber,
 } from "@/lib/invoices";
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
+import { isR2Configured, requireR2 } from "@/lib/r2";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
 import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session";
 import { getParam, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
 import JobFieldActions from "../job-field-actions";
+import JobPhotoUploader from "../job-photo-uploader";
 import JobStatusControls from "../job-status-controls";
 
 type TimelineItem = {
@@ -187,41 +191,6 @@ async function addJobMeasurementAction(formData: FormData) {
   revalidatePath(`/app/jobs/${scoped.lead.id}`);
 
   redirect(appendQuery(scoped.returnPath, "saved", "measurement"));
-}
-
-async function addJobPhotoAction(formData: FormData) {
-  "use server";
-
-  const scoped = await requireLeadActionAccess(formData);
-  const caption = String(formData.get("caption") || "").trim();
-  const file = formData.get("photoFile");
-
-  if (!(file instanceof File) || file.size <= 0 || !file.type.startsWith("image/")) {
-    redirect(appendQuery(scoped.returnPath, "error", "photo"));
-  }
-
-  if (file.size > 4 * 1024 * 1024) {
-    redirect(appendQuery(scoped.returnPath, "error", "photo-size"));
-  }
-
-  const arrayBuffer = await file.arrayBuffer();
-  const imageDataUrl = `data:${file.type};base64,${Buffer.from(arrayBuffer).toString("base64")}`;
-
-  await prisma.leadPhoto.create({
-    data: {
-      orgId: scoped.lead.orgId,
-      leadId: scoped.lead.id,
-      createdByUserId: scoped.user.id ?? null,
-      fileName: file.name || "photo",
-      mimeType: file.type,
-      imageDataUrl,
-      caption: caption || null,
-    },
-  });
-
-  revalidatePath(`/app/jobs/${scoped.lead.id}`);
-
-  redirect(appendQuery(scoped.returnPath, "saved", "photo"));
 }
 
 async function createInvoiceAction(formData: FormData) {
@@ -501,11 +470,15 @@ export default async function ClientJobDetailPage({
       leadPhotos: {
         select: {
           id: true,
+          photoId: true,
           fileName: true,
           mimeType: true,
           imageDataUrl: true,
           caption: true,
           createdAt: true,
+          photo: {
+            select: { key: true },
+          },
           createdBy: {
             select: { name: true, email: true },
           },
@@ -559,6 +532,49 @@ export default async function ClientJobDetailPage({
 
     notFound();
   }
+
+  const resolvedLeadPhotos =
+    currentTab === "photos"
+      ? await (async () => {
+          if (lead.leadPhotos.length === 0) return [];
+
+          if (!isR2Configured()) {
+            return lead.leadPhotos.map((photo) => ({
+              ...photo,
+              resolvedUrl: photo.imageDataUrl,
+            }));
+          }
+
+          const { r2, bucket } = requireR2();
+
+          return await Promise.all(
+            lead.leadPhotos.map(async (photo) => {
+              if (photo.imageDataUrl) {
+                return { ...photo, resolvedUrl: photo.imageDataUrl };
+              }
+
+              if (photo.photo?.key) {
+                try {
+                  const url = await getSignedUrl(
+                    r2,
+                    new GetObjectCommand({
+                      Bucket: bucket,
+                      Key: photo.photo.key,
+                    }),
+                    { expiresIn: 60 },
+                  );
+
+                  return { ...photo, resolvedUrl: url };
+                } catch {
+                  return { ...photo, resolvedUrl: null };
+                }
+              }
+
+              return { ...photo, resolvedUrl: null };
+            }),
+          );
+        })()
+      : [];
 
   const timeline: TimelineItem[] = [
     ...lead.calls.map((call) => ({
@@ -905,40 +921,24 @@ export default async function ClientJobDetailPage({
             <h2>Upload Site Photo</h2>
             <p className="muted">Add progress photos directly inside this project folder.</p>
 
-            <form action={addJobPhotoAction} className="auth-form" style={{ marginTop: 12 }}>
-              <input type="hidden" name="leadId" value={lead.id} />
-              <input type="hidden" name="orgId" value={lead.orgId} />
-              <input type="hidden" name="returnPath" value={returnPathFor("photos")} />
-
-              <label>
-                Photo file
-                <input name="photoFile" type="file" accept="image/*" required />
-              </label>
-
-              <label>
-                Caption (optional)
-                <input name="caption" maxLength={200} placeholder="Before cleanup - front yard" />
-              </label>
-
-              <button className="btn primary" type="submit">
-                Upload Photo
-              </button>
-
-              {saved === "photo" ? <p className="form-status">Photo uploaded.</p> : null}
-              {error === "photo" ? <p className="form-status">Select an image file before uploading.</p> : null}
-              {error === "photo-size" ? <p className="form-status">Photo must be smaller than 4MB.</p> : null}
-            </form>
+            <JobPhotoUploader jobId={lead.id} />
           </article>
 
           <article className="card">
             <h2>Photo Gallery</h2>
-            {lead.leadPhotos.length === 0 ? (
+            {resolvedLeadPhotos.length === 0 ? (
               <p className="muted" style={{ marginTop: 10 }}>No photos yet.</p>
             ) : (
               <div className="photo-grid" style={{ marginTop: 12 }}>
-                {lead.leadPhotos.map((photo) => (
+                {resolvedLeadPhotos.map((photo) => (
                   <figure key={photo.id} className="photo-item">
-                    <img src={photo.imageDataUrl} alt={photo.caption || photo.fileName} loading="lazy" />
+                    {photo.resolvedUrl ? (
+                      <img src={photo.resolvedUrl} alt={photo.caption || photo.fileName} loading="lazy" />
+                    ) : (
+                      <div className="muted" style={{ padding: 12 }}>
+                        Photo unavailable.
+                      </div>
+                    )}
                     <figcaption>
                       <p>{photo.caption || photo.fileName}</p>
                       <p className="muted">

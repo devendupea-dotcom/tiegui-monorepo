@@ -213,6 +213,7 @@ export async function POST(req: Request) {
         );
         const now = new Date();
         const providerResult = await sendOutboundSms({
+          orgId: org.id,
           fromNumberE164: org.smsFromNumberE164,
           toNumberE164: lead.phoneE164,
           body: nudgeBody,

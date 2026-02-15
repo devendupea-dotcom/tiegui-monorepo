@@ -86,6 +86,7 @@ async function sendAutomationMessage({
   }
 
   const smsResult = await sendOutboundSms({
+    orgId: organization.id,
     fromNumberE164: organization.smsFromNumberE164,
     toNumberE164,
     body,

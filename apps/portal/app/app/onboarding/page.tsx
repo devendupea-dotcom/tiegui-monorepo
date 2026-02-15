@@ -447,6 +447,7 @@ async function saveMessagingAction(formData: FormData) {
     }
 
     const result = await sendOutboundSms({
+      orgId,
       fromNumberE164: fromNumber,
       toNumberE164: toNumber,
       body: "TieGui onboarding test: this confirms SMS routing is configured.",

@@ -361,12 +361,6 @@ async function main() {
     },
   });
 
-  const demoPhotoDataUrl =
-    "data:image/svg+xml;base64," +
-    Buffer.from(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'><rect width='640' height='360' fill='#dcecff'/><text x='40' y='190' font-size='34' fill='#1f4f83' font-family='Arial'>Site Photo</text></svg>`,
-    ).toString("base64");
-
   await prisma.leadNote.createMany({
     data: [
       {
@@ -416,29 +410,6 @@ async function main() {
         label: "Roof Surface",
         value: "2800",
         unit: "sqft",
-      },
-    ],
-  });
-
-  await prisma.leadPhoto.createMany({
-    data: [
-      {
-        orgId: orgLandscaping.id,
-        leadId: lead3.id,
-        createdByUserId: deven.id,
-        fileName: "front-yard.svg",
-        mimeType: "image/svg+xml",
-        imageDataUrl: demoPhotoDataUrl,
-        caption: "Front yard before cleanup",
-      },
-      {
-        orgId: orgRoofing.id,
-        leadId: lead5.id,
-        createdByUserId: marcus.id,
-        fileName: "roof-angle.svg",
-        mimeType: "image/svg+xml",
-        imageDataUrl: demoPhotoDataUrl,
-        caption: "Main slope photo from driveway",
       },
     ],
   });
