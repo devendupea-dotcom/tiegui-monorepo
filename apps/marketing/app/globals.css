@@ -4847,3 +4847,358 @@ input:focus,textarea:focus{border-color:rgba(255,255,255,0.4)}
     page-break-inside: avoid;
   }
 }
+
+/* =========================================================
+   TieGui – Premium marketing updates (globals.css)
+   (1) scroll-margin-top for #demo-video
+   (2) premium demo video embed styling
+   (3) founder story card + signature
+   (4) consultative /pricing card styling + print/PDF rules
+   ---------------------------------------------------------
+   Intentionally near the end so these overrides win cleanly.
+   ========================================================= */
+
+/* ---------- Theme fallbacks (won't override existing tokens) ---------- */
+:root {
+  --tg-bg: var(--bg, #0b0f14);
+  --tg-surface: var(--surface, #0f1621);
+  --tg-surface-2: var(--surface2, #0c121b);
+  --tg-border: var(--border, rgba(255, 255, 255, 0.1));
+  --tg-border-2: var(--border2, rgba(255, 255, 255, 0.14));
+  --tg-text: var(--text, rgba(255, 255, 255, 0.92));
+  --tg-muted: var(--muted, rgba(255, 255, 255, 0.68));
+  --tg-gold: var(--gold, #d6b66a);
+  --tg-shadow: 0 14px 44px rgba(0, 0, 0, 0.55);
+}
+
+/* =========================================================
+   (1) Anchor scroll offset
+   ========================================================= */
+#demo-video {
+  scroll-margin-top: calc(var(--nav-height, 72px) + 16px);
+}
+
+[data-scroll-anchor="true"] {
+  scroll-margin-top: calc(var(--nav-height, 72px) + 16px);
+}
+
+/* =========================================================
+   (2) Demo video embed (premium theme)
+   ========================================================= */
+.tg-demo {
+  position: relative;
+}
+
+/* Map to our existing markup classes too. */
+.tg-demo__frame,
+.demo-video-frame {
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+
+  background: radial-gradient(1200px 600px at 20% -10%, rgba(214, 182, 106, 0.14), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)), var(--tg-surface);
+
+  border: 1px solid var(--tg-border);
+  box-shadow: var(--tg-shadow);
+}
+
+.tg-demo__frame::before,
+.demo-video-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 18px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(214, 182, 106, 0.65),
+    rgba(255, 255, 255, 0.1),
+    rgba(214, 182, 106, 0.35)
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.55;
+}
+
+.tg-demo__frame::after,
+.demo-video-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(900px 420px at 50% 20%, transparent, rgba(0, 0, 0, 0.35));
+}
+
+.tg-demo__ratio {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%;
+}
+
+.tg-demo__ratio > iframe,
+.tg-demo__ratio > video,
+.demo-video-iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.demo-video-fallback {
+  position: absolute;
+  inset: 0;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.tg-demo__caption {
+  margin-top: 10px;
+  color: var(--tg-muted);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.tg-demo__play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.tg-demo__playBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(214, 182, 106, 0.35);
+  color: var(--tg-text);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+}
+
+.tg-demo__playDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--tg-gold);
+  box-shadow: 0 0 18px rgba(214, 182, 106, 0.55);
+}
+
+/* =========================================================
+   (3) Founder story card + signature
+   ========================================================= */
+.tg-founder__card,
+.founder-story-card {
+  border-radius: 18px;
+  padding: 18px 18px 16px;
+  background: radial-gradient(1200px 600px at 10% 0%, rgba(214, 182, 106, 0.12), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)), var(--tg-surface-2);
+
+  border: 1px solid var(--tg-border);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+}
+
+.tg-founder__copy,
+.founder-story-copy p {
+  margin: 0 0 12px;
+  color: var(--tg-text);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.tg-founder__sig,
+.founder-signature {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tg-founder__sig::before,
+.founder-signature::before {
+  content: "";
+  width: 48px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(214, 182, 106, 0.85), rgba(214, 182, 106, 0));
+  margin-bottom: 8px;
+}
+
+.tg-founder__name {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.tg-founder__title {
+  color: var(--tg-muted);
+  font-size: 0.92rem;
+}
+
+/* =========================================================
+   (4) Consultative /pricing layout cards + print/PDF rules
+   ========================================================= */
+.tg-pricing__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 900px) {
+  .tg-pricing__grid {
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 16px;
+    align-items: start;
+  }
+}
+
+.tg-card,
+.pricing-transparency-card,
+.pricing-roi-card,
+.pricing-installs-card {
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)), var(--tg-surface);
+  border: 1px solid var(--tg-border);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.tg-card__inner {
+  padding: 18px;
+}
+
+.tg-card__title {
+  margin: 0 0 6px 0;
+  font-weight: 750;
+  letter-spacing: 0.2px;
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.tg-card__sub {
+  margin: 0;
+  color: var(--tg-muted);
+  line-height: 1.5;
+}
+
+.tg-card--pricing {
+  position: relative;
+}
+
+.tg-card--pricing::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  background: radial-gradient(900px 420px at 20% -10%, rgba(214, 182, 106, 0.14), transparent 60%);
+}
+
+.tg-callout {
+  border-radius: 14px;
+  border: 1px solid rgba(214, 182, 106, 0.25);
+  background: rgba(214, 182, 106, 0.06);
+  padding: 14px;
+}
+
+.tg-callout__big {
+  font-size: 1.05rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.tg-callout__muted {
+  margin-top: 6px;
+  color: var(--tg-muted);
+  font-size: 0.95rem;
+}
+
+.tg-list,
+.pricing-model-list,
+.pricing-installs-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.tg-list li,
+.pricing-model-list li,
+.pricing-installs-list li {
+  margin: 8px 0;
+}
+
+.tg-list li::marker,
+.pricing-model-list li::marker,
+.pricing-installs-list li::marker {
+  color: rgba(214, 182, 106, 0.85);
+}
+
+/* =========================================================
+   Print / PDF (avoid card breaks across pages)
+   ========================================================= */
+@media print {
+  .tg-card,
+  .tg-founder__card,
+  .tg-demo__frame,
+  .tg-callout,
+  .pricing-transparency-card,
+  .pricing-roi-card,
+  .pricing-installs-card,
+  .demo-video-frame,
+  .founder-story-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .tg-card,
+  .tg-founder__card,
+  .tg-demo__frame,
+  .demo-video-frame,
+  .founder-story-card {
+    box-shadow: none !important;
+  }
+
+  .tg-card,
+  .tg-founder__card,
+  .tg-demo__frame,
+  .demo-video-frame,
+  .founder-story-card {
+    background: #ffffff !important;
+    border: 1px solid #d0d0d0 !important;
+  }
+
+  .tg-card__title,
+  .tg-founder__name {
+    color: #111 !important;
+  }
+
+  .tg-card__sub,
+  .tg-founder__title,
+  .tg-demo__caption,
+  .tg-callout__muted {
+    color: #333 !important;
+  }
+
+  .tg-list li::marker,
+  .pricing-model-list li::marker,
+  .pricing-installs-list li::marker {
+    color: #666 !important;
+  }
+
+  #demo-video {
+    scroll-margin-top: 0 !important;
+  }
+}

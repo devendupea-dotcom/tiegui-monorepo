@@ -1,16 +1,17 @@
-export const PRIMARY_CTA_LABEL = "Get My Lead Flow Audit";
-export const SECONDARY_CTA_LABEL = "See the Live Demo";
-export const BETA_CTA_LABEL = "Lock In Beta Pricing";
-export const MAP_CTA_LABEL = "Map My First 5 Calls";
-export const NAV_CTA_LABEL = "Get My Lead Flow Audit";
+export const PRIMARY_CTA_LABEL = "Book Free Audit";
+export const SECONDARY_CTA_LABEL = "Watch 2-Minute Demo";
+// Legacy labels (kept for compatibility while we remove package-based pricing surfaces).
+export const BETA_CTA_LABEL = PRIMARY_CTA_LABEL;
+export const MAP_CTA_LABEL = PRIMARY_CTA_LABEL;
+export const NAV_CTA_LABEL = PRIMARY_CTA_LABEL;
 
 export const TRUST_POINTS = [
-  "Respond to leads in under 60 seconds",
-  "Missed calls become booked estimates automatically",
-  "Know exactly which ads produce money",
-  "Track ad spend → calls → revenue (real ROI)",
-  "Booking-first mobile flow (no dead ends)",
-  "Simple scorecard: leads, booked, revenue, ROI",
+  "Never lose a lead while you're on a job site",
+  "Missed calls get auto-replied in ~60 seconds",
+  "Real appointment times (no endless back-and-forth)",
+  "See which ads produced real paying jobs",
+  "Your crew schedule stays synced automatically",
+  "Track calls -> booked jobs -> revenue (real ROI)",
 ];
 
 export const HOW_IT_WORKS_TIMELINE = [
@@ -47,15 +48,15 @@ export const SYSTEM_STEPS = [
   },
   {
     title: "Call and Lead Tracking",
-    desc: "Know exactly which ads produced calls, booked jobs, and revenue so marketing stops feeling like gambling.",
+    desc: "See exactly which ads produced real paying jobs. No more guessing where the money came from.",
   },
   {
     title: "Missed-Call Capture",
-    desc: "If you miss a call, leads get texted back automatically so you still win the job.",
+    desc: "Never lose a lead while you're on a job site. If you miss a call, we text back in 60 seconds and offer real appointment times.",
   },
   {
-    title: "Lead Routing",
-    desc: "The right person gets the lead fast so response time stays under 5 minutes.",
+    title: "Calendar + Crew Sync",
+    desc: "Jobs and estimates stay synced for your team without phone calls, sticky notes, or spreadsheets.",
   },
   {
     title: "Weekly Reporting",

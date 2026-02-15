@@ -3,11 +3,8 @@ import SiteHeader from "./_components/SiteHeader";
 import SiteFooter from "./_components/SiteFooter";
 import HeroShowcase, { PortalDemoCarousel } from "./_components/HeroShowcase";
 import {
-  BETA_CTA_LABEL,
   FAQS,
   HOW_IT_WORKS_TIMELINE,
-  MAP_CTA_LABEL,
-  PRICING_PREVIEW,
   PRIMARY_CTA_LABEL,
   SECONDARY_CTA_LABEL,
   SMS_EXAMPLE,
@@ -47,6 +44,8 @@ const SYSTEM_PROOF_METRICS = [
   { label: "ROI", value: "3.2×", note: "Spend → revenue" },
 ] as const;
 
+const DEMO_VIDEO_EMBED_URL = process.env.NEXT_PUBLIC_DEMO_VIDEO_EMBED_URL || "";
+
 export default function HomePage() {
   return (
     <div className="page">
@@ -62,6 +61,44 @@ export default function HomePage() {
         </div>
         <HeroShowcase />
       </main>
+
+      <section className="section demo-video-section alt" id="demo-video">
+        <div className="container">
+          <div className="section-head">
+            <p className="section-eyebrow">Demo</p>
+            <h2>Watch How Contractors Book Jobs Automatically</h2>
+            <p className="muted">Real missed call → automatic text → booked job → crew scheduled.</p>
+          </div>
+
+          <div className="demo-video-frame">
+            {DEMO_VIDEO_EMBED_URL ? (
+              <iframe
+                className="demo-video-iframe"
+                src={DEMO_VIDEO_EMBED_URL}
+                title="TieGui demo video"
+                loading="lazy"
+                allow="fullscreen; picture-in-picture"
+                allowFullScreen
+              />
+            ) : (
+              <div className="demo-video-fallback">
+                <p className="muted" style={{ margin: 0 }}>
+                  Demo video coming soon.
+                </p>
+                <p className="muted" style={{ margin: "10px 0 0" }}>
+                  Set <code>NEXT_PUBLIC_DEMO_VIDEO_EMBED_URL</code> to your Loom/Vimeo embed URL.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="section-actions center">
+            <a className="cta-button gold" href="/contact">
+              {PRIMARY_CTA_LABEL}
+            </a>
+          </div>
+        </div>
+      </section>
 
       <section className="section proof-section" id="system-proof">
         <div className="container">
@@ -93,7 +130,7 @@ export default function HomePage() {
             <a className="cta-button gold" href="/contact">
               {PRIMARY_CTA_LABEL}
             </a>
-            <a className="cta-button-outline" href="#portal-demo">
+            <a className="cta-button-outline" href="#demo-video">
               {SECONDARY_CTA_LABEL}
             </a>
           </div>
@@ -131,10 +168,10 @@ export default function HomePage() {
 
           <div className="section-actions center">
             <a className="cta-button gold" href="/contact">
-              {MAP_CTA_LABEL}
+              {PRIMARY_CTA_LABEL}
             </a>
-            <a className="cta-button-outline" href="/pricing">
-              {BETA_CTA_LABEL}
+            <a className="cta-button-outline" href="#demo-video">
+              {SECONDARY_CTA_LABEL}
             </a>
           </div>
         </div>
@@ -157,8 +194,8 @@ export default function HomePage() {
               <a className="cta-button gold" href="/contact">
                 {PRIMARY_CTA_LABEL}
               </a>
-              <a className="cta-button-outline" href="/pricing">
-                {BETA_CTA_LABEL}
+              <a className="cta-button-outline" href="#demo-video">
+                {SECONDARY_CTA_LABEL}
               </a>
             </div>
             <p className="muted portal-demo-note">
@@ -188,7 +225,7 @@ export default function HomePage() {
             </ul>
             <div className="section-actions">
               <a className="cta-button-outline" href="https://pnw-landscape-demo.web.app" target="_blank" rel="noreferrer">
-                {SECONDARY_CTA_LABEL}
+                View Live Example
               </a>
               <a className="cta-button gold" href="/contact">
                 {PRIMARY_CTA_LABEL}
@@ -242,7 +279,7 @@ export default function HomePage() {
                 <a className="cta-button gold" href="/contact">
                   {PRIMARY_CTA_LABEL}
                 </a>
-                <a className="cta-button-outline" href="#portal-demo">
+                <a className="cta-button-outline" href="#demo-video">
                   {SECONDARY_CTA_LABEL}
                 </a>
               </div>
@@ -285,36 +322,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="section pricing-preview-section" id="pricing-preview">
-        <div className="container">
-          <div className="section-head">
-            <h2>Transparent pricing. Flexible growth path.</h2>
-            <p className="muted">Pick the package that matches your stage. Upgrade when it makes sense.</p>
-          </div>
-          <div className="pricing-preview-grid">
-            {PRICING_PREVIEW.map((tier) => (
-              <article className="pricing-preview-card" key={tier.name}>
-                <p className="pricing-preview-name">{tier.name}</p>
-                <p className="pricing-preview-price">{tier.price}</p>
-                <ul>
-                  {tier.bullets.map((bullet) => (
-                    <li key={bullet}>{bullet}</li>
-                  ))}
-                </ul>
-              </article>
-            ))}
-          </div>
-          <div className="section-actions center">
-            <a className="cta-button gold" href="/pricing">
-              {BETA_CTA_LABEL}
-            </a>
-            <a className="cta-button-outline" href="/contact">
-              {MAP_CTA_LABEL}
-            </a>
-          </div>
-        </div>
-      </section>
-
       <section className="section sms-section alt" id="system">
         <div className="container sms-grid">
           <div className="sms-copy">
@@ -322,7 +329,7 @@ export default function HomePage() {
             <h2>{SMS_EXAMPLE.title}</h2>
             <p className="muted">{SMS_EXAMPLE.subtitle}</p>
             <p className="sms-trust">{SMS_EXAMPLE.trustLine}</p>
-            <a className="cta-button-outline" href="#portal-demo">
+            <a className="cta-button-outline" href="#demo-video">
               {SECONDARY_CTA_LABEL}
             </a>
           </div>
@@ -346,6 +353,36 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="section founder-story-section" id="founder-story">
+        <div className="container">
+          <article className="founder-card founder-story-card">
+            <p className="section-eyebrow">Founder story</p>
+            <div className="founder-story-copy">
+              <p>
+                I built TieGui after seeing contractors lose jobs simply because they were too busy working to answer
+                their phones.
+              </p>
+              <p>
+                Most CRM systems are built for office sales teams. TieGui is built for contractors in the field.
+              </p>
+              <p>
+                We&apos;re working with a small group of businesses to refine the system before wider rollout, which
+                means you get direct access to the founder and hands-on setup.
+              </p>
+              <p className="founder-signature">— Deven Dupea, Founder</p>
+            </div>
+            <div className="section-actions">
+              <a className="cta-button gold" href="/contact">
+                {PRIMARY_CTA_LABEL}
+              </a>
+              <a className="cta-button-outline" href="#demo-video">
+                {SECONDARY_CTA_LABEL}
+              </a>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section className="section final-cta">
         <div className="container">
           <h2>Ready to see what this could look like for your business?</h2>
@@ -354,8 +391,8 @@ export default function HomePage() {
             <a className="cta-button gold" href="/contact">
               {PRIMARY_CTA_LABEL}
             </a>
-            <a className="cta-button-outline" href="/contact">
-              Let&apos;s Talk
+            <a className="cta-button-outline" href="#demo-video">
+              {SECONDARY_CTA_LABEL}
             </a>
           </div>
         </div>

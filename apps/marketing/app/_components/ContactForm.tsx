@@ -22,19 +22,16 @@ export default function ContactForm() {
         <input type="tel" name="phone" placeholder="(555) 555-5555" required />
       </label>
       <label>
-        Business type
-        <select name="type">
-          <option value="">Select</option>
-          <option>Contractor</option>
-          <option>Landscaping</option>
-          <option>Other local service</option>
-        </select>
+        Email
+        <input type="email" name="email" placeholder="you@company.com" required />
       </label>
       <label className="field-message">
-        Message (optional)
-        <textarea name="message" rows={3} placeholder="Tell us a bit about your goals" />
+        Biggest challenge
+        <textarea name="challenge" rows={3} placeholder="What is the #1 thing you want to fix right now?" />
       </label>
-      <button className="cta-button gold" type="submit">{PRIMARY_CTA_LABEL}</button>
+      <button className="cta-button gold" type="submit">
+        {PRIMARY_CTA_LABEL}
+      </button>
       <p className="cta-note">We’ll reach out quickly.</p>
       <p className="form-status" aria-live="polite"></p>
     </form>

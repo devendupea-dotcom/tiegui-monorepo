@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { BETA_CTA_LABEL, PRIMARY_CTA_LABEL, SECONDARY_CTA_LABEL } from "../_content";
-import CommissionToggle from "./commission-toggle";
-import { PRICING_FAQ, TIEGUI_PRICING } from "./pricing-data";
+import { PRIMARY_CTA_LABEL, SECONDARY_CTA_LABEL } from "../_content";
+import { PRICING_FAQ } from "./pricing-data";
 
 type PricingSheetProps = {
   mode?: "web" | "pdf";
@@ -15,166 +14,129 @@ function formatUsd(value: number): string {
   }).format(value);
 }
 
-function formatPercent(rate: number): string {
-  const pct = Math.round(rate * 100);
-  return `${pct}%`;
-}
-
-function formatAdSpend(recommended: [number, number]): string {
-  const [min, max] = recommended;
-  return `${formatUsd(min)}–${formatUsd(max)}/month`;
-}
-
 export default function PricingSheet({ mode = "web" }: PricingSheetProps) {
   const isPdf = mode === "pdf";
-  const betaSpotsRemaining = process.env.BETA_SPOTS_REMAINING || "5";
+  const avgJobValue = 2000;
+  const missedJobsPerWeek = 2;
+  const monthlyLostRevenue = avgJobValue * missedJobsPerWeek * 4;
 
   return (
     <main className={`pricing-sheet${isPdf ? " pricing-sheet-pdf" : ""}`}>
       <section className="section pricing-hero">
         <div className="container section-head">
-          <h1>TieGui Pricing (2026 Beta)</h1>
-          <p className="muted">Clear scope, clear limits, and clear expectations before we start.</p>
+          <h1>Pricing</h1>
+          <p className="muted">Transparent expectations. Flexible setups.</p>
           {isPdf ? null : (
             <div className="section-actions center site-only">
               <Link className="cta-button gold" href="/contact">
                 {PRIMARY_CTA_LABEL}
               </Link>
-              <Link className="cta-button-outline" href="/pricing/pdf" target="_blank">
-                Export PDF
+              <Link className="cta-button-outline" href="/#demo-video">
+                {SECONDARY_CTA_LABEL}
               </Link>
             </div>
           )}
         </div>
       </section>
 
-      <section className="section pricing-beta-section">
+      <section className="section pricing-transparency-section">
         <div className="container">
-          <article className="beta-notice-card">
-            <h2>{TIEGUI_PRICING.betaNotice.title}</h2>
-            <p>{TIEGUI_PRICING.betaNotice.description}</p>
-            <p className="beta-spots">Spots remaining: {betaSpotsRemaining}</p>
+          <article className="pricing-transparency-card tg-card tg-card--pricing">
+            <div className="tg-card__inner">
+              <h2 className="tg-card__title">Pricing Transparency</h2>
+              <p className="tg-card__sub">You&apos;re wondering what TieGui costs. Fair question.</p>
+              <p>
+                Most contractors invest between <strong>$399</strong> and <strong>$1,500</strong> per month depending on
+                business size, workflow complexity, and growth goals.
+              </p>
+              <ul className="pricing-model-list tg-list">
+                <li>Some prefer fixed monthly pricing.</li>
+                <li>Some prefer performance-based pricing.</li>
+                <li>Many choose a hybrid.</li>
+                <li>Complex workflows may require a custom setup.</li>
+              </ul>
+              <p className="muted pricing-transparency-note">We&apos;ll recommend what makes the most sense for your business.</p>
+              {isPdf ? null : (
+                <div className="section-actions">
+                  <Link className="cta-button gold" href="/contact">
+                    {PRIMARY_CTA_LABEL}
+                  </Link>
+                  <Link className="cta-button-outline" href="/pricing/pdf" target="_blank">
+                    Export PDF
+                  </Link>
+                </div>
+              )}
+            </div>
           </article>
         </div>
       </section>
 
-      <section className="section packages-section">
+      <section className="section pricing-roi-section alt">
         <div className="container">
-          <div className="package-grid">
-            {TIEGUI_PRICING.packages.map((pkg) => {
-              const hasAdSpend = Array.isArray(pkg.recommendedAdSpend);
-              const hasTargetingLimit = Boolean(pkg.targetingLimit);
-              const hasCommission = Boolean(pkg.commissionOption);
-
-              const slug = pkg.name.toLowerCase().replace(/\s+/g, "-");
-              const isFeatured = pkg.name === "Growth";
-
-              const monthlyLabel = pkg.monthly === 0 ? "$0/mo" : `${formatUsd(pkg.monthly)}/mo`;
-
-              return (
-                <article
-                  className={`package-card pricing-card pricing-card-${slug}${isFeatured ? " featured" : ""}`}
-                  key={pkg.name}
-                >
-                  {isFeatured ? <p className="package-chip">Most Popular</p> : null}
-                  <h2>{pkg.name}</h2>
-
-                  <dl className="pricing-card-fields">
-                    <div>
-                      <dt>Setup Fee</dt>
-                      <dd>{formatUsd(pkg.oneTime)}</dd>
-                    </div>
-                    <div>
-                      <dt>Monthly Fee</dt>
-                      <dd>{monthlyLabel}</dd>
-                    </div>
-                  </dl>
-
-                  {hasAdSpend ? (
-                    <p className="pricing-card-ad-note">
-                      Ad spend paid directly to Google Ads. Recommended minimum:{" "}
-                      <strong>{formatAdSpend(pkg.recommendedAdSpend as [number, number])}</strong>.
-                    </p>
-                  ) : null}
-
-                  <ul className="pricing-card-features">
-                    {pkg.features.map((feature) => (
-                      <li key={`${pkg.name}-${feature}`}>{feature}</li>
-                    ))}
-                  </ul>
-
-                  {hasTargetingLimit ? (
-                    <div className="pricing-policy-block">
-                      <p className="pricing-policy-title">Targeting limits</p>
-                      <p>{pkg.targetingLimit}</p>
-                    </div>
-                  ) : null}
-
-                  {pkg.name === "Foundation" ? null : (
-                    <div className="pricing-policy-block">
-                      <p className="pricing-policy-title">Revision policy</p>
-                      <p>1 round of consolidated revisions (submit all changes together)</p>
-                    </div>
-                  )}
-
-                  {hasCommission ? (
-                    <div className="commission-block">
-                      <p className="pricing-policy-title">Commission Options</p>
-                      {isPdf ? (
-                        <div className="commission-toggle-grid">
-                          <article className="commission-option">
-                            <h3>Standard</h3>
-                            <p className="commission-line">{formatUsd(pkg.monthly)}/mo</p>
-                            <p className="commission-note">No commission.</p>
-                          </article>
-                          <article className="commission-option">
-                            <h3>Commission-based</h3>
-                            <p className="commission-line">{formatUsd(pkg.commissionOption!.monthly)}/mo</p>
-                            <p className="commission-line">{formatPercent(pkg.commissionOption!.commissionRate)} commission</p>
-                            <p className="commission-note">{pkg.commissionOption!.rules}</p>
-                          </article>
-                        </div>
-                      ) : (
-                        <CommissionToggle
-                          standardMonthly={pkg.monthly}
-                          commissionMonthly={pkg.commissionOption!.monthly}
-                          commissionRate={pkg.commissionOption!.commissionRate}
-                          rules={pkg.commissionOption!.rules}
-                        />
-                      )}
-                    </div>
-                  ) : null}
-
-                  {isPdf ? null : (
-                    <Link className="cta-button gold site-only" href="/contact">
-                      {PRIMARY_CTA_LABEL}
-                    </Link>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-          {isPdf ? null : (
-            <div className="section-actions center site-only">
-              <Link className="cta-button-outline" href="/contact">
-                {BETA_CTA_LABEL}
-              </Link>
+          <article className="pricing-roi-card tg-card tg-card--pricing">
+            <div className="tg-card__inner">
+              <h2 className="tg-card__title">Cost of Missed Leads</h2>
+              <div className="tg-callout">
+                <div className="tg-callout__big">
+                  If you miss just <strong>{missedJobsPerWeek} jobs</strong> per week at{" "}
+                  <strong>{formatUsd(avgJobValue)}</strong> per job, that&apos;s{" "}
+                  <strong>{formatUsd(monthlyLostRevenue)}</strong> per month in lost revenue.
+                </div>
+                <div className="tg-callout__muted pricing-roi-question">
+                  Would investing <strong>$800–$1,000/month</strong> to fix that make sense?
+                </div>
+              </div>
             </div>
-          )}
+          </article>
         </div>
       </section>
 
-      <section className="section guarantee-section">
-        <div className="container guarantee-card">
-          <h2>{TIEGUI_PRICING.performanceCommitment.title}</h2>
-          <p>{TIEGUI_PRICING.performanceCommitment.description}</p>
+      <section className="section pricing-installs-section">
+        <div className="container">
+          <div className="section-head">
+            <h2>What TieGui Installs</h2>
+            <p className="muted">A contractor-first lead-to-schedule system (not another generic CRM).</p>
+          </div>
+          <article className="pricing-installs-card tg-card">
+            <div className="tg-card__inner">
+              <ul className="pricing-installs-list tg-list">
+                <li>Conversion-focused website</li>
+                <li>Missed-call text-back automation</li>
+                <li>Calendar &amp; crew sync</li>
+                <li>Lead &amp; ROI tracking portal</li>
+                <li>Optional Google Ads management</li>
+                <li>Direct founder support</li>
+              </ul>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section className="section pricing-final-section alt">
+        <div className="container">
+          <article className="guarantee-card">
+            <h2>Book a 15-minute Free Audit</h2>
+            <p>
+              We&apos;ll identify where you&apos;re losing revenue and map the best setup and pricing for your business.
+            </p>
+            {isPdf ? null : (
+              <div className="section-actions">
+                <Link className="cta-button gold" href="/contact">
+                  {PRIMARY_CTA_LABEL}
+                </Link>
+                <Link className="cta-button-outline" href="/#demo-video">
+                  {SECONDARY_CTA_LABEL}
+                </Link>
+              </div>
+            )}
+          </article>
         </div>
       </section>
 
       <section className="section faq-section">
         <div className="container">
           <div className="section-head">
-            <h2>Pricing FAQ</h2>
+            <h2>FAQ</h2>
             <p className="muted">Important details before kickoff.</p>
           </div>
           <div className="faq-grid">
@@ -187,23 +149,6 @@ export default function PricingSheet({ mode = "web" }: PricingSheetProps) {
           </div>
         </div>
       </section>
-
-      {isPdf ? null : (
-        <section className="section final-cta site-only">
-          <div className="container">
-            <h2>Need help choosing the right package?</h2>
-            <p className="muted">We can recommend the best fit after a short kickoff call.</p>
-            <div className="section-actions center">
-              <Link className="cta-button gold" href="/contact">
-                {PRIMARY_CTA_LABEL}
-              </Link>
-              <Link className="cta-button-outline" href="/#portal-demo">
-                {SECONDARY_CTA_LABEL}
-              </Link>
-            </div>
-          </div>
-        </section>
-      )}
     </main>
   );
 }

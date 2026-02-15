@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { PRIMARY_CTA_LABEL, SECONDARY_CTA_LABEL } from "../_content";
 
 type HeroSlide = {
   id: string;
@@ -398,30 +399,23 @@ export default function HeroShowcase() {
     <div className="container hero-showcase">
       <div className="hero-showcase-grid">
         <div className="hero-left">
-          <div className="hero-kicker">TieGui for service businesses</div>
+          <div className="hero-kicker">TieGui for contractors</div>
           <h1 className="hero-title">
-            Get More Calls and Booked Jobs — <span className="gold">Without Wasting Ad Spend.</span>
+            Stop Losing Jobs Because You Responded <span className="gold">Too Slow.</span>
           </h1>
-          <p className="hero-sub">Conversion-first website + instant SMS follow-up + ROI tracking built for service businesses.</p>
-
-          <ul className="hero-bullets">
-            <li>Respond to leads in under 60 seconds</li>
-            <li>Track ad spend → calls → revenue (real ROI)</li>
-            <li>Turn missed calls into booked estimates</li>
-          </ul>
+          <p className="hero-sub">
+            Missed calls get auto-replied in 60 seconds with real appointment times. Jobs book themselves. Your crew stays
+            synced. You see what actually makes money.
+          </p>
 
           <div className="hero-controls">
             <Link className="hero-cta cta-button gold" href="/contact">
-              Book a 7-Minute Lead Flow Audit
+              {PRIMARY_CTA_LABEL}
             </Link>
-            <a className="cta-button-outline" href="#portal-demo">
-              Watch 2-Minute Demo
+            <a className="cta-button-outline" href="#demo-video">
+              {SECONDARY_CTA_LABEL}
             </a>
           </div>
-
-          <p className="hero-fineprint muted">
-            Optional: We onboard <strong>3 businesses per city</strong> to avoid overlap.
-          </p>
 
           <div className="hero-dots" aria-label="Hero carousel navigation">
             {slides.map((slide, idx) => (

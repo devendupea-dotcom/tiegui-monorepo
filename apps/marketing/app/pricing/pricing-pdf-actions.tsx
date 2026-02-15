@@ -10,7 +10,7 @@ export default function PricingPdfActions() {
       >
         Download Pricing PDF
       </button>
-      <p className="muted">Use Save as PDF in the print dialog for the 2026 beta pricing sheet.</p>
+      <p className="muted">Use Save as PDF in the print dialog.</p>
     </div>
   );
 }
