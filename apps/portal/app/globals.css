@@ -322,6 +322,28 @@ body {
   gap: 14px;
 }
 
+.hq-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.hq-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.hq-header-actions .btn.secondary {
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+
 .hq-nav {
   display: flex;
   flex-wrap: wrap;

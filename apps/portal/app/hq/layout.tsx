@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getGoogleSyncAlertState } from "@/lib/integrations/google-sync";
 import { requireInternalUser } from "@/lib/session";
+import LogoutButton from "../app/logout-button";
 
 const links = [
   { href: "/hq", label: "Command Center" },
@@ -47,9 +48,17 @@ export default async function HqLayout({
   return (
     <main className="page">
       <header className="card hq-header">
-        <div>
-          <h1>TieGui HQ</h1>
-          <p className="muted">Internal workspace for cross-business operations.</p>
+        <div className="hq-header-top">
+          <div>
+            <h1>TieGui HQ</h1>
+            <p className="muted">Internal workspace for cross-business operations.</p>
+          </div>
+          <div className="hq-header-actions">
+            <Link className="btn secondary" href="/app">
+              Open Client Portal
+            </Link>
+            <LogoutButton />
+          </div>
         </div>
         <nav className="hq-nav" aria-label="HQ navigation">
           {links.map((link) => (
