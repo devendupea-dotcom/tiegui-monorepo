@@ -83,6 +83,42 @@ Local testing notes:
 3. Trigger cron intake manually:
    - `curl -X POST http://localhost:3001/api/cron/intake -H "Authorization: Bearer $CRON_SECRET"`
 
+### Internal Deployment Checklist (Twilio Multi-Tenant + Mobile)
+
+Use this checklist every time portal Twilio routing or mobile shell changes are released.
+
+1. Set required env vars in Vercel (`tiegui-monorepo-portal`):
+   - `TWILIO_TOKEN_ENCRYPTION_KEY` (base64 32-byte key)
+   - `TWILIO_SEND_ENABLED`
+   - `TWILIO_VALIDATE_SIGNATURE`
+   - `CRON_SECRET`
+2. Apply database migrations:
+   - `cd apps/portal`
+   - `npm run db:migrate:deploy`
+3. Deploy portal:
+   - push/merge to production branch and let Vercel build
+   - confirm build includes:
+     - `/hq/orgs/[orgId]/twilio`
+     - `/api/webhooks/twilio/sms`
+     - `/api/webhooks/twilio/voice`
+4. Validate HQ route access:
+   - INTERNAL user opens `/hq/orgs`
+   - INTERNAL user opens `/hq/orgs/<orgId>/twilio`
+   - legacy link `/hq/businesses/<orgId>/twilio` redirects to `/hq/orgs/<orgId>/twilio`
+5. Validate Velocity organization setup:
+   - Open `/hq/orgs/1b328092-64d8-4b38-9ce2-25c39d8edf34/twilio`
+   - Save Subaccount SID/Auth Token/Messaging Service/Phone/Status
+   - Click `Validate`
+   - Click `Send Test SMS`
+6. Validate inbound/outbound messaging:
+   - post Twilio SMS webhook payload to `/api/webhooks/twilio/sms` and expect `200`
+   - post Twilio voice status webhook payload to `/api/webhooks/twilio/voice` and expect `200`
+   - confirm lead/message/call records land in the correct org
+7. Validate mobile app packaging:
+   - `cd apps/mobile`
+   - `npm run check-types`
+   - `npm run dev` (Expo starts and tabs load `/app/*?mobile=1`)
+
 ## Jobber + QuickBooks Integration Setup
 
 MVP routes are available at `Settings -> Integrations` (`/app/settings/integrations`).
