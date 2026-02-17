@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getGoogleSyncAlertState } from "@/lib/integrations/google-sync";
+import { checkRequiredTables } from "@/lib/internal-health";
 import { requireInternalUser } from "@/lib/session";
 import LogoutButton from "../app/logout-button";
 
@@ -17,6 +18,7 @@ export default async function HqLayout({
   children: React.ReactNode;
 }>) {
   await requireInternalUser("/hq");
+  const dbTables = await checkRequiredTables({ ttlMs: 60_000 }).catch(() => null);
   const syncAlert = await getGoogleSyncAlertState({
     cronStaleMinutes: 15,
     queueDepthThreshold: 80,
@@ -45,6 +47,10 @@ export default async function HqLayout({
     );
   }
 
+  const missingTables = dbTables?.missing || [];
+  const missingPreview = missingTables.slice(0, 4).join(", ");
+  const missingSuffix = missingTables.length > 4 ? `, and ${missingTables.length - 4} more` : "";
+
   return (
     <main className="page">
       <header className="card hq-header">
@@ -68,6 +74,40 @@ export default async function HqLayout({
           ))}
         </nav>
       </header>
+      {!dbTables ? (
+        <section
+          className="card"
+          style={{
+            borderColor: "rgba(245, 158, 11, 0.50)",
+            background: "rgba(245, 158, 11, 0.08)",
+          }}
+        >
+          <p className="muted" style={{ margin: 0 }}>
+            DB health check failed. Some features may be broken until migrations are applied.{" "}
+            <a href="/api/internal/health" className="link" target="_blank" rel="noreferrer">
+              View internal health
+            </a>
+            .
+          </p>
+        </section>
+      ) : missingTables.length > 0 ? (
+        <section
+          className="card"
+          style={{
+            borderColor: "rgba(245, 158, 11, 0.50)",
+            background: "rgba(245, 158, 11, 0.08)",
+          }}
+        >
+          <p className="muted" style={{ margin: 0 }}>
+            DB schema incomplete: missing {missingPreview}
+            {missingSuffix}. Run migrations before treating prod as live.{" "}
+            <a href="/api/internal/health" className="link" target="_blank" rel="noreferrer">
+              View internal health
+            </a>
+            .
+          </p>
+        </section>
+      ) : null}
       {syncAlert?.showBanner ? (
         <section
           className="card"
