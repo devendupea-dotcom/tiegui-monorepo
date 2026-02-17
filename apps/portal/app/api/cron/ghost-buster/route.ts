@@ -109,6 +109,12 @@ export async function POST(req: Request) {
             calendarTimezone: true,
           },
         },
+        twilioConfig: {
+          select: {
+            phoneNumber: true,
+            status: true,
+          },
+        },
       },
       orderBy: { createdAt: "asc" },
     });
@@ -132,7 +138,9 @@ export async function POST(req: Request) {
       let skippedQuietHours = 0;
       let skippedNoNumber = 0;
 
-      if (!org.smsFromNumberE164) {
+      const senderNumber = org.twilioConfig?.phoneNumber || org.smsFromNumberE164;
+
+      if (!senderNumber) {
         skippedNoNumber += 1;
         orgResults.push({
           orgId: org.id,
@@ -214,7 +222,7 @@ export async function POST(req: Request) {
         const now = new Date();
         const providerResult = await sendOutboundSms({
           orgId: org.id,
-          fromNumberE164: org.smsFromNumberE164,
+          fromNumberE164: senderNumber,
           toNumberE164: lead.phoneE164,
           body: nudgeBody,
         });
@@ -248,7 +256,7 @@ export async function POST(req: Request) {
               leadId: lead.id,
               direction: "OUTBOUND",
               type: "SYSTEM_NUDGE",
-              fromNumberE164: org.smsFromNumberE164,
+              fromNumberE164: providerResult.resolvedFromNumberE164 || senderNumber,
               toNumberE164: lead.phoneE164,
               body: nudgeBody,
               provider: "TWILIO",

@@ -526,7 +526,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
 
   return (
     <div className="invoice-detail-shell">
-      <section className="card">
+      <section className="card invoice-card">
         <div className="invoice-header-row">
           <div className="stack-cell">
             <Link className="table-link" href={invoicesPath}>
@@ -666,7 +666,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
         </article>
       </section>
 
-      <section className="card">
+      <section className="card invoice-card">
         <h2>Line Items</h2>
         {invoice.lineItems.length === 0 ? <p className="muted">No line items yet.</p> : null}
         <div className="invoice-line-list">

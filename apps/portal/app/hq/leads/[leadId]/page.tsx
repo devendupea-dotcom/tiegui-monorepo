@@ -129,6 +129,11 @@ export default async function LeadDetailPage({
             id: true,
             name: true,
             smsFromNumberE164: true,
+            twilioConfig: {
+              select: {
+                phoneNumber: true,
+              },
+            },
             smsTemplates: {
               where: { isActive: true },
               select: { id: true, name: true, body: true },
@@ -382,7 +387,7 @@ export default async function LeadDetailPage({
           <p className="muted">Thread for this lead only.</p>
           <LeadMessageThread
             leadId={lead.id}
-            senderNumber={lead.org.smsFromNumberE164 || process.env.DEFAULT_OUTBOUND_FROM_E164 || null}
+            senderNumber={lead.org.twilioConfig?.phoneNumber || lead.org.smsFromNumberE164 || null}
             templates={lead.org.smsTemplates}
             initialMessages={lead.messages.map((message) => ({
               ...message,

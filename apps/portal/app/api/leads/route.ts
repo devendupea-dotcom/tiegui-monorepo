@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
 import { parseUtcDateTime } from "@/lib/calendar/dates";
+import { capturePortalError, trackPortalEvent } from "@/lib/telemetry";
 import {
   AppApiError,
   assertCanCreateOrganicLead,
@@ -389,6 +390,13 @@ export async function POST(req: Request) {
       });
     }
 
+    await trackPortalEvent("Lead Created", {
+      orgId,
+      actorId: actor.id,
+      leadId: created.lead.id,
+      scheduled: Boolean(created.event),
+    });
+
     return NextResponse.json({
       ok: true,
       lead: created.lead,
@@ -397,6 +405,9 @@ export async function POST(req: Request) {
       linkedCustomerId: autoLinkedCustomerId,
     });
   } catch (error) {
+    await capturePortalError(error, {
+      route: "POST /api/leads",
+    });
     if (error instanceof AppApiError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     }

@@ -4,6 +4,8 @@ import { normalizeE164 } from "@/lib/phone";
 import { validateTwilioWebhook } from "@/lib/twilio";
 import { startOfUtcMonth } from "@/lib/usage";
 import { normalizeEnvValue } from "@/lib/env";
+import { maskSid } from "@/lib/twilio-config-crypto";
+import { getTwilioOrgRuntimeConfigByAccountSid } from "@/lib/twilio-org";
 
 const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
 const START_KEYWORDS = new Set(["START", "UNSTOP"]);
@@ -23,13 +25,31 @@ function asString(value: FormDataEntryValue | null): string {
 
 export async function POST(req: Request) {
   const form = await req.formData();
-  const validation = validateTwilioWebhook(req, form);
+  const accountSid = asString(form.get("AccountSid"));
+  if (!accountSid) {
+    return twimlOk();
+  }
+
+  let twilioConfig: Awaited<ReturnType<typeof getTwilioOrgRuntimeConfigByAccountSid>>;
+  try {
+    twilioConfig = await getTwilioOrgRuntimeConfigByAccountSid(accountSid);
+  } catch {
+    console.warn(`[twilio:sms] unable to decrypt auth token for account ${maskSid(accountSid)}.`);
+    return twimlOk();
+  }
+
+  if (!twilioConfig) {
+    console.warn(`[twilio:sms] ignored inbound webhook for unknown account ${maskSid(accountSid)}.`);
+    return twimlOk();
+  }
+
+  const validation = validateTwilioWebhook(req, form, { authToken: twilioConfig.twilioAuthToken });
   if (!validation.ok) {
     return new Response(validation.error, { status: validation.status });
   }
 
   const fromNumber = normalizeE164(asString(form.get("From")));
-  const toNumber = normalizeE164(asString(form.get("To")));
+  const toNumber = normalizeE164(asString(form.get("To"))) || normalizeE164(twilioConfig.phoneNumber);
   const body = asString(form.get("Body"));
   const messageSid = asString(form.get("MessageSid")) || null;
 
@@ -44,10 +64,12 @@ export async function POST(req: Request) {
   );
 
   const organization = await prisma.organization.findFirst({
-    where: { smsFromNumberE164: toNumber },
+    where: { id: twilioConfig.organizationId },
     select: {
       id: true,
       smsFromNumberE164: true,
+      smsQuietHoursStartMinute: true,
+      smsQuietHoursEndMinute: true,
       messageLanguage: true,
       missedCallAutoReplyBody: true,
       missedCallAutoReplyBodyEn: true,
@@ -65,12 +87,22 @@ export async function POST(req: Request) {
       intakeCompletionBody: true,
       intakeCompletionBodyEn: true,
       intakeCompletionBodyEs: true,
+      dashboardConfig: {
+        select: {
+          calendarTimezone: true,
+        },
+      },
     },
   });
 
   if (!organization) {
     return twimlOk();
   }
+
+  const organizationSettings = {
+    ...organization,
+    calendarTimezone: organization.dashboardConfig?.calendarTimezone || "America/Los_Angeles",
+  };
 
   let lead = await prisma.lead.findFirst({
     where: {
@@ -185,12 +217,26 @@ export async function POST(req: Request) {
   }
 
   if (isStopKeyword) {
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: {
-        status: "DNC",
-        nextFollowUpAt: null,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.lead.update({
+        where: { id: lead.id },
+        data: {
+          status: "DNC",
+          nextFollowUpAt: null,
+        },
+      });
+
+      await tx.smsDispatchQueue.updateMany({
+        where: {
+          orgId: organization.id,
+          leadId: lead.id,
+          status: "QUEUED",
+        },
+        data: {
+          status: "FAILED",
+          lastError: "Canceled after STOP/opt-out request.",
+        },
+      });
     });
     shouldAdvanceIntakeFlow = false;
   } else if (isStartKeyword && lead.status === "DNC") {
@@ -204,7 +250,7 @@ export async function POST(req: Request) {
 
   if (shouldAdvanceIntakeFlow) {
     await advanceLeadIntakeFromInbound({
-      organization,
+      organization: organizationSettings,
       leadId: lead.id,
       inboundBody: body,
     });

@@ -9,6 +9,7 @@ import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session"
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { ensureTimeZone, isValidTimeZone, toUtcFromLocalDateTime } from "@/lib/calendar/dates";
 import { getPhotoStorageReadiness } from "@/lib/storage";
+import { trackPortalEvent } from "@/lib/telemetry";
 import { getParam, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
 import OnboardingTeamBuilder from "./onboarding-team-builder";
 
@@ -199,6 +200,13 @@ async function saveBasicsAction(formData: FormData) {
     }),
     ...workingHoursWrites,
   ]);
+
+  await trackPortalEvent("Onboarding Started", {
+    orgId,
+    actorId: actor.id,
+    internalUser: actor.internalUser,
+    step: 1,
+  });
 
   revalidatePath("/app");
   revalidatePath("/app/calendar");
@@ -439,18 +447,26 @@ async function saveMessagingAction(formData: FormData) {
     },
   });
 
+  if (enableTexting && sender) {
+    await trackPortalEvent("SMS Connected", {
+      orgId,
+      actorId: actor.id,
+      step: 4,
+    });
+  }
+
   if (intent === "test") {
     const toNumber = normalizeE164(testPhoneRaw);
-    const fromNumber = sender || normalizeE164(process.env.DEFAULT_OUTBOUND_FROM_E164 || null);
-    if (!toNumber || !fromNumber) {
+    if (!toNumber) {
       redirect(onboardingUrl(orgId, actor.internalUser, 4, { error: "test-number" }));
     }
 
     const result = await sendOutboundSms({
       orgId,
-      fromNumberE164: fromNumber,
+      fromNumberE164: sender,
       toNumberE164: toNumber,
       body: "TieGui onboarding test: this confirms SMS routing is configured.",
+      allowPendingA2P: true,
     });
     const notice = result.notice ? encodeURIComponent(result.notice) : "sent";
     redirect(onboardingUrl(orgId, actor.internalUser, 4, { smsTest: notice }));
@@ -478,10 +494,26 @@ async function completeOnboardingAction(formData: FormData) {
     redirect(onboardingUrl(orgId, actor.internalUser, 4, { error: "sender" }));
   }
 
+  const onboardingState = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: {
+      onboardingStep: true,
+      smsFromNumberE164: true,
+    },
+  });
+
+  const effectiveSender = sender || onboardingState?.smsFromNumberE164 || null;
+  const businessSetupComplete = (onboardingState?.onboardingStep || 0) >= 1;
+  const schedulingRulesComplete = (onboardingState?.onboardingStep || 0) >= 3;
+  const notificationsComplete = Boolean(effectiveSender);
+  if (!businessSetupComplete || !schedulingRulesComplete || !notificationsComplete) {
+    redirect(onboardingUrl(orgId, actor.internalUser, 4, { error: "go-live-prereq" }));
+  }
+
   await prisma.organization.update({
     where: { id: orgId },
     data: {
-      smsFromNumberE164: sender,
+      smsFromNumberE164: effectiveSender,
       missedCallAutoReplyOn: enableTexting,
       onboardingStep: 4,
       onboardingCompletedAt: new Date(),
@@ -489,34 +521,17 @@ async function completeOnboardingAction(formData: FormData) {
     },
   });
 
+  await trackPortalEvent("Onboarding Completed", {
+    orgId,
+    actorId: actor.id,
+    internalUser: actor.internalUser,
+  });
+
   revalidatePath("/app");
   revalidatePath("/app/onboarding");
   revalidatePath(`/hq/businesses/${orgId}`);
 
   redirect(onboardingUrl(orgId, actor.internalUser, "finish"));
-}
-
-async function skipOnboardingAction(formData: FormData) {
-  "use server";
-
-  const orgId = String(formData.get("orgId") || "").trim();
-  if (!orgId) {
-    redirect("/app");
-  }
-  const actor = await requireOnboardingEditor(orgId);
-
-  await prisma.organization.update({
-    where: { id: orgId },
-    data: {
-      onboardingSkippedAt: new Date(),
-    },
-  });
-
-  revalidatePath("/app");
-  revalidatePath("/app/onboarding");
-
-  const fallback = withOrgQuery("/app", orgId, actor.internalUser);
-  redirect(fallback);
 }
 
 export default async function AppOnboardingPage({
@@ -634,6 +649,10 @@ export default async function AppOnboardingPage({
   const photoStorage = getPhotoStorageReadiness();
   const workingDaysSummary = formatWorkingDaysSummary(workingDayRows.map((item) => item.dayOfWeek));
   const crewCount = Math.max(1, workerCandidates.length || workers.length);
+  const businessSetupComplete = (organization.onboardingStep || 0) >= 1;
+  const schedulingRulesComplete = (organization.onboardingStep || 0) >= 3;
+  const notificationsComplete = Boolean(organization.smsFromNumberE164);
+  const canGoLive = businessSetupComplete && schedulingRulesComplete && notificationsComplete;
 
   return (
     <section className="card onboarding-shell">
@@ -647,14 +666,18 @@ export default async function AppOnboardingPage({
       </div>
 
       <div className="tab-row onboarding-steps" style={{ marginTop: 12 }}>
-        {ONBOARDING_STEPS.map((item) => (
-          <span
-            key={item.value}
-            className={`tab-chip onboarding-step-chip ${activeStep === item.value ? "active" : ""} ${activeStep > item.value ? "done" : ""}`}
-          >
-            <span className="onboarding-step-number">{item.value}.</span> {item.label}
-          </span>
-        ))}
+        {ONBOARDING_STEPS.map((item) => {
+          const stepLocked = item.value === 4 && (!businessSetupComplete || !schedulingRulesComplete);
+          return (
+            <span
+              key={item.value}
+              title={stepLocked ? "Complete Business Setup + Scheduling rules to go live." : undefined}
+              className={`tab-chip onboarding-step-chip ${activeStep === item.value ? "active" : ""} ${activeStep > item.value ? "done" : ""} ${stepLocked ? "disabled" : ""}`}
+            >
+              <span className="onboarding-step-number">{item.value}.</span> {item.label}
+            </span>
+          );
+        })}
       </div>
 
       {step === 1 ? (
@@ -842,38 +865,41 @@ export default async function AppOnboardingPage({
           <input type="hidden" name="orgId" value={scope.orgId} />
 
           <h3>Messaging + Integrations</h3>
+          <p className="muted">Texting is optional but recommended. You can finish setup after scheduling is live.</p>
           <label className="inline-toggle">
             <input type="checkbox" name="enableTexting" defaultChecked={Boolean(organization.smsFromNumberE164)} />
             Enable texting
           </label>
 
-          <label>
-            Sending number (E.164)
-            <input name="smsFromNumberE164" defaultValue={organization.smsFromNumberE164 || ""} placeholder="+12065550100" />
-          </label>
+          <div className="onboarding-messaging-fields">
+            <label>
+              Sending number (E.164)
+              <input name="smsFromNumberE164" defaultValue={organization.smsFromNumberE164 || ""} placeholder="+12065550100" />
+            </label>
 
-          <label>
-            Send test SMS to
-            <input name="testPhoneE164" placeholder="+12065550199" />
-          </label>
+            <label>
+              Send test SMS to
+              <input name="testPhoneE164" placeholder="+12065550199" />
+            </label>
 
-          <div className="quick-links">
-            <button type="submit" name="intent" value="save" className="btn secondary">
-              Save messaging
-            </button>
-            <button type="submit" name="intent" value="test" className="btn secondary">
-              Send test SMS
-            </button>
-            <Link className="btn secondary" href={withOrgQuery("/api/integrations/google/connect?write=1", scope.orgId, scope.internalUser)}>
-              Connect Google
-            </Link>
-            <Link className="btn secondary" href={withOrgQuery("/app/settings/integrations", scope.orgId, scope.internalUser)}>
-              Sync now
-            </Link>
+            <div className="quick-links">
+              <button type="submit" name="intent" value="save" className="btn secondary" aria-label="Save messaging settings">
+                Save messaging
+              </button>
+              <button type="submit" name="intent" value="test" className="btn secondary" aria-label="Send test sms">
+                Send test SMS
+              </button>
+              <Link className="btn secondary" href={withOrgQuery("/api/integrations/google/connect?write=1", scope.orgId, scope.internalUser)}>
+                Connect Google
+              </Link>
+              <Link className="btn secondary" href={withOrgQuery("/app/settings/integrations", scope.orgId, scope.internalUser)}>
+                Sync now
+              </Link>
+            </div>
           </div>
 
           {!twilioReady ? (
-            <p className="muted">Twilio credentials are not configured yet. Core scheduling can still go live.</p>
+            <p className="muted">Texting is optional but recommended. You can set this up after scheduling is live.</p>
           ) : null}
           {saved === "1" ? <p className="form-status">Messaging settings saved.</p> : null}
           {error === "sender" ? <p className="form-status">Enter a valid sender number.</p> : null}
@@ -885,13 +911,26 @@ export default async function AppOnboardingPage({
               Test result: {decodeURIComponent(smsTest)}
             </p>
           ) : null}
+          {!canGoLive ? (
+            <p className="muted">Complete Business Setup + Scheduling rules + outbound number to go live.</p>
+          ) : null}
+          {error === "go-live-prereq" ? (
+            <p className="form-status">Complete Business Setup + Scheduling rules + outbound number before Go Live.</p>
+          ) : null}
 
           <div className="onboarding-sticky-actions">
             <Link className="btn secondary" href={onboardingUrl(scope.orgId, scope.internalUser, 3)}>
               Back
             </Link>
-            <button formAction={completeOnboardingAction} className="btn primary" type="submit">
-              Save &amp; Continue
+            <button
+              formAction={completeOnboardingAction}
+              className="btn primary"
+              type="submit"
+              disabled={!canGoLive}
+              title={!canGoLive ? "Complete Business Setup + Scheduling rules to go live." : undefined}
+              aria-label="Go Live"
+            >
+              Go Live
             </button>
           </div>
         </form>
@@ -936,14 +975,6 @@ export default async function AppOnboardingPage({
         </section>
       ) : null}
 
-      {step !== 5 ? (
-        <form action={skipOnboardingAction} className="onboarding-skip-row" style={{ marginTop: 16 }}>
-          <input type="hidden" name="orgId" value={scope.orgId} />
-          <button type="submit" className="btn secondary">
-            Skip for now
-          </button>
-        </form>
-      ) : null}
     </section>
   );
 }

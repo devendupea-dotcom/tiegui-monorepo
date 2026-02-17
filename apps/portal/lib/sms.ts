@@ -4,17 +4,21 @@ import { prisma } from "@/lib/prisma";
 import { startOfUtcMonth } from "@/lib/usage";
 import { maybeSendSmsQuotaAlerts } from "@/lib/usage-alerts";
 import { checkSlidingWindowLimit } from "@/lib/rate-limit";
+import { normalizeE164 } from "@/lib/phone";
+import { getTwilioOrgRuntimeConfigByOrgId, sendTwilioMessageWithConfig } from "@/lib/twilio-org";
 
 type SendSmsInput = {
   orgId: string;
-  fromNumberE164: string;
+  fromNumberE164?: string | null;
   toNumberE164: string;
   body: string;
+  allowPendingA2P?: boolean;
 };
 
 type SendSmsResult = {
   providerMessageSid: string | null;
   status: MessageStatus;
+  resolvedFromNumberE164: string | null;
   notice?: string;
 };
 
@@ -39,18 +43,53 @@ function isTwilioSendEnabled(): boolean {
 }
 
 export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResult> {
-  const accountSid = normalizeEnvValue(process.env.TWILIO_ACCOUNT_SID);
-  const authToken = normalizeEnvValue(process.env.TWILIO_AUTH_TOKEN);
   const smsCostEstimateCents = Math.max(
     0,
     Math.round(Number(normalizeEnvValue(process.env.TWILIO_SMS_COST_ESTIMATE_CENTS)) || 1),
   );
 
+  let twilioConfig: Awaited<ReturnType<typeof getTwilioOrgRuntimeConfigByOrgId>>;
+  try {
+    twilioConfig = await getTwilioOrgRuntimeConfigByOrgId(input.orgId);
+  } catch {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      resolvedFromNumberE164: null,
+      notice: "Twilio config could not be read. Check token encryption settings.",
+    };
+  }
+
+  if (!twilioConfig) {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      resolvedFromNumberE164: null,
+      notice: "Twilio is not configured for this organization.",
+    };
+  }
+
+  const canSendForStatus = twilioConfig.status === "ACTIVE" || input.allowPendingA2P === true;
+  if (!canSendForStatus) {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      resolvedFromNumberE164: normalizeE164(twilioConfig.phoneNumber) || twilioConfig.phoneNumber,
+      notice: `Twilio status is ${twilioConfig.status}. Sending is paused until ACTIVE.`,
+    };
+  }
+
+  const resolvedFromNumberE164 =
+    normalizeE164(input.fromNumberE164 || null) ||
+    normalizeE164(twilioConfig.phoneNumber) ||
+    twilioConfig.phoneNumber;
+
   // Safe default for development: persist outbound rows without calling Twilio.
-  if (!isTwilioSendEnabled() || !accountSid || !authToken) {
+  if (!isTwilioSendEnabled()) {
     return {
       providerMessageSid: null,
       status: "QUEUED",
+      resolvedFromNumberE164,
       notice: "Twilio sending is disabled. Message saved in CRM and marked QUEUED.",
     };
   }
@@ -66,6 +105,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     return {
       providerMessageSid: null,
       status: "FAILED",
+      resolvedFromNumberE164,
       notice: "Too many messages to this number. Try again in a minute.",
     };
   }
@@ -82,6 +122,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     return {
       providerMessageSid: null,
       status: "FAILED",
+      resolvedFromNumberE164,
       notice: "Organization not found.",
     };
   }
@@ -113,6 +154,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
       return {
         providerMessageSid: null,
         status: "FAILED",
+        resolvedFromNumberE164,
         notice: `SMS quota exceeded (${limit}/month). Sending blocked to prevent surprise charges.`,
       };
     }
@@ -144,46 +186,28 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     }
   }
 
-  const response = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        From: input.fromNumberE164,
-        To: input.toNumberE164,
-        Body: input.body,
-      }),
+  const providerResponse = await sendTwilioMessageWithConfig({
+    config: {
+      twilioSubaccountSid: twilioConfig.twilioSubaccountSid,
+      twilioAuthToken: twilioConfig.twilioAuthToken,
+      messagingServiceSid: twilioConfig.messagingServiceSid,
     },
-  );
+    toNumberE164: input.toNumberE164,
+    body: input.body,
+  });
 
-  const payload = (await response.json().catch(() => null)) as
-    | {
-        sid?: unknown;
-        status?: unknown;
-        message?: unknown;
-      }
-    | null;
-
-  const providerMessageSid = typeof payload?.sid === "string" ? payload.sid : null;
-
-  if (!response.ok) {
-    const notice =
-      typeof payload?.message === "string"
-        ? payload.message
-        : `Twilio send failed (${response.status}).`;
+  if (!providerResponse.ok) {
     return {
-      providerMessageSid,
+      providerMessageSid: providerResponse.providerMessageSid,
       status: "FAILED",
-      notice,
+      resolvedFromNumberE164,
+      notice: providerResponse.error,
     };
   }
 
   return {
-    providerMessageSid,
-    status: mapTwilioStatus(typeof payload?.status === "string" ? payload.status : null),
+    providerMessageSid: providerResponse.providerMessageSid,
+    status: mapTwilioStatus(providerResponse.providerStatus),
+    resolvedFromNumberE164,
   };
 }

@@ -116,12 +116,20 @@ export async function POST(req: Request, { params }: RouteContext) {
 
   const organization = await prisma.organization.findUnique({
     where: { id: scoped.lead.orgId },
-    select: { smsFromNumberE164: true },
+    select: {
+      smsFromNumberE164: true,
+      twilioConfig: {
+        select: {
+          phoneNumber: true,
+        },
+      },
+    },
   });
 
-  const defaultFromNumber = normalizeE164(process.env.DEFAULT_OUTBOUND_FROM_E164 || null);
   const resolvedFromNumber =
-    fromNumberE164 || normalizeE164(organization?.smsFromNumberE164 || null) || defaultFromNumber;
+    fromNumberE164 ||
+    normalizeE164(organization?.twilioConfig?.phoneNumber || null) ||
+    normalizeE164(organization?.smsFromNumberE164 || null);
 
   if (!resolvedFromNumber) {
     return NextResponse.json(
@@ -141,6 +149,17 @@ export async function POST(req: Request, { params }: RouteContext) {
     toNumberE164: scoped.lead.phoneE164,
     body: cleanedBody,
   });
+  const finalFromNumber = providerResult.resolvedFromNumberE164 || resolvedFromNumber;
+
+  if (!finalFromNumber) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: providerResult.notice || "No outbound SMS number is configured for this business yet.",
+      },
+      { status: 400 },
+    );
+  }
 
   const created = await prisma.$transaction(async (tx) => {
     const message = await tx.message.create({
@@ -149,7 +168,7 @@ export async function POST(req: Request, { params }: RouteContext) {
         leadId: scoped.lead.id,
         direction: "OUTBOUND",
         type: "MANUAL",
-        fromNumberE164: resolvedFromNumber,
+        fromNumberE164: finalFromNumber,
         toNumberE164: scoped.lead.phoneE164,
         body: cleanedBody,
         provider: "TWILIO",

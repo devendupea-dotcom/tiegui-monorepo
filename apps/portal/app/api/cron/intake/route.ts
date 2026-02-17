@@ -6,6 +6,7 @@ import {
 } from "@/lib/intake-automation";
 import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { processDueSmsDispatchQueue } from "@/lib/sms-dispatch-queue";
 
 export const dynamic = "force-dynamic";
 
@@ -49,9 +50,16 @@ function getBearerToken(headerValue: string | null): string | null {
 }
 
 function getOrganizationSettings(call: {
-  org: IntakeOrganizationSettings;
+  org: Omit<IntakeOrganizationSettings, "calendarTimezone"> & {
+    twilioConfig?: { phoneNumber: string } | null;
+    dashboardConfig?: { calendarTimezone: string } | null;
+  };
 }): IntakeOrganizationSettings {
-  return call.org;
+  return {
+    ...call.org,
+    smsFromNumberE164: call.org.smsFromNumberE164 || call.org.twilioConfig?.phoneNumber || null,
+    calendarTimezone: call.org.dashboardConfig?.calendarTimezone || "America/Los_Angeles",
+  };
 }
 
 function getCronSecret(req: Request): string | null {
@@ -108,6 +116,7 @@ export async function POST(req: Request) {
 
   const now = new Date();
   const since = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
+  const queueDispatchResult = await processDueSmsDispatchQueue({ maxJobs: limit });
 
   const missedCalls = await prisma.call.findMany({
     where: {
@@ -117,7 +126,7 @@ export async function POST(req: Request) {
       leadId: { not: null },
       org: {
         missedCallAutoReplyOn: true,
-        smsFromNumberE164: { not: null },
+        OR: [{ smsFromNumberE164: { not: null } }, { twilioConfig: { isNot: null } }],
       },
     },
     select: {
@@ -129,6 +138,13 @@ export async function POST(req: Request) {
         select: {
           id: true,
           smsFromNumberE164: true,
+          twilioConfig: {
+            select: {
+              phoneNumber: true,
+            },
+          },
+          smsQuietHoursStartMinute: true,
+          smsQuietHoursEndMinute: true,
           messageLanguage: true,
           missedCallAutoReplyBody: true,
           missedCallAutoReplyBodyEn: true,
@@ -146,6 +162,11 @@ export async function POST(req: Request) {
           intakeCompletionBody: true,
           intakeCompletionBodyEn: true,
           intakeCompletionBodyEs: true,
+          dashboardConfig: {
+            select: {
+              calendarTimezone: true,
+            },
+          },
         },
       },
       lead: {
@@ -240,5 +261,6 @@ export async function POST(req: Request) {
     completedLeadsScanned: completedLeads.length,
     callbackEventsCreated,
     callbackEventsSkipped,
+    queuedSmsDispatch: queueDispatchResult,
   });
 }

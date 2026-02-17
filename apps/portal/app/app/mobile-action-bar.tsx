@@ -3,12 +3,19 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-function withOrgQuery(path: string, orgId: string | null): string {
-  if (!orgId) {
+function withPortalQuery(path: string, orgId: string | null, mobileMode: boolean): string {
+  if (!orgId && !mobileMode) {
     return path;
   }
-  const joiner = path.includes("?") ? "&" : "?";
-  return `${path}${joiner}orgId=${encodeURIComponent(orgId)}`;
+  const target = new URL(path, "https://app.tieguisolutions.com");
+  if (orgId) {
+    target.searchParams.set("orgId", orgId);
+  }
+  if (mobileMode) {
+    target.searchParams.set("mobile", "1");
+  }
+  const query = target.searchParams.toString();
+  return query ? `${target.pathname}?${query}` : target.pathname;
 }
 
 export default function MobileActionBar() {
@@ -16,6 +23,7 @@ export default function MobileActionBar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const orgId = searchParams.get("orgId");
+  const mobileMode = searchParams.get("mobile") === "1";
 
   function openQuickAdd() {
     const params = new URLSearchParams(searchParams.toString());
@@ -23,12 +31,15 @@ export default function MobileActionBar() {
     if (orgId) {
       params.set("orgId", orgId);
     }
+    if (mobileMode) {
+      params.set("mobile", "1");
+    }
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }
 
-  const scheduleHref = withOrgQuery("/app/calendar?quickAction=schedule", orgId);
-  const blockHref = withOrgQuery("/app/calendar?quickAction=block", orgId);
+  const scheduleHref = withPortalQuery("/app/calendar?quickAction=schedule", orgId, mobileMode);
+  const blockHref = withPortalQuery("/app/calendar?quickAction=block", orgId, mobileMode);
 
   return (
     <nav className="mobile-action-bar" aria-label="Quick actions">

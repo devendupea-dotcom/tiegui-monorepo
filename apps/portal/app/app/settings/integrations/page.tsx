@@ -631,32 +631,50 @@ export default async function IntegrationsSettingsPage({
             No import runs yet.
           </p>
         ) : (
-          <div className="table-wrap" style={{ marginTop: 12 }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Status</th>
-                  <th>Started</th>
-                  <th>Finished</th>
-                  <th>Stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((run) => (
-                  <tr key={run.id}>
-                    <td>{run.provider}</td>
-                    <td>
-                      <span className={`badge status-${run.status.toLowerCase()}`}>{run.status}</span>
-                    </td>
-                    <td>{formatDateTime(run.startedAt)}</td>
-                    <td>{run.finishedAt ? formatDateTime(run.finishedAt) : "-"}</td>
-                    <td>{summarizeStats(run.statsJson)}</td>
+          <>
+            <ul className="mobile-list-cards" style={{ marginTop: 12 }}>
+              {runs.map((run) => (
+                <li key={run.id} className="mobile-list-card">
+                  <div className="stack-cell">
+                    <strong>{run.provider}</strong>
+                    <span className={`badge status-${run.status.toLowerCase()}`}>{run.status}</span>
+                  </div>
+                  <div className="stack-cell">
+                    <span className="muted">Started: {formatDateTime(run.startedAt)}</span>
+                    <span className="muted">Finished: {run.finishedAt ? formatDateTime(run.finishedAt) : "-"}</span>
+                    <span className="muted">Stats: {summarizeStats(run.statsJson)}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <div className="table-wrap desktop-table-only" style={{ marginTop: 12 }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Status</th>
+                    <th>Started</th>
+                    <th>Finished</th>
+                    <th>Stats</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {runs.map((run) => (
+                    <tr key={run.id}>
+                      <td>{run.provider}</td>
+                      <td>
+                        <span className={`badge status-${run.status.toLowerCase()}`}>{run.status}</span>
+                      </td>
+                      <td>{formatDateTime(run.startedAt)}</td>
+                      <td>{run.finishedAt ? formatDateTime(run.finishedAt) : "-"}</td>
+                      <td>{summarizeStats(run.statsJson)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
 

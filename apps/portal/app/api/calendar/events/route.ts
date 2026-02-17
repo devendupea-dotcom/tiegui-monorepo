@@ -19,6 +19,7 @@ import {
 } from "@/lib/calendar/permissions";
 import { clampWeekStartsOn, formatDateOnly, getVisibleRange, localDateFromUtc, parseUtcDateTime } from "@/lib/calendar/dates";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
+import { capturePortalError, trackPortalEvent } from "@/lib/telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -219,6 +220,9 @@ export async function GET(req: Request) {
       events: events.map(serializeCalendarEvent),
     });
   } catch (error) {
+    await capturePortalError(error, {
+      route: "GET /api/calendar/events",
+    });
     if (error instanceof CalendarApiError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     }
@@ -330,6 +334,13 @@ export async function POST(req: Request) {
       });
     }
 
+    await trackPortalEvent("Job Created", {
+      orgId,
+      actorId: actor.id,
+      eventId: created.id,
+      type: created.type,
+    });
+
     const availabilityByWorker: Record<string, string[]> = {};
     for (const workerUserId of workerIds) {
       const workerTimeZone = await getWorkerCalendarTimeZone({
@@ -354,6 +365,9 @@ export async function POST(req: Request) {
       timeZone: settings.calendarTimezone,
     });
   } catch (error) {
+    await capturePortalError(error, {
+      route: "POST /api/calendar/events",
+    });
     if (error instanceof CalendarApiError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     }

@@ -106,18 +106,22 @@ function buildCandidateUrls(req: Request): string[] {
   return [...candidates];
 }
 
-export function validateTwilioWebhook(req: Request, formData: FormData): ValidationResult {
+export function validateTwilioWebhook(
+  req: Request,
+  formData: FormData,
+  options?: { authToken?: string | null },
+): ValidationResult {
   const shouldValidate = normalizeEnvValue(process.env.TWILIO_VALIDATE_SIGNATURE) === "true";
   if (!shouldValidate) {
     return { ok: true };
   }
 
-  const authToken = normalizeEnvValue(process.env.TWILIO_AUTH_TOKEN);
+  const authToken = options?.authToken || normalizeEnvValue(process.env.TWILIO_AUTH_TOKEN);
   if (!authToken) {
     return {
       ok: false,
       status: 500,
-      error: "TWILIO_AUTH_TOKEN is required when TWILIO_VALIDATE_SIGNATURE=true.",
+      error: "Twilio auth token is required when TWILIO_VALIDATE_SIGNATURE=true.",
     };
   }
 

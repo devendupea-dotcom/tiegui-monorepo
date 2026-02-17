@@ -12,6 +12,12 @@ export default async function HqBusinessesPage() {
         name: true,
         createdAt: true,
         smsFromNumberE164: true,
+        twilioConfig: {
+          select: {
+            status: true,
+            phoneNumber: true,
+          },
+        },
         _count: {
           select: {
             users: true,
@@ -58,6 +64,7 @@ export default async function HqBusinessesPage() {
                 <th>Messages</th>
                 <th>Events</th>
                 <th>SMS Number</th>
+                <th>Twilio</th>
                 <th>Portal</th>
                 <th>Created</th>
               </tr>
@@ -75,7 +82,12 @@ export default async function HqBusinessesPage() {
                   <td>{organization._count.calls}</td>
                   <td>{organization._count.messages}</td>
                   <td>{organization._count.events}</td>
-                  <td>{organization.smsFromNumberE164 || "-"}</td>
+                  <td>{organization.twilioConfig?.phoneNumber || organization.smsFromNumberE164 || "-"}</td>
+                  <td>
+                    <Link className="table-link" href={`/hq/orgs/${organization.id}/twilio`}>
+                      {organization.twilioConfig?.status || "Setup"}
+                    </Link>
+                  </td>
                   <td>
                     <Link className="table-link" href={`/app?orgId=${organization.id}`}>
                       Open

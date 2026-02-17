@@ -47,6 +47,7 @@ async function updateSettingsAction(formData: FormData) {
   const { internalUser } = await requireAppOrgAccess("/app/settings", orgId);
 
   const senderRaw = String(formData.get("smsFromNumberE164") || "").trim();
+  const organizationName = String(formData.get("organizationName") || "").trim();
   const messageLanguageRaw = String(formData.get("messageLanguage") || "").trim();
   const missedCallAutoReplyOn = String(formData.get("missedCallAutoReplyOn") || "") === "on";
   const missedCallMessageEn = String(formData.get("missedCallAutoReplyBodyEn") || "").trim();
@@ -68,6 +69,8 @@ async function updateSettingsAction(formData: FormData) {
   const offlineModeEnabled = String(formData.get("offlineModeEnabled") || "") === "on";
   const quietStartRaw = String(formData.get("ghostBustingQuietHoursStart") || "").trim();
   const quietEndRaw = String(formData.get("ghostBustingQuietHoursEnd") || "").trim();
+  const smsQuietStartRaw = String(formData.get("smsQuietHoursStartMinute") || "").trim();
+  const smsQuietEndRaw = String(formData.get("smsQuietHoursEndMinute") || "").trim();
   const maxNudgesRaw = String(formData.get("ghostBustingMaxNudges") || "").trim();
   const ghostTemplateText = String(formData.get("ghostBustingTemplateText") || "").trim();
   const calendarTimezoneInput = String(formData.get("calendarTimezone") || "").trim();
@@ -95,6 +98,10 @@ async function updateSettingsAction(formData: FormData) {
 
   if (!messageLanguage) {
     redirect(withOrgQuery("/app/settings?error=invalid-message-language", orgId, internalUser));
+  }
+
+  if (!organizationName || organizationName.length > 120) {
+    redirect(withOrgQuery("/app/settings?error=invalid-business-name", orgId, internalUser));
   }
 
   const localizedMessageTemplates = [
@@ -140,7 +147,13 @@ async function updateSettingsAction(formData: FormData) {
 
   let quietStartMinute: number | null = null;
   let quietEndMinute: number | null = null;
+  const smsQuietStartMinute = parseQuietHourMinute(smsQuietStartRaw);
+  const smsQuietEndMinute = parseQuietHourMinute(smsQuietEndRaw);
   let ghostBustingMaxNudges = 2;
+  if (smsQuietStartMinute === null || smsQuietEndMinute === null) {
+    redirect(withOrgQuery("/app/settings?error=invalid-sms-quiet-hours", orgId, internalUser));
+  }
+
   if (canManageAutomationSettings) {
     quietStartMinute = parseQuietHourMinute(quietStartRaw);
     quietEndMinute = parseQuietHourMinute(quietEndRaw);
@@ -162,6 +175,7 @@ async function updateSettingsAction(formData: FormData) {
     where: { id: orgId },
     data: {
       smsFromNumberE164: sender,
+      name: organizationName,
       messageLanguage,
       missedCallAutoReplyOn,
       missedCallAutoReplyBody: missedCallMessageEn || missedCallMessageEs || null,
@@ -188,6 +202,8 @@ async function updateSettingsAction(formData: FormData) {
       ghostBustingQuietHoursEnd: canManageAutomationSettings ? quietEndMinute! : undefined,
       ghostBustingMaxNudges: canManageAutomationSettings ? ghostBustingMaxNudges : undefined,
       ghostBustingTemplateText: canManageAutomationSettings ? (ghostTemplateText || null) : undefined,
+      smsQuietHoursStartMinute: smsQuietStartMinute,
+      smsQuietHoursEndMinute: smsQuietEndMinute,
     },
   });
 
@@ -248,11 +264,19 @@ export default async function ClientSettingsPage({
       ghostBustingMaxNudges: true,
       ghostBustingTemplateText: true,
       smsFromNumberE164: true,
+      twilioConfig: {
+        select: {
+          status: true,
+          phoneNumber: true,
+        },
+      },
       messageLanguage: true,
       missedCallAutoReplyOn: true,
       missedCallAutoReplyBody: true,
       missedCallAutoReplyBodyEn: true,
       missedCallAutoReplyBodyEs: true,
+      smsQuietHoursStartMinute: true,
+      smsQuietHoursEndMinute: true,
       intakeAskLocationBody: true,
       intakeAskLocationBodyEn: true,
       intakeAskLocationBodyEs: true,
@@ -295,6 +319,28 @@ export default async function ClientSettingsPage({
     redirect(scope.internalUser ? "/hq/businesses" : "/app");
   }
 
+  const [googleConnectedCount] = await Promise.all([
+    prisma.googleAccount.count({
+      where: {
+        orgId: scope.orgId,
+        isEnabled: true,
+      },
+    }),
+  ]);
+
+  const twilioConfigured = Boolean(organization.twilioConfig?.phoneNumber && organization.twilioConfig?.status !== "PAUSED");
+  const intakeConfigured = Boolean(
+    organization.intakeAskLocationBodyEn ||
+      organization.intakeAskLocationBodyEs ||
+      organization.intakeAskWorkTypeBodyEn ||
+      organization.intakeAskWorkTypeBodyEs ||
+      organization.intakeAskCallbackBodyEn ||
+      organization.intakeAskCallbackBodyEs ||
+      organization.intakeCompletionBodyEn ||
+      organization.intakeCompletionBodyEs,
+  );
+  const googleConfigured = googleConnectedCount > 0;
+
   const saved = getParam(searchParams?.saved) === "1";
   const error = getParam(searchParams?.error);
 
@@ -302,295 +348,370 @@ export default async function ClientSettingsPage({
     <section className="card">
       <h2>{t("settings.title")}</h2>
       <p className="muted">{t("settings.subtitle", { organizationName: organization.name })}</p>
-      <div className="quick-links" style={{ marginTop: 12 }}>
-        <Link
-          className="btn secondary"
-          href={withOrgQuery("/app/settings/integrations", scope.orgId, scope.internalUser)}
-        >
-          {t("buttons.openIntegrations")}
-        </Link>
+      <div className="settings-integrations-grid" style={{ marginTop: 12 }}>
+        <article className="settings-integration-card">
+          <strong>{t("settings.integrationGoogle")}</strong>
+          <p className={`settings-integration-status ${googleConfigured ? "connected" : "warning"}`}>
+            {t(googleConfigured ? "settings.statusConnected" : "settings.statusNotConnected")}
+          </p>
+          <Link className="btn secondary" href={withOrgQuery("/app/settings/integrations", scope.orgId, scope.internalUser)}>
+            {t("buttons.openIntegrations")}
+          </Link>
+        </article>
+
+        <article className="settings-integration-card">
+          <strong>{t("settings.integrationTwilio")}</strong>
+          <p className={`settings-integration-status ${twilioConfigured ? "connected" : "warning"}`}>
+            {twilioConfigured ? t("settings.statusConnected") : t("settings.statusNotConnected")}
+          </p>
+          <Link className="btn secondary" href={withOrgQuery("/app/settings/integrations", scope.orgId, scope.internalUser)}>
+            Connect Twilio SMS
+          </Link>
+        </article>
+
+        <article className="settings-integration-card">
+          <strong>{t("settings.integrationIntake")}</strong>
+          <p className={`settings-integration-status ${intakeConfigured ? "connected" : "warning"}`}>
+            {intakeConfigured ? t("settings.statusConfigured") : t("settings.statusNotConnected")}
+          </p>
+          <a className="btn secondary" href="#settings-templates">
+            Configure Intake Templates
+          </a>
+        </article>
       </div>
 
       <form action={updateSettingsAction} className="auth-form" style={{ marginTop: 12 }}>
         <input type="hidden" name="orgId" value={organization.id} />
 
-        <label>
-          {t("settings.outboundNumberLabel")}
-          <input
-            name="smsFromNumberE164"
-            defaultValue={organization.smsFromNumberE164 || ""}
-            placeholder={t("settings.outboundNumberPlaceholder")}
-          />
-        </label>
+        <div className="settings-accordion">
+          <details open>
+            <summary>{t("settings.sectionOrganization")}</summary>
+            <div className="settings-accordion-body">
+              <label>
+                {t("settings.businessNameLabel")}
+                <input
+                  name="organizationName"
+                  defaultValue={organization.name}
+                  maxLength={120}
+                  required
+                />
+              </label>
 
-        <label>
-          {t("settings.messageLanguageLabel")}
-          <select name="messageLanguage" defaultValue={organization.messageLanguage.toLowerCase()}>
-            <option value="en">{t("settings.messageLanguage.en")}</option>
-            <option value="es">{t("settings.messageLanguage.es")}</option>
-            <option value="auto">{t("settings.messageLanguage.auto")}</option>
-          </select>
-        </label>
+              <label>
+                {t("settings.calendarTimezoneLabel")}
+                <input
+                  name="calendarTimezone"
+                  defaultValue={organization.dashboardConfig?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE}
+                  placeholder={t("settings.timezonePlaceholder")}
+                />
+              </label>
 
-        <label className="inline-toggle">
-          <input
-            type="checkbox"
-            name="missedCallAutoReplyOn"
-            defaultChecked={organization.missedCallAutoReplyOn}
-          />
-          {t("settings.missedCallToggle")}
-        </label>
+              <label>
+                {t("settings.yourTimezoneLabel")}
+                <input
+                  name="userTimezone"
+                  defaultValue={currentUser?.timezone || ""}
+                  placeholder={t("settings.timezonePlaceholder")}
+                />
+              </label>
 
-        <label>
-          {t("settings.missedCallMessageEnLabel")}
-          <textarea
-            name="missedCallAutoReplyBodyEn"
-            rows={4}
-            maxLength={1600}
-            defaultValue={organization.missedCallAutoReplyBodyEn || organization.missedCallAutoReplyBody || ""}
-            placeholder={t("settings.missedCallPlaceholderEn")}
-          />
-        </label>
+              <label>
+                {t("settings.reminderTimingLabel")}
+                <input
+                  type="number"
+                  min={15}
+                  max={1440}
+                  name="jobReminderMinutesBefore"
+                  defaultValue={organization.dashboardConfig?.jobReminderMinutesBefore || 120}
+                />
+              </label>
 
-        <label>
-          {t("settings.missedCallMessageEsLabel")}
-          <textarea
-            name="missedCallAutoReplyBodyEs"
-            rows={4}
-            maxLength={1600}
-            defaultValue={organization.missedCallAutoReplyBodyEs || ""}
-            placeholder={t("settings.missedCallPlaceholderEs")}
-          />
-        </label>
+              <label>
+                {t("settings.googleReviewLinkLabel")}
+                <input
+                  type="url"
+                  name="googleReviewUrl"
+                  defaultValue={organization.dashboardConfig?.googleReviewUrl || ""}
+                  placeholder={t("settings.googleReviewPlaceholder")}
+                />
+              </label>
+            </div>
+          </details>
 
-        <h3 style={{ marginTop: 10 }}>{t("settings.templatesHeading")}</h3>
+          <details open>
+            <summary>{t("settings.sectionMessaging")}</summary>
+            <div className="settings-accordion-body">
+              <label>
+                {t("settings.outboundNumberLabel")}
+                <input
+                  name="smsFromNumberE164"
+                  defaultValue={organization.smsFromNumberE164 || ""}
+                  placeholder={t("settings.outboundNumberPlaceholder")}
+                />
+              </label>
 
-        <label>
-          {t("settings.intakeAskLocationEnLabel")}
-          <textarea
-            name="intakeAskLocationBodyEn"
-            rows={2}
-            maxLength={1600}
-            defaultValue={organization.intakeAskLocationBodyEn || organization.intakeAskLocationBody || ""}
-            placeholder={t("settings.intakeAskLocationPlaceholderEn")}
-          />
-        </label>
+              <label>
+                {t("settings.messageLanguageLabel")}
+                <select name="messageLanguage" defaultValue={organization.messageLanguage.toLowerCase()}>
+                  <option value="en">{t("settings.messageLanguage.en")}</option>
+                  <option value="es">{t("settings.messageLanguage.es")}</option>
+                  <option value="auto">{t("settings.messageLanguage.auto")}</option>
+                </select>
+              </label>
 
-        <label>
-          {t("settings.intakeAskLocationEsLabel")}
-          <textarea
-            name="intakeAskLocationBodyEs"
-            rows={2}
-            maxLength={1600}
-            defaultValue={organization.intakeAskLocationBodyEs || ""}
-            placeholder={t("settings.intakeAskLocationPlaceholderEs")}
-          />
-        </label>
+              <label>
+                {t("settings.smsQuietStartLabel")}
+                <input
+                  type="time"
+                  name="smsQuietHoursStartMinute"
+                  defaultValue={minuteToTimeInput(organization.smsQuietHoursStartMinute)}
+                />
+              </label>
+              <label>
+                {t("settings.smsQuietEndLabel")}
+                <input
+                  type="time"
+                  name="smsQuietHoursEndMinute"
+                  defaultValue={minuteToTimeInput(organization.smsQuietHoursEndMinute)}
+                />
+              </label>
+              <p className="muted settings-toggle-help">{t("settings.helperSmsQuietHours")}</p>
 
-        <label>
-          {t("settings.intakeAskWorkTypeEnLabel")}
-          <textarea
-            name="intakeAskWorkTypeBodyEn"
-            rows={2}
-            maxLength={1600}
-            defaultValue={organization.intakeAskWorkTypeBodyEn || organization.intakeAskWorkTypeBody || ""}
-            placeholder={t("settings.intakeAskWorkTypePlaceholderEn")}
-          />
-        </label>
+              <label className="inline-toggle">
+                <input
+                  type="checkbox"
+                  name="missedCallAutoReplyOn"
+                  defaultChecked={organization.missedCallAutoReplyOn}
+                />
+                {t("settings.missedCallToggle")}
+              </label>
+              <p className="muted settings-toggle-help">{t("settings.helperMissedCallToggle")}</p>
 
-        <label>
-          {t("settings.intakeAskWorkTypeEsLabel")}
-          <textarea
-            name="intakeAskWorkTypeBodyEs"
-            rows={2}
-            maxLength={1600}
-            defaultValue={organization.intakeAskWorkTypeBodyEs || ""}
-            placeholder={t("settings.intakeAskWorkTypePlaceholderEs")}
-          />
-        </label>
+              <label className="inline-toggle">
+                <input
+                  type="checkbox"
+                  name="ghostBustingEnabled"
+                  defaultChecked={organization.ghostBustingEnabled}
+                  disabled={!canManageAutomationSettings}
+                />
+                {t("settings.ghostBustingToggle")}
+              </label>
+              <p className="muted settings-toggle-help">{t("settings.helperGhostBusting")}</p>
 
-        <label>
-          {t("settings.intakeAskCallbackEnLabel")}
-          <textarea
-            name="intakeAskCallbackBodyEn"
-            rows={2}
-            maxLength={1600}
-            defaultValue={organization.intakeAskCallbackBodyEn || organization.intakeAskCallbackBody || ""}
-            placeholder={t("settings.intakeAskCallbackPlaceholderEn")}
-          />
-        </label>
+              <label className="inline-toggle">
+                <input
+                  type="checkbox"
+                  name="voiceNotesEnabled"
+                  defaultChecked={organization.voiceNotesEnabled}
+                  disabled={!canManageAutomationSettings}
+                />
+                {t("settings.voiceNotesToggle")}
+              </label>
+              <p className="muted settings-toggle-help">{t("settings.helperVoiceNotes")}</p>
 
-        <label>
-          {t("settings.intakeAskCallbackEsLabel")}
-          <textarea
-            name="intakeAskCallbackBodyEs"
-            rows={2}
-            maxLength={1600}
-            defaultValue={organization.intakeAskCallbackBodyEs || ""}
-            placeholder={t("settings.intakeAskCallbackPlaceholderEs")}
-          />
-        </label>
+              <label className="inline-toggle">
+                <input
+                  type="checkbox"
+                  name="metaCapiEnabled"
+                  defaultChecked={organization.metaCapiEnabled}
+                  disabled={!canManageAutomationSettings}
+                />
+                {t("settings.metaCapiToggle")}
+              </label>
+              <p className="muted settings-toggle-help">{t("settings.helperMetaCapi")}</p>
 
-        <label>
-          {t("settings.intakeCompletionEnLabel")}
-          <textarea
-            name="intakeCompletionBodyEn"
-            rows={2}
-            maxLength={1600}
-            defaultValue={organization.intakeCompletionBodyEn || organization.intakeCompletionBody || ""}
-            placeholder={t("settings.intakeCompletionPlaceholderEn")}
-          />
-        </label>
+              <label className="inline-toggle">
+                <input
+                  type="checkbox"
+                  name="offlineModeEnabled"
+                  defaultChecked={organization.offlineModeEnabled}
+                  disabled={!canManageAutomationSettings}
+                />
+                {t("settings.offlineModeToggle")}
+              </label>
+              <p className="muted settings-toggle-help">{t("settings.helperOfflineMode")}</p>
 
-        <label>
-          {t("settings.intakeCompletionEsLabel")}
-          <textarea
-            name="intakeCompletionBodyEs"
-            rows={2}
-            maxLength={1600}
-            defaultValue={organization.intakeCompletionBodyEs || ""}
-            placeholder={t("settings.intakeCompletionPlaceholderEs")}
-          />
-        </label>
+              <label>
+                {t("settings.ghostQuietStartLabel")}
+                <input
+                  type="time"
+                  name="ghostBustingQuietHoursStart"
+                  defaultValue={minuteToTimeInput(organization.ghostBustingQuietHoursStart)}
+                  disabled={!canManageAutomationSettings}
+                />
+              </label>
+              <label>
+                {t("settings.ghostQuietEndLabel")}
+                <input
+                  type="time"
+                  name="ghostBustingQuietHoursEnd"
+                  defaultValue={minuteToTimeInput(organization.ghostBustingQuietHoursEnd)}
+                  disabled={!canManageAutomationSettings}
+                />
+              </label>
+              <label>
+                {t("settings.ghostMaxNudgesLabel")}
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  name="ghostBustingMaxNudges"
+                  defaultValue={organization.ghostBustingMaxNudges}
+                  disabled={!canManageAutomationSettings}
+                />
+              </label>
+              <label>
+                {t("settings.ghostTemplateLabel")}
+                <textarea
+                  name="ghostBustingTemplateText"
+                  rows={4}
+                  maxLength={1600}
+                  disabled={!canManageAutomationSettings}
+                  defaultValue={organization.ghostBustingTemplateText || t("settings.ghostTemplateDefault")}
+                />
+              </label>
+              {!canManageAutomationSettings ? (
+                <p className="muted">{t("settings.automationFlagsNote")}</p>
+              ) : null}
+            </div>
+          </details>
 
-        <label>
-          {t("settings.reminderTimingLabel")}
-          <input
-            type="number"
-            min={15}
-            max={1440}
-            name="jobReminderMinutesBefore"
-            defaultValue={organization.dashboardConfig?.jobReminderMinutesBefore || 120}
-          />
-        </label>
+          <details id="settings-templates">
+            <summary>{t("settings.sectionTemplates")}</summary>
+            <div className="settings-accordion-body">
+              <label>
+                {t("settings.missedCallMessageEnLabel")}
+                <textarea
+                  name="missedCallAutoReplyBodyEn"
+                  rows={4}
+                  maxLength={1600}
+                  defaultValue={organization.missedCallAutoReplyBodyEn || organization.missedCallAutoReplyBody || ""}
+                  placeholder={t("settings.missedCallPlaceholderEn")}
+                />
+              </label>
 
-        <label>
-          {t("settings.googleReviewLinkLabel")}
-          <input
-            type="url"
-            name="googleReviewUrl"
-            defaultValue={organization.dashboardConfig?.googleReviewUrl || ""}
-            placeholder={t("settings.googleReviewPlaceholder")}
-          />
-        </label>
+              <label>
+                {t("settings.missedCallMessageEsLabel")}
+                <textarea
+                  name="missedCallAutoReplyBodyEs"
+                  rows={4}
+                  maxLength={1600}
+                  defaultValue={organization.missedCallAutoReplyBodyEs || ""}
+                  placeholder={t("settings.missedCallPlaceholderEs")}
+                />
+              </label>
 
-        <label>
-          {t("settings.calendarTimezoneLabel")}
-          <input
-            name="calendarTimezone"
-            defaultValue={organization.dashboardConfig?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE}
-            placeholder={t("settings.timezonePlaceholder")}
-          />
-        </label>
+              <label>
+                {t("settings.intakeAskLocationEnLabel")}
+                <textarea
+                  name="intakeAskLocationBodyEn"
+                  rows={2}
+                  maxLength={1600}
+                  defaultValue={organization.intakeAskLocationBodyEn || organization.intakeAskLocationBody || ""}
+                  placeholder={t("settings.intakeAskLocationPlaceholderEn")}
+                />
+              </label>
 
-        <label>
-          {t("settings.yourTimezoneLabel")}
-          <input
-            name="userTimezone"
-            defaultValue={currentUser?.timezone || ""}
-            placeholder={t("settings.timezonePlaceholder")}
-          />
-        </label>
+              <label>
+                {t("settings.intakeAskLocationEsLabel")}
+                <textarea
+                  name="intakeAskLocationBodyEs"
+                  rows={2}
+                  maxLength={1600}
+                  defaultValue={organization.intakeAskLocationBodyEs || ""}
+                  placeholder={t("settings.intakeAskLocationPlaceholderEs")}
+                />
+              </label>
 
-        <label className="inline-toggle">
-            <input
-              type="checkbox"
-              name="allowWorkerLeadCreate"
-              defaultChecked={organization.allowWorkerLeadCreate}
-              disabled={!canManageLeadEntrySetting}
-            />
-          {t("settings.allowWorkerLeadCreate")}
-        </label>
-        {!canManageLeadEntrySetting ? (
-          <p className="muted">{t("settings.allowWorkerLeadCreateNote")}</p>
-        ) : null}
+              <label>
+                {t("settings.intakeAskWorkTypeEnLabel")}
+                <textarea
+                  name="intakeAskWorkTypeBodyEn"
+                  rows={2}
+                  maxLength={1600}
+                  defaultValue={organization.intakeAskWorkTypeBodyEn || organization.intakeAskWorkTypeBody || ""}
+                  placeholder={t("settings.intakeAskWorkTypePlaceholderEn")}
+                />
+              </label>
 
-        <h3 style={{ marginTop: 10 }}>{t("settings.automationFlagsHeading")}</h3>
-        <label className="inline-toggle">
-          <input
-            type="checkbox"
-            name="ghostBustingEnabled"
-            defaultChecked={organization.ghostBustingEnabled}
-            disabled={!canManageAutomationSettings}
-          />
-          {t("settings.ghostBustingToggle")}
-        </label>
-        <label className="inline-toggle">
-          <input
-            type="checkbox"
-            name="voiceNotesEnabled"
-            defaultChecked={organization.voiceNotesEnabled}
-            disabled={!canManageAutomationSettings}
-          />
-          {t("settings.voiceNotesToggle")}
-        </label>
-        <label className="inline-toggle">
-          <input
-            type="checkbox"
-            name="metaCapiEnabled"
-            defaultChecked={organization.metaCapiEnabled}
-            disabled={!canManageAutomationSettings}
-          />
-          {t("settings.metaCapiToggle")}
-        </label>
-        <label className="inline-toggle">
-          <input
-            type="checkbox"
-            name="offlineModeEnabled"
-            defaultChecked={organization.offlineModeEnabled}
-            disabled={!canManageAutomationSettings}
-          />
-          {t("settings.offlineModeToggle")}
-        </label>
+              <label>
+                {t("settings.intakeAskWorkTypeEsLabel")}
+                <textarea
+                  name="intakeAskWorkTypeBodyEs"
+                  rows={2}
+                  maxLength={1600}
+                  defaultValue={organization.intakeAskWorkTypeBodyEs || ""}
+                  placeholder={t("settings.intakeAskWorkTypePlaceholderEs")}
+                />
+              </label>
 
-        <h3 style={{ marginTop: 10 }}>{t("settings.ghostRulesHeading")}</h3>
-        <label>
-          {t("settings.ghostQuietStartLabel")}
-          <input
-            type="time"
-            name="ghostBustingQuietHoursStart"
-            defaultValue={minuteToTimeInput(organization.ghostBustingQuietHoursStart)}
-            disabled={!canManageAutomationSettings}
-          />
-        </label>
-        <label>
-          {t("settings.ghostQuietEndLabel")}
-          <input
-            type="time"
-            name="ghostBustingQuietHoursEnd"
-            defaultValue={minuteToTimeInput(organization.ghostBustingQuietHoursEnd)}
-            disabled={!canManageAutomationSettings}
-          />
-        </label>
-        <label>
-          {t("settings.ghostMaxNudgesLabel")}
-          <input
-            type="number"
-            min={1}
-            max={10}
-            name="ghostBustingMaxNudges"
-            defaultValue={organization.ghostBustingMaxNudges}
-            disabled={!canManageAutomationSettings}
-          />
-        </label>
-        <label>
-          {t("settings.ghostTemplateLabel")}
-          <textarea
-            name="ghostBustingTemplateText"
-            rows={4}
-            maxLength={1600}
-            disabled={!canManageAutomationSettings}
-            defaultValue={
-              organization.ghostBustingTemplateText ||
-              t("settings.ghostTemplateDefault")
-            }
-          />
-        </label>
-        {!canManageAutomationSettings ? (
-          <p className="muted">{t("settings.automationFlagsNote")}</p>
-        ) : null}
+              <label>
+                {t("settings.intakeAskCallbackEnLabel")}
+                <textarea
+                  name="intakeAskCallbackBodyEn"
+                  rows={2}
+                  maxLength={1600}
+                  defaultValue={organization.intakeAskCallbackBodyEn || organization.intakeAskCallbackBody || ""}
+                  placeholder={t("settings.intakeAskCallbackPlaceholderEn")}
+                />
+              </label>
 
-        <button className="btn primary" type="submit">
+              <label>
+                {t("settings.intakeAskCallbackEsLabel")}
+                <textarea
+                  name="intakeAskCallbackBodyEs"
+                  rows={2}
+                  maxLength={1600}
+                  defaultValue={organization.intakeAskCallbackBodyEs || ""}
+                  placeholder={t("settings.intakeAskCallbackPlaceholderEs")}
+                />
+              </label>
+
+              <label>
+                {t("settings.intakeCompletionEnLabel")}
+                <textarea
+                  name="intakeCompletionBodyEn"
+                  rows={2}
+                  maxLength={1600}
+                  defaultValue={organization.intakeCompletionBodyEn || organization.intakeCompletionBody || ""}
+                  placeholder={t("settings.intakeCompletionPlaceholderEn")}
+                />
+              </label>
+
+              <label>
+                {t("settings.intakeCompletionEsLabel")}
+                <textarea
+                  name="intakeCompletionBodyEs"
+                  rows={2}
+                  maxLength={1600}
+                  defaultValue={organization.intakeCompletionBodyEs || ""}
+                  placeholder={t("settings.intakeCompletionPlaceholderEs")}
+                />
+              </label>
+            </div>
+          </details>
+
+          <details open>
+            <summary>{t("settings.sectionTeam")}</summary>
+            <div className="settings-accordion-body">
+              <label className="inline-toggle">
+                <input
+                  type="checkbox"
+                  name="allowWorkerLeadCreate"
+                  defaultChecked={organization.allowWorkerLeadCreate}
+                  disabled={!canManageLeadEntrySetting}
+                />
+                {t("settings.allowWorkerLeadCreate")}
+              </label>
+              <p className="muted settings-toggle-help">{t("settings.helperWorkerLeadCreate")}</p>
+              {!canManageLeadEntrySetting ? (
+                <p className="muted">{t("settings.allowWorkerLeadCreateNote")}</p>
+              ) : null}
+            </div>
+          </details>
+        </div>
+
+        <button className="btn primary" type="submit" aria-label="Save settings">
           {t("buttons.saveSettings")}
         </button>
 
@@ -611,6 +732,9 @@ export default async function ClientSettingsPage({
         {error === "invalid-user-timezone" ? (
           <p className="form-status">{t("settings.errors.invalidUserTimezone")}</p>
         ) : null}
+        {error === "invalid-business-name" ? (
+          <p className="form-status">{t("settings.errors.invalidBusinessName")}</p>
+        ) : null}
         {error === "invalid-ghost-hours" ? (
           <p className="form-status">{t("settings.errors.invalidGhostHours")}</p>
         ) : null}
@@ -619,6 +743,9 @@ export default async function ClientSettingsPage({
         ) : null}
         {error === "invalid-ghost-template" ? (
           <p className="form-status">{t("settings.errors.invalidGhostTemplate")}</p>
+        ) : null}
+        {error === "invalid-sms-quiet-hours" ? (
+          <p className="form-status">{t("settings.errors.invalidSmsQuietHours")}</p>
         ) : null}
       </form>
     </section>

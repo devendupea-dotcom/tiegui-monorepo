@@ -27,34 +27,38 @@ The portal is ready for per-client texting and missed-call auto-replies.
 Required env vars in `apps/portal/.env.local`:
 
 ```bash
-TWILIO_ACCOUNT_SID=...
-TWILIO_AUTH_TOKEN=...
+TWILIO_TOKEN_ENCRYPTION_KEY=... # base64-encoded 32-byte key
 TWILIO_SEND_ENABLED=false
 TWILIO_VALIDATE_SIGNATURE=false
-DEFAULT_OUTBOUND_FROM_E164=+12065550100
+TWILIO_SMS_COST_ESTIMATE_CENTS=1
 CRON_SECRET=...
+# optional send window defaults if you want to override in seed/migrations
+# (stored per-org in Settings after onboarding)
+# smsQuietHoursStartMinute=480   # 08:00
+# smsQuietHoursEndMinute=1200    # 20:00
 ```
 
 Behavior:
 
+- Each organization stores its own Twilio Subaccount SID, Auth Token, Messaging Service SID, and sender number.
+- Outbound sends use that org's Twilio subaccount credentials + messaging service (no env-per-client redeploys).
 - `TWILIO_SEND_ENABLED=false`: outbound messages are saved in CRM and marked `QUEUED`.
 - `TWILIO_SEND_ENABLED=true`: outbound messages are sent to Twilio and message status/SID are stored.
-- `TWILIO_VALIDATE_SIGNATURE=true`: inbound webhooks require a valid `X-Twilio-Signature`.
+- `TWILIO_VALIDATE_SIGNATURE=true`: inbound webhooks require a valid `X-Twilio-Signature` using the org's token.
 - `CRON_SECRET`: protects internal cron endpoints (use `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret`).
 
 Twilio webhook URLs:
 
-- Inbound SMS: `/api/twilio/sms/inbound`
-- Voice status callbacks: `/api/twilio/voice/status`
+- Inbound SMS: `/api/webhooks/twilio/sms` (aliases: `/api/twilio/sms`, `/api/twilio/sms/inbound`)
+- Voice status callbacks: `/api/webhooks/twilio/voice` (aliases: `/api/twilio/voice`, `/api/twilio/voice/status`)
 - Intake backfill cron: `POST /api/cron/intake`
 
 Per-client setup is in HQ:
 
-- Go to `/hq/businesses/:orgId?tab=messages`
-- Set `Sender Number (E.164)`
-- Enable/edit missed-call auto-reply message
-- Enable `automated intake prompts` and customize location/work-type/callback/completion prompts
-- Add reusable SMS templates
+- Go to `/hq/orgs/:orgId/twilio`
+- Enter `Subaccount SID`, `Auth Token`, `Messaging Service SID`, `Phone Number`, and `Status`
+- Click `Validate` to verify messaging service + sender assignment
+- Click `Send Test SMS` to confirm outbound routing
 
 Automated intake flow:
 
@@ -62,6 +66,22 @@ Automated intake flow:
 2. Replies are captured in the lead's own message thread.
 3. Flow collects location, work type, callback time.
 4. Callback time writes to `Lead.nextFollowUpAt` and creates a `FOLLOW_UP` event for HQ calendar/project folder.
+
+STOP/quiet-hours behavior:
+
+- Inbound `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT` marks lead as `DNC` and suppresses future outbound automation.
+- Inbound `START` or `UNSTOP` resumes by moving DNC leads back to `FOLLOW_UP`.
+- Missed-call auto-replies obey org quiet hours (default send window `08:00`-`20:00` local org timezone).
+- Outside quiet hours, auto-replies are queued and sent by `POST /api/cron/intake` once the next allowed window opens.
+
+Local testing notes:
+
+1. Set `TWILIO_VALIDATE_SIGNATURE=false` for local webhook testing.
+2. Run portal and post form-data test payloads:
+   - `curl -X POST http://localhost:3001/api/webhooks/twilio/voice -d "AccountSid=ACsubaccount123&CallSid=CA123&From=+12065550199&To=+12065550100&Direction=inbound&CallStatus=no-answer"`
+   - `curl -X POST http://localhost:3001/api/webhooks/twilio/sms -d "AccountSid=ACsubaccount123&MessageSid=SM123&From=+12065550199&To=+12065550100&Body=STOP"`
+3. Trigger cron intake manually:
+   - `curl -X POST http://localhost:3001/api/cron/intake -H "Authorization: Bearer $CRON_SECRET"`
 
 ## Jobber + QuickBooks Integration Setup
 

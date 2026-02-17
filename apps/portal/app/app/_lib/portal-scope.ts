@@ -6,6 +6,7 @@ export type AppScope = {
   orgId: string;
   orgName: string;
   internalUser: boolean;
+  onboardingComplete: boolean;
 };
 
 export function getParam(value: string | string[] | undefined): string {
@@ -39,36 +40,24 @@ export async function resolveAppScope({
       redirect("/login?next=/app");
     }
 
-    const [org, userAccess] = await Promise.all([
-      prisma.organization.findUnique({
-        where: { id: user.orgId },
-        select: {
-          id: true,
-          name: true,
-          onboardingCompletedAt: true,
-          onboardingSkippedAt: true,
-        },
-      }),
-      user.id
-        ? prisma.user.findUnique({
-            where: { id: user.id },
-            select: { calendarAccessRole: true },
-          })
-        : Promise.resolve(null),
-    ]);
+    const org = await prisma.organization.findUnique({
+      where: { id: user.orgId },
+      select: {
+        id: true,
+        name: true,
+        onboardingCompletedAt: true,
+      },
+    });
 
     if (!org) {
       redirect("/app");
     }
 
-    const onboardingRequiredRole =
-      userAccess?.calendarAccessRole === "OWNER" || userAccess?.calendarAccessRole === "ADMIN";
     const onboardingIncomplete = !org.onboardingCompletedAt;
-    const onboardingSkipped = Boolean(org.onboardingSkippedAt);
     const onboardingPath = nextPath.startsWith("/app/onboarding");
-    if (onboardingRequiredRole && onboardingIncomplete && !onboardingSkipped && !onboardingPath) {
+    if (onboardingIncomplete && !onboardingPath) {
       const onboardingUrl = new URL("/app/onboarding", "http://localhost");
-      onboardingUrl.searchParams.set("next", nextPath);
+      onboardingUrl.searchParams.set("step", "1");
       redirect(`${onboardingUrl.pathname}${onboardingUrl.search}`);
     }
 
@@ -76,6 +65,7 @@ export async function resolveAppScope({
       orgId: org.id,
       orgName: org.name,
       internalUser: false,
+      onboardingComplete: !onboardingIncomplete,
     };
   }
 
@@ -94,6 +84,7 @@ export async function resolveAppScope({
       orgId: org.id,
       orgName: org.name,
       internalUser: true,
+      onboardingComplete: true,
     };
   }
 
@@ -110,6 +101,7 @@ export async function resolveAppScope({
     orgId: firstOrg.id,
     orgName: firstOrg.name,
     internalUser: true,
+    onboardingComplete: true,
   };
 }
 

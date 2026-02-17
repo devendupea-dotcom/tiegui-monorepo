@@ -1,8 +1,11 @@
 import type { CallDirection, CallStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { sendMissedCallIntroAndStartFlow } from "@/lib/intake-automation";
+import { queueMissedCallIntroForQuietHours, sendMissedCallIntroAndStartFlow } from "@/lib/intake-automation";
 import { normalizeE164 } from "@/lib/phone";
+import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 import { validateTwilioWebhook } from "@/lib/twilio";
+import { maskSid } from "@/lib/twilio-config-crypto";
+import { getTwilioOrgRuntimeConfigByAccountSid } from "@/lib/twilio-org";
 
 function twimlOk() {
   return new Response("<Response></Response>", {
@@ -39,14 +42,32 @@ function mapCallStatus(value: string): CallStatus {
 
 export async function POST(req: Request) {
   const form = await req.formData();
-  const validation = validateTwilioWebhook(req, form);
+  const accountSid = asString(form.get("AccountSid"));
+  if (!accountSid) {
+    return twimlOk();
+  }
+
+  let twilioConfig: Awaited<ReturnType<typeof getTwilioOrgRuntimeConfigByAccountSid>>;
+  try {
+    twilioConfig = await getTwilioOrgRuntimeConfigByAccountSid(accountSid);
+  } catch {
+    console.warn(`[twilio:voice] unable to decrypt auth token for account ${maskSid(accountSid)}.`);
+    return twimlOk();
+  }
+
+  if (!twilioConfig) {
+    console.warn(`[twilio:voice] ignored webhook for unknown account ${maskSid(accountSid)}.`);
+    return twimlOk();
+  }
+
+  const validation = validateTwilioWebhook(req, form, { authToken: twilioConfig.twilioAuthToken });
   if (!validation.ok) {
     return new Response(validation.error, { status: validation.status });
   }
 
   const callSid = asString(form.get("CallSid")) || null;
   const fromNumber = normalizeE164(asString(form.get("From")));
-  const toNumber = normalizeE164(asString(form.get("To")));
+  const toNumber = normalizeE164(asString(form.get("To"))) || normalizeE164(twilioConfig.phoneNumber);
   const direction = mapCallDirection(asString(form.get("Direction")));
   const mappedStatus = mapCallStatus(asString(form.get("CallStatus")));
   const startedAtRaw = asString(form.get("Timestamp"));
@@ -57,11 +78,13 @@ export async function POST(req: Request) {
     return twimlOk();
   }
 
-  const organization = await prisma.organization.findFirst({
-    where: { smsFromNumberE164: toNumber },
+  const organization = await prisma.organization.findUnique({
+    where: { id: twilioConfig.organizationId },
     select: {
       id: true,
       smsFromNumberE164: true,
+      smsQuietHoursStartMinute: true,
+      smsQuietHoursEndMinute: true,
       messageLanguage: true,
       missedCallAutoReplyOn: true,
       missedCallAutoReplyBody: true,
@@ -80,12 +103,24 @@ export async function POST(req: Request) {
       intakeCompletionBody: true,
       intakeCompletionBodyEn: true,
       intakeCompletionBodyEs: true,
+      dashboardConfig: {
+        select: {
+          calendarTimezone: true,
+        },
+      },
     },
   });
 
   if (!organization) {
     return twimlOk();
   }
+  const senderNumber = normalizeE164(twilioConfig.phoneNumber) || organization.smsFromNumberE164;
+
+  const organizationSettings = {
+    ...organization,
+    smsFromNumberE164: senderNumber,
+    calendarTimezone: organization.dashboardConfig?.calendarTimezone || "America/Los_Angeles",
+  };
 
   let leadId: string | null = null;
   if (fromNumber && direction === "INBOUND") {
@@ -175,21 +210,46 @@ export async function POST(req: Request) {
     });
   }
 
-  const shouldSendMissedCallReply =
+  const isMissedInboundCall =
     direction === "INBOUND" &&
     mappedStatus === "MISSED" &&
-    existingCallStatus !== "MISSED" &&
+    existingCallStatus !== "MISSED";
+
+  const eligibleForReply =
+    isMissedInboundCall &&
     Boolean(organization.missedCallAutoReplyOn) &&
-    Boolean(organization.smsFromNumberE164) &&
+    Boolean(senderNumber) &&
     Boolean(fromNumber) &&
     Boolean(leadId);
 
-  if (shouldSendMissedCallReply) {
-    await sendMissedCallIntroAndStartFlow({
-      organization,
-      leadId: leadId as string,
-      toNumberE164: fromNumber as string,
+  if (eligibleForReply) {
+    const inAllowedWindow = isWithinSmsSendWindow({
+      at: now,
+      timeZone: organizationSettings.calendarTimezone,
+      startMinute: organizationSettings.smsQuietHoursStartMinute,
+      endMinute: organizationSettings.smsQuietHoursEndMinute,
     });
+
+    if (inAllowedWindow) {
+      await sendMissedCallIntroAndStartFlow({
+        organization: organizationSettings,
+        leadId: leadId as string,
+        toNumberE164: fromNumber as string,
+      });
+    } else {
+      const sendAfterAt = nextSmsSendWindowStartUtc({
+        at: now,
+        timeZone: organizationSettings.calendarTimezone,
+        startMinute: organizationSettings.smsQuietHoursStartMinute,
+        endMinute: organizationSettings.smsQuietHoursEndMinute,
+      });
+      await queueMissedCallIntroForQuietHours({
+        organization: organizationSettings,
+        leadId: leadId as string,
+        toNumberE164: fromNumber as string,
+        sendAfterAt,
+      });
+    }
   }
 
   return twimlOk();

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Prisma } from "@prisma/client";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { endOfToday, formatDateTime, isOverdueFollowUp, startOfToday } from "@/lib/hq";
 import { getRequestTranslator } from "@/lib/i18n";
@@ -41,19 +42,33 @@ export default async function AppHomePage({
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
-  const t = await getRequestTranslator();
-  const requestedOrgId = getParam(searchParams?.orgId);
-  const scope = await resolveAppScope({ nextPath: "/app", requestedOrgId });
-  const sessionUser = await requireSessionUser("/app");
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
+  try {
+    const t = await getRequestTranslator();
+    const requestedOrgId = getParam(searchParams?.orgId);
+    const scope = await resolveAppScope({ nextPath: "/app", requestedOrgId });
+    if (scope.internalUser) {
+      redirect(withOrgQuery("/app/calendar", scope.orgId, true));
+    }
+    const sessionUser = await requireSessionUser("/app");
+    let currentUser:
+      | {
+          id: string;
+          calendarAccessRole: string;
+        }
+      | null = null;
+    if (sessionUser.id && !scope.internalUser) {
+      try {
+        currentUser = await prisma.user.findUnique({
           where: { id: sessionUser.id },
           select: { id: true, calendarAccessRole: true },
-        })
-      : null;
-  const workerScoped = !scope.internalUser && currentUser?.calendarAccessRole === "WORKER";
-  const workerId = workerScoped ? currentUser!.id : null;
+        });
+      } catch (error) {
+        // Keep /app available even when runtime schema drifts behind deployed code.
+        console.error("AppHomePage failed to load calendar access role. Falling back to org-scoped defaults.", error);
+      }
+    }
+    const workerScoped = !scope.internalUser && currentUser?.calendarAccessRole === "WORKER";
+    const workerId = workerScoped ? currentUser!.id : null;
 
   const now = new Date();
   const todayStart = startOfToday(now);
@@ -86,134 +101,324 @@ export default async function AppHomePage({
       : {}),
   };
 
-  const [followUps, events, jobs, nextEvent, weeklyRevenue, jobsBookedCount, leadsWaitingCount, overdueFollowUpCount] = await Promise.all([
-    prisma.lead.findMany({
-      where: {
-        ...leadWhere,
-        nextFollowUpAt: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-      },
-      orderBy: [{ nextFollowUpAt: "asc" }],
-      take: 20,
-      select: {
-        id: true,
-        contactName: true,
-        businessName: true,
-        phoneE164: true,
-        nextFollowUpAt: true,
-      },
-    }),
-    prisma.event.findMany({
-      where: {
-        ...eventWhere,
-        startAt: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-      },
-      orderBy: [{ startAt: "asc" }],
-      take: 20,
-      select: {
-        id: true,
-        type: true,
-        title: true,
-        startAt: true,
-        leadId: true,
-      },
-    }),
-    prisma.lead.findMany({
-      where: {
-        ...leadWhere,
-        status: {
-          notIn: ["NOT_INTERESTED", "DNC"],
-        },
-      },
-      orderBy: [{ updatedAt: "desc" }],
-      take: 20,
-      select: {
-        id: true,
-        contactName: true,
-        businessName: true,
-        phoneE164: true,
-        status: true,
-        priority: true,
-        nextFollowUpAt: true,
-        updatedAt: true,
-      },
-    }),
-    prisma.event.findFirst({
-      where: {
-        ...eventWhere,
-        type: { in: ["JOB", "ESTIMATE", "CALL"] },
-        startAt: { gte: now },
-      },
-      orderBy: [{ startAt: "asc" }],
-      select: {
-        id: true,
-        type: true,
-        title: true,
-        startAt: true,
-        leadId: true,
-        customerName: true,
-        addressLine: true,
-        lead: {
+  let followUps: Array<{
+    id: string;
+    contactName: string | null;
+    businessName: string | null;
+    phoneE164: string;
+    nextFollowUpAt: Date | null;
+  }> = [];
+  let events: Array<{
+    id: string;
+    type: string;
+    title: string;
+    startAt: Date;
+    leadId: string | null;
+  }> = [];
+  let jobs: Array<{
+    id: string;
+    contactName: string | null;
+    businessName: string | null;
+    phoneE164: string;
+    status: string;
+    priority: string;
+    nextFollowUpAt: Date | null;
+    updatedAt: Date;
+  }> = [];
+  let nextEvent: {
+    id: string;
+    type: string;
+    title: string;
+    startAt: Date;
+    leadId: string | null;
+    customerName: string | null;
+    addressLine: string | null;
+    lead: {
+      id: string;
+      status: string;
+      priority: string;
+      contactName: string | null;
+      businessName: string | null;
+      city: string | null;
+      phoneE164: string;
+    } | null;
+  } | null = null;
+  let weeklyRevenueCents = 0;
+  let jobsBookedCount = 0;
+  let leadsWaitingCount = 0;
+  let overdueFollowUpCount = 0;
+
+  try {
+    const [primaryFollowUps, primaryEvents, primaryJobs, primaryNextEvent, weeklyRevenue, bookedCount, waitingCount, overdueCount] =
+      await Promise.all([
+        prisma.lead.findMany({
+          where: {
+            ...leadWhere,
+            nextFollowUpAt: {
+              gte: todayStart,
+              lte: todayEnd,
+            },
+          },
+          orderBy: [{ nextFollowUpAt: "asc" }],
+          take: 20,
           select: {
             id: true,
-            status: true,
-            priority: true,
             contactName: true,
             businessName: true,
-            city: true,
             phoneE164: true,
+            nextFollowUpAt: true,
           },
-        },
-      },
-    }),
-    prisma.lead.aggregate({
-      where: {
-        ...leadWhere,
-        status: "BOOKED",
-        updatedAt: {
-          gte: weekStart,
-          lte: now,
-        },
-      },
-      _sum: {
-        estimatedRevenueCents: true,
-      },
-    }),
-    prisma.lead.count({
-      where: {
-        ...leadWhere,
-        status: "BOOKED",
-        updatedAt: {
-          gte: weekStart,
-          lte: now,
-        },
-      },
-    }),
-    prisma.lead.count({
-      where: {
-        ...leadWhere,
-        status: {
-          in: ["NEW", "CALLED_NO_ANSWER", "VOICEMAIL", "INTERESTED", "FOLLOW_UP"],
-        },
-      },
-    }),
-    prisma.lead.count({
-      where: {
-        ...leadWhere,
-        status: {
-          notIn: ["BOOKED", "NOT_INTERESTED", "DNC"],
-        },
-        nextFollowUpAt: {
-          lt: now,
-        },
-      },
-    }),
-  ]);
+        }),
+        prisma.event.findMany({
+          where: {
+            ...eventWhere,
+            startAt: {
+              gte: todayStart,
+              lte: todayEnd,
+            },
+          },
+          orderBy: [{ startAt: "asc" }],
+          take: 20,
+          select: {
+            id: true,
+            type: true,
+            title: true,
+            startAt: true,
+            leadId: true,
+          },
+        }),
+        prisma.lead.findMany({
+          where: {
+            ...leadWhere,
+            status: {
+              notIn: ["NOT_INTERESTED", "DNC"],
+            },
+          },
+          orderBy: [{ updatedAt: "desc" }],
+          take: 20,
+          select: {
+            id: true,
+            contactName: true,
+            businessName: true,
+            phoneE164: true,
+            status: true,
+            priority: true,
+            nextFollowUpAt: true,
+            updatedAt: true,
+          },
+        }),
+        prisma.event.findFirst({
+          where: {
+            ...eventWhere,
+            type: { in: ["JOB", "ESTIMATE", "CALL"] },
+            startAt: { gte: now },
+          },
+          orderBy: [{ startAt: "asc" }],
+          select: {
+            id: true,
+            type: true,
+            title: true,
+            startAt: true,
+            leadId: true,
+            customerName: true,
+            addressLine: true,
+            lead: {
+              select: {
+                id: true,
+                status: true,
+                priority: true,
+                contactName: true,
+                businessName: true,
+                city: true,
+                phoneE164: true,
+              },
+            },
+          },
+        }),
+        prisma.lead.aggregate({
+          where: {
+            ...leadWhere,
+            status: "BOOKED",
+            updatedAt: {
+              gte: weekStart,
+              lte: now,
+            },
+          },
+          _sum: {
+            estimatedRevenueCents: true,
+          },
+        }),
+        prisma.lead.count({
+          where: {
+            ...leadWhere,
+            status: "BOOKED",
+            updatedAt: {
+              gte: weekStart,
+              lte: now,
+            },
+          },
+        }),
+        prisma.lead.count({
+          where: {
+            ...leadWhere,
+            status: {
+              in: ["NEW", "CALLED_NO_ANSWER", "VOICEMAIL", "INTERESTED", "FOLLOW_UP"],
+            },
+          },
+        }),
+        prisma.lead.count({
+          where: {
+            ...leadWhere,
+            status: {
+              notIn: ["BOOKED", "NOT_INTERESTED", "DNC"],
+            },
+            nextFollowUpAt: {
+              lt: now,
+            },
+          },
+        }),
+      ]);
+
+    followUps = primaryFollowUps;
+    events = primaryEvents;
+    jobs = primaryJobs;
+    nextEvent = primaryNextEvent;
+    weeklyRevenueCents = weeklyRevenue._sum.estimatedRevenueCents ?? 0;
+    jobsBookedCount = bookedCount;
+    leadsWaitingCount = waitingCount;
+    overdueFollowUpCount = overdueCount;
+  } catch (error) {
+    console.error("AppHomePage failed to load full data set. Serving fallback view.", error);
+    const [fallbackFollowUps, fallbackEvents, fallbackJobs, fallbackNextEvent, bookedCount, waitingCount, overdueCount] =
+      await Promise.all([
+        prisma.lead.findMany({
+          where: {
+            ...leadWhere,
+            nextFollowUpAt: {
+              gte: todayStart,
+              lte: todayEnd,
+            },
+          },
+          orderBy: [{ nextFollowUpAt: "asc" }],
+          take: 20,
+          select: {
+            id: true,
+            contactName: true,
+            businessName: true,
+            phoneE164: true,
+            nextFollowUpAt: true,
+          },
+        }),
+        prisma.event.findMany({
+          where: {
+            ...eventWhere,
+            startAt: {
+              gte: todayStart,
+              lte: todayEnd,
+            },
+          },
+          orderBy: [{ startAt: "asc" }],
+          take: 20,
+          select: {
+            id: true,
+            type: true,
+            title: true,
+            startAt: true,
+            leadId: true,
+          },
+        }),
+        prisma.lead.findMany({
+          where: {
+            ...leadWhere,
+            status: {
+              notIn: ["NOT_INTERESTED", "DNC"],
+            },
+          },
+          orderBy: [{ updatedAt: "desc" }],
+          take: 20,
+          select: {
+            id: true,
+            contactName: true,
+            businessName: true,
+            phoneE164: true,
+            status: true,
+            priority: true,
+            nextFollowUpAt: true,
+            updatedAt: true,
+          },
+        }),
+        prisma.event.findFirst({
+          where: {
+            ...eventWhere,
+            type: { in: ["JOB", "ESTIMATE", "CALL"] },
+            startAt: { gte: now },
+          },
+          orderBy: [{ startAt: "asc" }],
+          select: {
+            id: true,
+            type: true,
+            title: true,
+            startAt: true,
+            leadId: true,
+            lead: {
+              select: {
+                id: true,
+                status: true,
+                priority: true,
+                contactName: true,
+                businessName: true,
+                city: true,
+                phoneE164: true,
+              },
+            },
+          },
+        }),
+        prisma.lead.count({
+          where: {
+            ...leadWhere,
+            status: "BOOKED",
+            updatedAt: {
+              gte: weekStart,
+              lte: now,
+            },
+          },
+        }),
+        prisma.lead.count({
+          where: {
+            ...leadWhere,
+            status: {
+              in: ["NEW", "CALLED_NO_ANSWER", "VOICEMAIL", "INTERESTED", "FOLLOW_UP"],
+            },
+          },
+        }),
+        prisma.lead.count({
+          where: {
+            ...leadWhere,
+            status: {
+              notIn: ["BOOKED", "NOT_INTERESTED", "DNC"],
+            },
+            nextFollowUpAt: {
+              lt: now,
+            },
+          },
+        }),
+      ]);
+
+    followUps = fallbackFollowUps;
+    events = fallbackEvents;
+    jobs = fallbackJobs;
+    nextEvent = fallbackNextEvent
+      ? {
+          ...fallbackNextEvent,
+          customerName: null,
+          addressLine: null,
+        }
+      : null;
+    weeklyRevenueCents = 0;
+    jobsBookedCount = bookedCount;
+    leadsWaitingCount = waitingCount;
+    overdueFollowUpCount = overdueCount;
+  }
 
   const todayItems: TodayItem[] = [
     ...followUps
@@ -253,11 +458,10 @@ export default async function AppHomePage({
     ? withOrgQuery(`/app/jobs/${nextEvent.leadId}`, scope.orgId, scope.internalUser)
     : withOrgQuery("/app/calendar", scope.orgId, scope.internalUser);
   const nextJobMapsHref = nextJobAddress ? toMapsHref(nextJobAddress) : null;
-  const weeklyRevenueCents = weeklyRevenue._sum.estimatedRevenueCents ?? 0;
 
-  return (
-    <>
-      <section className="command-strip">
+    return (
+      <>
+        <section className="command-strip">
         <article className="command-strip-card">
           <span>{t("today.commandStrip.revenueThisWeek")}</span>
           <strong>{formatUsdCents(weeklyRevenueCents)}</strong>
@@ -302,10 +506,10 @@ export default async function AppHomePage({
               <div className="next-job-actions">
                 {nextJobPhone ? (
                   <>
-                    <a className="btn secondary" href={`tel:${nextJobPhone}`}>
+                    <a className="btn secondary" href={`tel:${nextJobPhone}`} aria-label={`Call ${nextJobLabel || "customer"}`}>
                       {t("buttons.call")}
                     </a>
-                    <a className="btn secondary" href={`sms:${nextJobPhone}`}>
+                    <a className="btn secondary" href={`sms:${nextJobPhone}`} aria-label={`Text ${nextJobLabel || "customer"}`}>
                       {t("buttons.text")}
                     </a>
                   </>
@@ -316,11 +520,12 @@ export default async function AppHomePage({
                     href={nextJobMapsHref}
                     target="_blank"
                     rel="noopener noreferrer"
+                    aria-label={`Open maps for ${nextJobLabel || "job"}`}
                   >
                     {t("buttons.maps")}
                   </a>
                 ) : null}
-                <Link className="btn primary" href={nextJobOpenHref}>
+                <Link className="btn primary" href={nextJobOpenHref} aria-label={`Open ${nextJobLabel || "job"} details`}>
                   {t("buttons.openJob")}
                 </Link>
               </div>
@@ -331,9 +536,22 @@ export default async function AppHomePage({
         </article>
 
         {todayItems.length === 0 ? (
-          <p className="muted" style={{ marginTop: 12 }}>
-            {t("today.nothingScheduledToday")}
-          </p>
+          <div className="portal-empty-state">
+            <strong>{t("today.activityEmptyTitle")}</strong>
+            <ul className="portal-empty-list">
+              <li>{t("today.activityEmptyBulletOne")}</li>
+              <li>{t("today.activityEmptyBulletTwo")}</li>
+              <li>{t("today.activityEmptyBulletThree")}</li>
+            </ul>
+            <div className="portal-empty-actions">
+              <Link className="btn primary" href={withOrgQuery("/app?quickAdd=1", scope.orgId, scope.internalUser)}>
+                {t("buttons.addLead")}
+              </Link>
+              <Link className="btn secondary" href={withOrgQuery("/app/calendar", scope.orgId, scope.internalUser)}>
+                {t("appNav.calendar")}
+              </Link>
+            </div>
+          </div>
         ) : (
           <div className="today-timeline-scroll" style={{ marginTop: 12 }}>
             <ul className="today-timeline">
@@ -373,9 +591,15 @@ export default async function AppHomePage({
         <h2>{t("today.followUpsTitle")}</h2>
         <p className="muted">{t("today.followUpsSubtitle")}</p>
         {followUpsAll.length === 0 ? (
-          <p className="muted" style={{ marginTop: 12 }}>
-            {t("today.noFollowUps")}
-          </p>
+          <div className="portal-empty-state">
+            <strong>{t("today.noFollowUps")}</strong>
+            <p className="muted">{t("today.activityEmptyBulletTwo")}.</p>
+            <div className="portal-empty-actions">
+              <Link className="btn primary" href={withOrgQuery("/app?quickAdd=1", scope.orgId, scope.internalUser)}>
+                {t("buttons.addLead")}
+              </Link>
+            </div>
+          </div>
         ) : (
           <>
             <ul className="mobile-list-cards" style={{ marginTop: 12 }}>
@@ -451,9 +675,15 @@ export default async function AppHomePage({
         <h2>{t("today.openJobsTitle")}</h2>
         <p className="muted">{t("today.openJobsSubtitle")}</p>
         {openJobs.length === 0 ? (
-          <p className="muted" style={{ marginTop: 12 }}>
-            {t("today.noOpenJobs")}
-          </p>
+          <div className="portal-empty-state">
+            <strong>{t("today.noOpenJobs")}</strong>
+            <p className="muted">Add a lead or convert a thread into a scheduled job.</p>
+            <div className="portal-empty-actions">
+              <Link className="btn primary" href={withOrgQuery("/app?quickAdd=1", scope.orgId, scope.internalUser)}>
+                {t("buttons.addLead")}
+              </Link>
+            </div>
+          </div>
         ) : (
           <>
             <ul className="mobile-list-cards" style={{ marginTop: 12 }}>
@@ -508,7 +738,26 @@ export default async function AppHomePage({
             </div>
           </>
         )}
+        </section>
+      </>
+    );
+  } catch (error) {
+    console.error("AppHomePage hard failure.", error);
+    return (
+      <section className="card">
+        <h2>Today view is temporarily unavailable</h2>
+        <p className="muted">
+          We hit a server issue loading today&apos;s jobs. Use calendar or inbox while we recover this view.
+        </p>
+        <div className="quick-actions" style={{ marginTop: 12 }}>
+          <Link className="btn secondary" href="/app/calendar">
+            Open Calendar
+          </Link>
+          <Link className="btn secondary" href="/app/inbox">
+            Open Inbox
+          </Link>
+        </div>
       </section>
-    </>
-  );
+    );
+  }
 }

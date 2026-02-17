@@ -382,6 +382,11 @@ export default async function ClientJobDetailPage({
           id: true,
           name: true,
           smsFromNumberE164: true,
+          twilioConfig: {
+            select: {
+              phoneNumber: true,
+            },
+          },
           voiceNotesEnabled: true,
           offlineModeEnabled: true,
           smsTemplates: {
@@ -693,6 +698,17 @@ export default async function ClientJobDetailPage({
             </a>
           ) : null}
         </div>
+        <div className="job-detail-mobile-sticky-actions" aria-label="Job quick actions">
+          <a className="btn secondary" href={`tel:${lead.phoneE164}`}>
+            Call
+          </a>
+          <a className="btn secondary" href={`sms:${lead.phoneE164}`}>
+            Text
+          </a>
+          <Link className="btn primary" href={messagesHref}>
+            Open
+          </Link>
+        </div>
 
         <JobFieldActions
           jobId={lead.id}
@@ -855,7 +871,7 @@ export default async function ClientJobDetailPage({
           <p className="muted">Conversation thread for this job only.</p>
           <LeadMessageThread
             leadId={lead.id}
-            senderNumber={lead.org.smsFromNumberE164 || process.env.DEFAULT_OUTBOUND_FROM_E164 || null}
+            senderNumber={lead.org.twilioConfig?.phoneNumber || lead.org.smsFromNumberE164 || null}
             templates={lead.org.smsTemplates}
             initialMessages={lead.messages.map((message) => ({
               ...message,

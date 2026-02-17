@@ -7,6 +7,7 @@ import {
   requireAppApiActor,
 } from "@/lib/app-api-permissions";
 import { buildInvoicePdfDocument, formatInvoiceNumber } from "@/lib/invoices";
+import { capturePortalError, trackPortalEvent } from "@/lib/telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +127,12 @@ export async function GET(_req: Request, { params }: RouteContext) {
 
     const fileName = `${formatInvoiceNumber(invoice.invoiceNumber)}.pdf`;
 
+    await trackPortalEvent("Invoice Printed", {
+      orgId: invoice.orgId,
+      invoiceId: invoice.id,
+      actorId: actor.id,
+    });
+
     return new NextResponse(new Uint8Array(pdfBuffer), {
       headers: {
         "Content-Type": "application/pdf",
@@ -134,6 +141,10 @@ export async function GET(_req: Request, { params }: RouteContext) {
       },
     });
   } catch (error) {
+    await capturePortalError(error, {
+      route: "GET /api/invoices/[invoiceId]/pdf",
+      invoiceId: params.invoiceId,
+    });
     if (error instanceof AppApiError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     }

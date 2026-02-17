@@ -68,12 +68,19 @@ const navLinks: NavLink[] = [
   },
 ];
 
-function withOrgQuery(path: string, orgId: string | null): string {
-  if (!orgId) {
+function withPortalQuery(path: string, orgId: string | null, mobileMode: boolean): string {
+  if (!orgId && !mobileMode) {
     return path;
   }
-  const joiner = path.includes("?") ? "&" : "?";
-  return `${path}${joiner}orgId=${encodeURIComponent(orgId)}`;
+  const target = new URL(path, "https://app.tieguisolutions.com");
+  if (orgId) {
+    target.searchParams.set("orgId", orgId);
+  }
+  if (mobileMode) {
+    target.searchParams.set("mobile", "1");
+  }
+  const query = target.searchParams.toString();
+  return query ? `${target.pathname}?${query}` : target.pathname;
 }
 
 export default function ClientPortalNav() {
@@ -81,6 +88,7 @@ export default function ClientPortalNav() {
   const searchParams = useSearchParams();
   const t = useTranslations("appNav");
   const orgId = searchParams.get("orgId");
+  const mobileMode = searchParams.get("mobile") === "1";
 
   return (
     <nav className="app-nav" aria-label="Client portal navigation">
@@ -93,10 +101,13 @@ export default function ClientPortalNav() {
         return (
           <Link
             key={link.href}
-            href={withOrgQuery(link.href, orgId)}
+            href={withPortalQuery(link.href, orgId, mobileMode)}
             className={`app-nav-link ${active ? "active" : ""}`}
+            aria-label={t(link.labelKey)}
           >
-            <span className="app-nav-icon">{link.icon}</span>
+            <span className="app-nav-icon" role="img" aria-label={`${t(link.labelKey)} icon`}>
+              {link.icon}
+            </span>
             <span className="app-nav-label">{t(link.labelKey)}</span>
           </Link>
         );

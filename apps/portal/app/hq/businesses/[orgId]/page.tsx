@@ -192,6 +192,9 @@ export default async function HqBusinessFolderPage({
           <Link className="btn secondary" href={`/app?orgId=${organization.id}`}>
             Open Client Portal View
           </Link>
+          <Link className="btn secondary" href={`/hq/orgs/${organization.id}/twilio`}>
+            Twilio Config
+          </Link>
         </div>
 
         <div className="tab-row" style={{ marginTop: 14 }}>
@@ -237,6 +240,11 @@ async function OverviewTab({ orgId }: { orgId: string }) {
         onboardingCompletedAt: true,
         onboardingSkippedAt: true,
         smsFromNumberE164: true,
+        twilioConfig: {
+          select: {
+            phoneNumber: true,
+          },
+        },
       },
     }),
     prisma.orgDashboardConfig.findUnique({
@@ -267,7 +275,7 @@ async function OverviewTab({ orgId }: { orgId: string }) {
   const cronFresh = !cronState.flags.staleCron;
   const hasGoogleRuns = Boolean(cronState.lastCronRunAt);
   const cronSecretConfigured = Boolean(process.env.CRON_SECRET && process.env.CRON_SECRET.trim());
-  const messagingConfigured = Boolean(organization?.smsFromNumberE164);
+  const messagingConfigured = Boolean(organization?.twilioConfig?.phoneNumber || organization?.smsFromNumberE164);
   const checklistItems: Array<{ label: string; status: "ready" | "manual" | "blocked"; detail: string }> = [
     {
       label: "Deterministic Round-Robin",
@@ -531,6 +539,11 @@ async function MessagesTab({
       select: {
         id: true,
         smsFromNumberE164: true,
+        twilioConfig: {
+          select: {
+            phoneNumber: true,
+          },
+        },
         missedCallAutoReplyOn: true,
         missedCallAutoReplyBody: true,
         intakeAutomationEnabled: true,
@@ -596,6 +609,11 @@ async function MessagesTab({
           org: {
             select: {
               smsFromNumberE164: true,
+              twilioConfig: {
+                select: {
+                  phoneNumber: true,
+                },
+              },
             },
           },
           messages: {
@@ -833,7 +851,7 @@ async function MessagesTab({
               </p>
               <LeadMessageThread
                 leadId={activeLead.id}
-                senderNumber={activeLead.org.smsFromNumberE164 || process.env.DEFAULT_OUTBOUND_FROM_E164 || null}
+                senderNumber={activeLead.org.twilioConfig?.phoneNumber || activeLead.org.smsFromNumberE164 || null}
                 templates={templates}
                 initialMessages={activeLead.messages.map((message) => ({
                   ...message,

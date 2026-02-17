@@ -26,6 +26,10 @@ export default function PricingSheet({ mode = "web" }: PricingSheetProps) {
         <div className="container section-head">
           <h1>Pricing</h1>
           <p className="muted">Transparent expectations. Flexible setups.</p>
+          <p className="muted">
+            TieGui is onboarding select contractor partners. We help you activate leads, scheduling, and revenue
+            automation. Get a free audit + personalized onboarding.
+          </p>
           {isPdf ? null : (
             <div className="section-actions center site-only">
               <Link className="cta-button gold" href="/contact">

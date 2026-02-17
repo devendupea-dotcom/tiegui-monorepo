@@ -31,6 +31,8 @@ model Organization {
   aiHardStop              Boolean  @default(true)
   aiUserDailyRequestLimit Int      @default(25)
   messageLanguage         MessageLanguage @default(EN)
+  smsQuietHoursStartMinute Int     @default(480)
+  smsQuietHoursEndMinute   Int     @default(1200)
   missedCallAutoReplyOn   Boolean  @default(false)
   missedCallAutoReplyBody String?
   missedCallAutoReplyBodyEn String?
@@ -88,6 +90,9 @@ model Organization {
   usageByMonth             OrganizationUsage[]
   aiUsageByMonth           AiUsage[]
   aiUserDayUsage           AiUserDayUsage[]
+  smsDispatchQueue         SmsDispatchQueue[]
+  twilioConfig             OrganizationTwilioConfig?
+  twilioConfigAuditLogs    TwilioConfigAuditLog[]
 }
 
 model User {
@@ -131,6 +136,7 @@ model User {
   sessions               Session[]
   resetTokens            PasswordResetToken[]
   aiUserDayUsage         AiUserDayUsage[]
+  twilioConfigAuditLogs  TwilioConfigAuditLog[] @relation("TwilioConfigAuditActor")
 
   @@index([orgId])
 }
@@ -189,6 +195,7 @@ model Lead {
   calendarHolds CalendarHold[]
   invoices      Invoice[]
   metaCapiEvents MetaCapiEvent[]
+  smsDispatchQueue SmsDispatchQueue[]
 
   @@index([orgId, status, createdAt])
   @@index([orgId, nextFollowUpAt])
@@ -201,6 +208,30 @@ model Lead {
   @@index([customerId, updatedAt])
   @@index([createdByUserId, createdAt])
   @@index([orgId, sourceType, createdAt])
+}
+
+model SmsDispatchQueue {
+  id             String        @id @default(uuid())
+  orgId          String
+  leadId         String
+  kind           SmsDispatchKind @default(AUTOMATION_GENERIC)
+  messageType    MessageType   @default(AUTOMATION)
+  fromNumberE164 String
+  toNumberE164   String
+  body           String
+  sendAfterAt    DateTime
+  status         MessageStatus @default(QUEUED)
+  attemptCount   Int           @default(0)
+  lastError      String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, status, sendAfterAt])
+  @@index([leadId, createdAt])
+  @@index([status, sendAfterAt])
 }
 
 model Customer {
@@ -438,6 +469,43 @@ model InternalCronRunLog {
   @@index([route, createdAt])
   @@index([status, createdAt])
   @@index([orgId, createdAt])
+}
+
+model OrganizationTwilioConfig {
+  id                      String            @id @default(uuid())
+  organizationId          String            @unique
+  twilioSubaccountSid     String            @unique
+  twilioAuthTokenEncrypted String
+  messagingServiceSid     String
+  phoneNumber             String
+  status                  TwilioConfigStatus @default(PENDING_A2P)
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  auditLogs     TwilioConfigAuditLog[]
+
+  @@index([status, updatedAt])
+}
+
+model TwilioConfigAuditLog {
+  id             String                  @id @default(uuid())
+  organizationId String
+  twilioConfigId String?
+  actorUserId    String?
+  action         TwilioConfigAuditAction
+  previousStatus TwilioConfigStatus?
+  nextStatus     TwilioConfigStatus?
+  metadataJson   Json?
+  createdAt      DateTime                @default(now())
+
+  organization Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  twilioConfig OrganizationTwilioConfig? @relation(fields: [twilioConfigId], references: [id], onDelete: SetNull)
+  actorUser    User?                     @relation("TwilioConfigAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([twilioConfigId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model ClientMutationReceipt {
@@ -1237,6 +1305,11 @@ enum MessageStatus {
   FAILED
 }
 
+enum SmsDispatchKind {
+  MISSED_CALL_INTRO
+  AUTOMATION_GENERIC
+}
+
 enum BudgetRequestStatus {
   PENDING
   APPROVED
@@ -1380,4 +1453,18 @@ enum GoogleSyncRunStatus {
   RUNNING
   OK
   ERROR
+}
+
+enum TwilioConfigStatus {
+  PENDING_A2P
+  ACTIVE
+  PAUSED
+}
+
+enum TwilioConfigAuditAction {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  VALIDATED
+  TEST_SMS_SENT
 }

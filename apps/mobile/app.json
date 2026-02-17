@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "TieGui",
+    "slug": "tiegui",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "tiegui",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tiegui.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "TieGui uses your camera so you can upload job photos from the field.",
+        "NSPhotoLibraryUsageDescription": "TieGui uses your photo library so you can attach job photos.",
+        "NSPhotoLibraryAddUsageDescription": "TieGui saves picked photos to upload them to your jobs."
+      }
+    },
+    "android": {
+      "package": "com.tiegui.mobile",
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES"
+      ]
+    },
+    "extra": {
+      "portalBaseUrl": "https://app.tieguisolutions.com"
+    }
+  }
+}

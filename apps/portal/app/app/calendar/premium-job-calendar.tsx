@@ -305,6 +305,9 @@ export default function PremiumJobCalendar({
   const [nextOpenFallbackStrategy, setNextOpenFallbackStrategy] = useState<NextOpenFallbackStrategy>("OWNER");
   const [nextOpenLookaheadDays, setNextOpenLookaheadDays] = useState<number>(7);
   const quickActionHandledRef = useRef<string | null>(null);
+  const firstColumnWrapRef = useRef<HTMLDivElement | null>(null);
+  const firstDayColumnRef = useRef<HTMLDivElement | null>(null);
+  const [timeAxisOffset, setTimeAxisOffset] = useState(0);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 980px)");
@@ -694,6 +697,29 @@ export default function PremiumJobCalendar({
       setSplitByWorker(false);
     }
   }, [selectedWorkerIds, view]);
+
+  useEffect(() => {
+    if (view === "month" || gridColumns.length === 0) {
+      setTimeAxisOffset(0);
+      return;
+    }
+
+    function updateOffset() {
+      const wrap = firstColumnWrapRef.current;
+      const dayColumn = firstDayColumnRef.current;
+      if (!wrap || !dayColumn) {
+        return;
+      }
+      const wrapRect = wrap.getBoundingClientRect();
+      const dayColumnRect = dayColumn.getBoundingClientRect();
+      const offset = Math.max(0, Math.round(dayColumnRect.top - wrapRect.top));
+      setTimeAxisOffset(offset);
+    }
+
+    updateOffset();
+    window.addEventListener("resize", updateOffset);
+    return () => window.removeEventListener("resize", updateOffset);
+  }, [gridColumns.length, shouldSplitByWorker, view]);
 
   function toggleWorker(workerId: string) {
     setSelectedWorkerIds((current) => {
@@ -1228,6 +1254,34 @@ export default function PremiumJobCalendar({
         </div>
       ) : null}
 
+      {!loading && visibleEvents.length === 0 ? (
+        <div className="portal-empty-state">
+          <strong>No events yet in your schedule.</strong>
+          <p className="muted">Add a job or set working hours to populate your calendar.</p>
+          <div className="portal-empty-actions">
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() =>
+                openQuickLeadFromSlot({
+                  dateKey: toDateOnlyKey(focusDate),
+                  startMinute: defaultSettings.defaultUntimedStartHour * 60,
+                  durationMinutes: 30,
+                })
+              }
+            >
+              Add Lead
+            </button>
+            <a
+              className="btn secondary"
+              href={internalUser ? `/app/onboarding?step=1&orgId=${encodeURIComponent(orgId)}` : "/app/onboarding?step=1"}
+            >
+              Set Working Hours
+            </a>
+          </div>
+        </div>
+      ) : null}
+
       {view === "month" ? (
         <div className="jobcal-month">
           <div className="jobcal-month-weekdays">
@@ -1477,14 +1531,17 @@ export default function PremiumJobCalendar({
         </div>
       ) : (
         <div className="jobcal-grid-shell">
-          <div className="jobcal-time-column" style={{ height: totalGridHeight + 1 }}>
+          <div className="jobcal-time-column" style={{ height: totalGridHeight + timeAxisOffset + 1 }}>
             {slotMarkers.map((minute) => (
-              <span key={minute} style={{ top: ((minute - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT }}>
+              <span
+                key={minute}
+                style={{ top: timeAxisOffset + ((minute - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT }}
+              >
                 {minutesToHHmm(minute)}
               </span>
             ))}
             {nowIndicator.show ? (
-              <span className="jobcal-now-label" style={{ top: nowIndicator.top }}>
+              <span className="jobcal-now-label" style={{ top: timeAxisOffset + nowIndicator.top }}>
                 {nowIndicator.label}
               </span>
             ) : null}
@@ -1497,7 +1554,7 @@ export default function PremiumJobCalendar({
                 gridTemplateColumns: `repeat(${gridColumns.length}, minmax(${shouldSplitByWorker ? 220 : 0}px, 1fr))`,
               }}
             >
-              {gridColumns.map((column) => {
+              {gridColumns.map((column, columnIndex) => {
                 const day = column.day;
                 const dayKey = column.dayKey;
                 const eventsForDay = visibleEvents.filter((eventItem) => {
@@ -1521,7 +1578,11 @@ export default function PremiumJobCalendar({
                     : null;
 
                 return (
-                  <div key={column.key} className="jobcal-day-column-wrap">
+                  <div
+                    key={column.key}
+                    className="jobcal-day-column-wrap"
+                    ref={columnIndex === 0 ? firstColumnWrapRef : undefined}
+                  >
                     <div className="jobcal-day-label">
                       <strong>{column.dayLabel}</strong>
                       <span className="jobcal-day-meta">
@@ -1533,6 +1594,7 @@ export default function PremiumJobCalendar({
                     <div
                       className={`jobcal-day-column ${canWrite ? "can-write" : "readonly"}`}
                       style={{ height: totalGridHeight }}
+                      ref={columnIndex === 0 ? firstDayColumnRef : undefined}
                       onPointerDown={(pointerEvent) => {
                         if (!canWrite) return;
                         const target = pointerEvent.target as HTMLElement;

@@ -24,6 +24,26 @@ export default async function InvoicesPage({
   const openOnly = getParam(searchParams?.openOnly) || "1";
 
   const scope = await resolveAppScope({ nextPath: "/app/invoices", requestedOrgId });
+  if (!scope.onboardingComplete) {
+    return (
+      <section className="card invoice-card">
+        <h2>Invoices</h2>
+        <div className="portal-empty-state">
+          <strong>No invoices yet.</strong>
+          <p className="muted">Finish onboarding, then open a job folder and create your first invoice.</p>
+          <div className="portal-empty-actions">
+            <Link className="btn secondary" href={withOrgQuery("/app/onboarding?step=1", scope.orgId, scope.internalUser)}>
+              Finish Onboarding
+            </Link>
+            <Link className="btn primary" href={withOrgQuery("/app/jobs", scope.orgId, scope.internalUser)}>
+              Open Jobs
+            </Link>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const sessionUser = await requireSessionUser("/app/invoices");
   const currentUser =
     sessionUser.id && !scope.internalUser
@@ -96,7 +116,7 @@ export default async function InvoicesPage({
 
   return (
     <>
-      <section className="card">
+      <section className="card invoice-card">
         <h2>Invoices</h2>
         <p className="muted">Create, send, and track manual payments with client-ready PDFs.</p>
 
@@ -140,64 +160,121 @@ export default async function InvoicesPage({
         </form>
       </section>
 
-      <section className="card">
+      <section className="card invoice-card">
         {rows.length === 0 ? (
-          <p className="muted">No invoices yet. Open a job folder and click Create Invoice.</p>
-        ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Invoice</th>
-                  <th>Customer</th>
-                  <th>Job</th>
-                  <th>Status</th>
-                  <th>Total</th>
-                  <th>Paid</th>
-                  <th>Balance</th>
-                  <th>Due</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => {
-                  const invoiceHref = withOrgQuery(`/app/invoices/${row.id}`, scope.orgId, scope.internalUser);
-                  const jobHref = row.jobId ? withOrgQuery(`/app/jobs/${row.jobId}?tab=invoice`, scope.orgId, scope.internalUser) : null;
-                  const jobLabel = row.job
-                    ? row.job.contactName || row.job.businessName || row.job.phoneE164
-                    : "-";
-
-                  return (
-                    <tr key={row.id}>
-                      <td>
-                        <Link className="table-link" href={invoiceHref}>
-                          {formatInvoiceNumber(row.invoiceNumber)}
-                        </Link>
-                      </td>
-                      <td>{row.customer.name}</td>
-                      <td>
-                        {jobHref ? (
-                          <Link className="table-link" href={jobHref}>
-                            {jobLabel}
-                          </Link>
-                        ) : (
-                          jobLabel
-                        )}
-                      </td>
-                      <td>
-                        <span className={`badge status-${row.status.toLowerCase()}`}>{formatLabel(row.status)}</span>
-                      </td>
-                      <td>{formatCurrency(row.total)}</td>
-                      <td>{formatCurrency(row.amountPaid)}</td>
-                      <td>{formatCurrency(row.balanceDue)}</td>
-                      <td>{formatDateTime(row.dueDate)}</td>
-                      <td>{formatDateTime(row.updatedAt)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="portal-empty-state">
+            <strong>No invoices yet.</strong>
+            <p className="muted">Open a job folder and click Create Invoice.</p>
+            <div className="portal-empty-actions">
+              <Link className="btn primary" href={withOrgQuery("/app/jobs", scope.orgId, scope.internalUser)}>
+                Open Jobs
+              </Link>
+            </div>
           </div>
+        ) : (
+          <>
+            <ul className="mobile-list-cards" style={{ marginTop: 12 }}>
+              {rows.map((row) => {
+                const invoiceHref = withOrgQuery(`/app/invoices/${row.id}`, scope.orgId, scope.internalUser);
+                const jobHref = row.jobId
+                  ? withOrgQuery(`/app/jobs/${row.jobId}?tab=invoice`, scope.orgId, scope.internalUser)
+                  : null;
+                const jobLabel = row.job
+                  ? row.job.contactName || row.job.businessName || row.job.phoneE164
+                  : "-";
+
+                return (
+                  <li key={row.id} className="mobile-list-card">
+                    <div className="stack-cell">
+                      <Link className="table-link" href={invoiceHref}>
+                        {formatInvoiceNumber(row.invoiceNumber)}
+                      </Link>
+                      <span className="muted">{row.customer.name}</span>
+                    </div>
+                    <div className="quick-meta">
+                      <span className={`badge status-${row.status.toLowerCase()}`}>{formatLabel(row.status)}</span>
+                      <span className="badge">Bal {formatCurrency(row.balanceDue)}</span>
+                    </div>
+                    <div className="stack-cell">
+                      <span className="muted">Total: {formatCurrency(row.total)}</span>
+                      <span className="muted">Paid: {formatCurrency(row.amountPaid)}</span>
+                      <span className="muted">Due: {formatDateTime(row.dueDate)}</span>
+                      <span className="muted">Updated: {formatDateTime(row.updatedAt)}</span>
+                      {jobHref ? (
+                        <Link className="table-link" href={jobHref}>
+                          Job: {jobLabel}
+                        </Link>
+                      ) : (
+                        <span className="muted">Job: {jobLabel}</span>
+                      )}
+                    </div>
+                    <div className="mobile-list-card-actions">
+                      <Link className="btn secondary" href={invoiceHref}>
+                        Open Invoice
+                      </Link>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="table-wrap desktop-table-only">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Invoice</th>
+                    <th>Customer</th>
+                    <th>Job</th>
+                    <th>Status</th>
+                    <th>Total</th>
+                    <th>Paid</th>
+                    <th>Balance</th>
+                    <th>Due</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => {
+                    const invoiceHref = withOrgQuery(`/app/invoices/${row.id}`, scope.orgId, scope.internalUser);
+                    const jobHref = row.jobId
+                      ? withOrgQuery(`/app/jobs/${row.jobId}?tab=invoice`, scope.orgId, scope.internalUser)
+                      : null;
+                    const jobLabel = row.job
+                      ? row.job.contactName || row.job.businessName || row.job.phoneE164
+                      : "-";
+
+                    return (
+                      <tr key={row.id}>
+                        <td>
+                          <Link className="table-link" href={invoiceHref}>
+                            {formatInvoiceNumber(row.invoiceNumber)}
+                          </Link>
+                        </td>
+                        <td>{row.customer.name}</td>
+                        <td>
+                          {jobHref ? (
+                            <Link className="table-link" href={jobHref}>
+                              {jobLabel}
+                            </Link>
+                          ) : (
+                            jobLabel
+                          )}
+                        </td>
+                        <td>
+                          <span className={`badge status-${row.status.toLowerCase()}`}>{formatLabel(row.status)}</span>
+                        </td>
+                        <td>{formatCurrency(row.total)}</td>
+                        <td>{formatCurrency(row.amountPaid)}</td>
+                        <td>{formatCurrency(row.balanceDue)}</td>
+                        <td>{formatDateTime(row.dueDate)}</td>
+                        <td>{formatDateTime(row.updatedAt)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
     </>

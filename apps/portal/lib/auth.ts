@@ -164,6 +164,7 @@ export const authOptions: NextAuthOptions = {
           where: { email },
           select: {
             id: true,
+            name: true,
             email: true,
             role: true,
             orgId: true,
@@ -179,6 +180,7 @@ export const authOptions: NextAuthOptions = {
 
         return {
           id: user.id,
+          name: user.name,
           email: user.email,
           role: user.role,
           orgId: user.orgId,
@@ -201,17 +203,19 @@ export const authOptions: NextAuthOptions = {
         token.role = (user as any).role;
         token.orgId = (user as any).orgId ?? null;
         token.mustChangePassword = (user as any).mustChangePassword ?? false;
+        token.name = (user as any).name ?? token.name ?? null;
         return token;
       }
 
       // If the user is forced to change their password, keep checking the DB so we can
       // clear the flag immediately after /set-password succeeds.
-      if ((token as any).mustChangePassword && token.sub) {
+      if (((token as any).mustChangePassword || !token.name) && token.sub) {
         const dbUser = await prisma.user.findUnique({
           where: { id: token.sub },
-          select: { role: true, orgId: true, mustChangePassword: true },
+          select: { name: true, role: true, orgId: true, mustChangePassword: true },
         });
         if (dbUser) {
+          token.name = dbUser.name ?? token.name ?? null;
           token.role = dbUser.role;
           token.orgId = dbUser.orgId ?? null;
           (token as any).mustChangePassword = dbUser.mustChangePassword;
@@ -221,6 +225,7 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (session.user) {
+        session.user.name = (typeof token.name === "string" ? token.name : session.user.name) ?? null;
         (session.user as any).id = token.sub;
         (session.user as any).role = token.role;
         (session.user as any).orgId = token.orgId ?? null;
