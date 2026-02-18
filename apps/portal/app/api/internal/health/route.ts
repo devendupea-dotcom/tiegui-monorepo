@@ -46,6 +46,7 @@ export async function GET(req: Request) {
 
   const generatedAt = new Date().toISOString();
   const dbInfo = getSafeDbEnvInfo();
+  const warnings: string[] = [];
 
   let dbOk = false;
   let dbError: string | null = null;
@@ -68,9 +69,27 @@ export async function GET(req: Request) {
   const googleEnvPresent = boolEnv("GOOGLE_CLIENT_ID") && boolEnv("GOOGLE_CLIENT_SECRET");
   const twilioEnvPresent = boolEnv("TWILIO_TOKEN_ENCRYPTION_KEY");
 
+  if (!dbInfo.directUrlPresent) {
+    warnings.push(
+      "DIRECT_URL is not configured. Recommended for Prisma migrations/seed (Neon direct, non-pooler connection).",
+    );
+  }
+  if (dbInfo.databaseHostIsPooler && !dbInfo.directUrlPresent) {
+    warnings.push(
+      "DATABASE_URL appears to be a pooler connection. Without DIRECT_URL, Prisma migrations may be unreliable.",
+    );
+  }
+  if (!googleEnvPresent) {
+    warnings.push("Google env is incomplete (GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET).");
+  }
+  if (!twilioEnvPresent) {
+    warnings.push("Twilio env is incomplete (TWILIO_TOKEN_ENCRYPTION_KEY).");
+  }
+
   return NextResponse.json({
     ok: true,
     generatedAt,
+    warnings,
     vercel: {
       gitCommitSha: normalizeEnvValue(process.env.VERCEL_GIT_COMMIT_SHA) || null,
       gitRef: normalizeEnvValue(process.env.VERCEL_GIT_COMMIT_REF) || null,
