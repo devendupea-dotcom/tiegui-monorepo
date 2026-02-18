@@ -73,10 +73,11 @@ async function checkRequiredTablesUncached(): Promise<DbRequiredTablesStatus> {
   const results = await Promise.all(
     REQUIRED_TABLES.map(async (tableName) => {
       const regclassName = `public."${tableName}"`;
-      const rows = await prisma.$queryRaw<Array<{ name: string | null }>>(
-        Prisma.sql`SELECT to_regclass(${regclassName}) AS name`,
+      // Prisma can't deserialize Postgres `regclass`, so we return a boolean instead.
+      const rows = await prisma.$queryRaw<Array<{ exists: boolean | null }>>(
+        Prisma.sql`SELECT (to_regclass(${regclassName}) IS NOT NULL) AS exists`,
       );
-      return { tableName, exists: Boolean(rows[0]?.name) };
+      return { tableName, exists: Boolean(rows[0]?.exists) };
     }),
   );
 
@@ -106,4 +107,3 @@ export async function checkRequiredTables(input?: { ttlMs?: number }): Promise<D
   cachedRequiredTables = { value, expiresAt: now + ttlMs };
   return value;
 }
-

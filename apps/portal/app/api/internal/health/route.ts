@@ -83,8 +83,10 @@ export async function GET(req: Request) {
       migrationTablesPresent: requiredTables.ok,
       missingTables: requiredTables.missing,
       requiredTablesError,
+      databaseUrlPresent: dbInfo.databaseUrlPresent,
       databaseHost: dbInfo.databaseHost,
       databaseHostIsPooler: dbInfo.databaseHostIsPooler,
+      directUrlPresent: dbInfo.directUrlPresent,
       directHost: dbInfo.directHost,
     },
     env: {
@@ -97,4 +99,3 @@ export async function GET(req: Request) {
     },
   });
 }
-
