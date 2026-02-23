@@ -1,0 +1,32 @@
+<svg width="1440" height="960" viewBox="0 0 1440 960" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1440" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A101A"/>
+      <stop offset="1" stop-color="#070C14"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="220" y1="160" x2="1220" y2="840" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#0B1220"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="236" y1="442" x2="556" y2="498" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E7D3A3"/>
+      <stop offset="1" stop-color="#C6A867"/>
+    </linearGradient>
+  </defs>
+  <rect width="1440" height="960" fill="url(#bg)"/>
+  <rect x="184" y="120" width="1072" height="720" rx="24" fill="url(#panel)" stroke="#223047"/>
+  <rect x="236" y="190" width="520" height="52" rx="10" fill="#F8FAFC" fill-opacity="0.06"/>
+  <rect x="236" y="276" width="420" height="22" rx="8" fill="#94A3B8" fill-opacity="0.42"/>
+  <rect x="236" y="320" width="472" height="22" rx="8" fill="#94A3B8" fill-opacity="0.42"/>
+  <rect x="236" y="364" width="396" height="22" rx="8" fill="#94A3B8" fill-opacity="0.42"/>
+  <rect x="236" y="442" width="320" height="56" rx="10" fill="url(#gold)"/>
+  <rect x="760" y="190" width="444" height="286" rx="16" fill="#0A1422" stroke="#334155"/>
+  <rect x="760" y="518" width="212" height="254" rx="16" fill="#0A1422" stroke="#334155"/>
+  <rect x="992" y="518" width="212" height="254" rx="16" fill="#0A1422" stroke="#334155"/>
+  <rect x="792" y="220" width="380" height="38" rx="10" fill="#E7D3A3" fill-opacity="0.16"/>
+  <rect x="792" y="278" width="220" height="16" rx="8" fill="#E7D3A3" fill-opacity="0.28"/>
+  <rect x="792" y="308" width="248" height="16" rx="8" fill="#E7D3A3" fill-opacity="0.28"/>
+  <rect x="206" y="62" width="188" height="40" rx="20" fill="#14532D"/>
+  <text x="300" y="88" text-anchor="middle" fill="#BBF7D0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">AFTER</text>
+  <text x="720" y="900" text-anchor="middle" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="600">Connected Website + Automation + Pipeline + Reporting</text>
+</svg>
