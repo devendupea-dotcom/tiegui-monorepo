@@ -1,13 +1,5 @@
-import PricingPdfActions from "../pricing-pdf-actions";
-import PricingSheet from "../pricing-sheet";
+import { redirect } from "next/navigation";
 
-export default function PricingPdfPage() {
-  return (
-    <div className="page pricing-pdf-page">
-      <div className="container">
-        <PricingPdfActions />
-      </div>
-      <PricingSheet mode="pdf" />
-    </div>
-  );
+export default function LegacyPricingPdfPage() {
+  redirect("/systems#offer");
 }

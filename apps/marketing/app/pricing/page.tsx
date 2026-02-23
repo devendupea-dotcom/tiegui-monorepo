@@ -1,14 +1,5 @@
-import SiteHeader from "../_components/SiteHeader";
-import SiteFooter from "../_components/SiteFooter";
-import PricingSheet from "./pricing-sheet";
+import { redirect } from "next/navigation";
 
-export default function PricingPage() {
-  return (
-    <div className="page">
-      <SiteHeader />
-      <PricingSheet mode="web" />
-
-      <SiteFooter />
-    </div>
-  );
+export default function LegacyPricingPage() {
+  redirect("/systems#offer");
 }
