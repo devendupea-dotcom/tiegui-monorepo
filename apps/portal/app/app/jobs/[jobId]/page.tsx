@@ -7,6 +7,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime, formatLabel, isOverdueFollowUp } from "@/lib/hq";
 import {
+  computeInvoiceDueDate,
   formatCurrency,
   formatInvoiceNumber,
   recomputeInvoiceTotals,
@@ -198,7 +199,8 @@ async function createInvoiceAction(formData: FormData) {
 
   const scoped = await requireLeadActionAccess(formData);
   const now = new Date();
-  const dueAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+  const terms = "NET_15" as const;
+  const dueAt = computeInvoiceDueDate(now, terms);
   const baseAmount = scoped.lead.estimatedRevenueCents
     ? new Prisma.Decimal(scoped.lead.estimatedRevenueCents).div(100).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
     : new Prisma.Decimal(0);
@@ -240,6 +242,7 @@ async function createInvoiceAction(formData: FormData) {
         jobId: scoped.lead.id,
         customerId,
         invoiceNumber,
+        terms,
         status: "DRAFT",
         issueDate: now,
         dueDate: dueAt,

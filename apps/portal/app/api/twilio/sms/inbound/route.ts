@@ -1,4 +1,4 @@
-import { advanceLeadIntakeFromInbound } from "@/lib/intake-automation";
+import { handleConversationalSmsInbound } from "@/lib/conversational-sms";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { validateTwilioWebhook } from "@/lib/twilio";
@@ -6,9 +6,6 @@ import { startOfUtcMonth } from "@/lib/usage";
 import { normalizeEnvValue } from "@/lib/env";
 import { maskSid } from "@/lib/twilio-config-crypto";
 import { getTwilioOrgRuntimeConfigByAccountSid } from "@/lib/twilio-org";
-
-const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
-const START_KEYWORDS = new Set(["START", "UNSTOP"]);
 
 function twimlOk() {
   return new Response("<Response></Response>", {
@@ -67,42 +64,13 @@ export async function POST(req: Request) {
     where: { id: twilioConfig.organizationId },
     select: {
       id: true,
-      smsFromNumberE164: true,
-      smsQuietHoursStartMinute: true,
-      smsQuietHoursEndMinute: true,
       messageLanguage: true,
-      missedCallAutoReplyBody: true,
-      missedCallAutoReplyBodyEn: true,
-      missedCallAutoReplyBodyEs: true,
-      intakeAutomationEnabled: true,
-      intakeAskLocationBody: true,
-      intakeAskLocationBodyEn: true,
-      intakeAskLocationBodyEs: true,
-      intakeAskWorkTypeBody: true,
-      intakeAskWorkTypeBodyEn: true,
-      intakeAskWorkTypeBodyEs: true,
-      intakeAskCallbackBody: true,
-      intakeAskCallbackBodyEn: true,
-      intakeAskCallbackBodyEs: true,
-      intakeCompletionBody: true,
-      intakeCompletionBodyEn: true,
-      intakeCompletionBodyEs: true,
-      dashboardConfig: {
-        select: {
-          calendarTimezone: true,
-        },
-      },
     },
   });
 
   if (!organization) {
     return twimlOk();
   }
-
-  const organizationSettings = {
-    ...organization,
-    calendarTimezone: organization.dashboardConfig?.calendarTimezone || "America/Los_Angeles",
-  };
 
   let lead = await prisma.lead.findFirst({
     where: {
@@ -145,11 +113,7 @@ export async function POST(req: Request) {
     });
   }
 
-  const normalizedKeyword = body.trim().toUpperCase().split(/\s+/)[0] || "";
-  const isStopKeyword = STOP_KEYWORDS.has(normalizedKeyword);
-  const isStartKeyword = START_KEYWORDS.has(normalizedKeyword);
-
-  let shouldAdvanceIntakeFlow = false;
+  let shouldAdvanceConversation = false;
   if (messageSid) {
     const existing = await prisma.message.findUnique({
       where: { providerMessageSid: messageSid },
@@ -184,7 +148,7 @@ export async function POST(req: Request) {
           smsCostEstimateCents: { increment: smsCostEstimateCents },
         },
       });
-      shouldAdvanceIntakeFlow = true;
+      shouldAdvanceConversation = true;
     }
   } else {
     await prisma.message.create({
@@ -213,47 +177,23 @@ export async function POST(req: Request) {
         smsCostEstimateCents: { increment: smsCostEstimateCents },
       },
     });
-    shouldAdvanceIntakeFlow = true;
+    shouldAdvanceConversation = true;
   }
 
-  if (isStopKeyword) {
-    await prisma.$transaction(async (tx) => {
-      await tx.lead.update({
-        where: { id: lead.id },
-        data: {
-          status: "DNC",
-          nextFollowUpAt: null,
-        },
+  if (shouldAdvanceConversation) {
+    try {
+      await handleConversationalSmsInbound({
+        orgId: organization.id,
+        leadId: lead.id,
+        inboundBody: body,
       });
-
-      await tx.smsDispatchQueue.updateMany({
-        where: {
-          orgId: organization.id,
-          leadId: lead.id,
-          status: "QUEUED",
-        },
-        data: {
-          status: "FAILED",
-          lastError: "Canceled after STOP/opt-out request.",
-        },
+    } catch (error) {
+      console.error("[twilio:sms] conversational handler failed", {
+        orgId: organization.id,
+        leadId: lead.id,
+        error: error instanceof Error ? error.message : "unknown",
       });
-    });
-    shouldAdvanceIntakeFlow = false;
-  } else if (isStartKeyword && lead.status === "DNC") {
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: {
-        status: "FOLLOW_UP",
-      },
-    });
-  }
-
-  if (shouldAdvanceIntakeFlow) {
-    await advanceLeadIntakeFromInbound({
-      organization: organizationSettings,
-      leadId: lead.id,
-      inboundBody: body,
-    });
+    }
   }
 
   return twimlOk();

@@ -11,6 +11,21 @@ datasource db {
 model Organization {
   id                      String   @id @default(uuid())
   name                    String
+  legalName               String?
+  addressLine1            String?
+  addressLine2            String?
+  city                    String?
+  state                   String?
+  zip                     String?
+  phone                   String?
+  email                   String?
+  website                 String?
+  licenseNumber           String?
+  ein                     String?
+  invoicePrefix           String   @default("INV")
+  invoiceNextNumber       Int      @default(1)
+  invoicePaymentInstructions String?
+  logoPhotoId             String?  @unique
   invoiceSequence         Int      @default(0)
   ghostBustingEnabled     Boolean  @default(false)
   voiceNotesEnabled       Boolean  @default(false)
@@ -31,6 +46,13 @@ model Organization {
   aiHardStop              Boolean  @default(true)
   aiUserDailyRequestLimit Int      @default(25)
   messageLanguage         MessageLanguage @default(EN)
+  smsTone                 SmsTone         @default(FRIENDLY)
+  autoReplyEnabled        Boolean         @default(true)
+  followUpsEnabled        Boolean         @default(true)
+  autoBookingEnabled      Boolean         @default(true)
+  smsGreetingLine         String?
+  smsWorkingHoursText     String?
+  smsWebsiteSignature     String?
   smsQuietHoursStartMinute Int     @default(480)
   smsQuietHoursEndMinute   Int     @default(1200)
   missedCallAutoReplyOn   Boolean  @default(false)
@@ -62,6 +84,7 @@ model Organization {
   dashboardConfig          OrgDashboardConfig?
   budgetRequests           BudgetRequest[]
   adSpendEntries           AdSpendEntry[]
+  marketingSpends          MarketingSpend[]
   leadNotes                LeadNote[]
   leadPhotos               LeadPhoto[]
   photos                   Photo[]
@@ -91,8 +114,13 @@ model Organization {
   aiUsageByMonth           AiUsage[]
   aiUserDayUsage           AiUserDayUsage[]
   smsDispatchQueue         SmsDispatchQueue[]
+  leadConversationStates   LeadConversationState[]
+  leadConversationAudits   LeadConversationAuditEvent[]
+  messagingSettings        OrganizationMessagingSettings?
   twilioConfig             OrganizationTwilioConfig?
   twilioConfigAuditLogs    TwilioConfigAuditLog[]
+
+  logoPhoto                Photo?  @relation("OrganizationLogo", fields: [logoPhotoId], references: [id], onDelete: SetNull)
 }
 
 model User {
@@ -115,6 +143,7 @@ model User {
   requestedBudgetChanges BudgetRequest[]       @relation("BudgetRequestRequester")
   reviewedBudgetChanges  BudgetRequest[]       @relation("BudgetRequestReviewer")
   adSpendEntries         AdSpendEntry[]        @relation("AdSpendEntryCreator")
+  marketingSpends        MarketingSpend[]      @relation("MarketingSpendCreator")
   createdLeads           Lead[]                @relation("LeadCreator")
   createdCustomers       Customer[]            @relation("CustomerCreator")
   leadNotes              LeadNote[]            @relation("LeadNoteCreator")
@@ -155,6 +184,10 @@ model Lead {
   sourceType                LeadSourceType  @default(ORGANIC)
   preferredLanguage         LeadPreferredLanguage?
   sourceDetail              String?
+  sourceChannel             LeadSourceChannel @default(OTHER)
+  utmSource                 String?
+  utmMedium                 String?
+  utmCampaign               String?
   attributionLocked         Boolean         @default(true)
   commissionEligible        Boolean         @default(false)
   city                      String?
@@ -196,6 +229,8 @@ model Lead {
   invoices      Invoice[]
   metaCapiEvents MetaCapiEvent[]
   smsDispatchQueue SmsDispatchQueue[]
+  conversationState LeadConversationState?
+  conversationAudits LeadConversationAuditEvent[]
 
   @@index([orgId, status, createdAt])
   @@index([orgId, nextFollowUpAt])
@@ -208,6 +243,7 @@ model Lead {
   @@index([customerId, updatedAt])
   @@index([createdByUserId, createdAt])
   @@index([orgId, sourceType, createdAt])
+  @@index([orgId, sourceChannel, createdAt])
 }
 
 model SmsDispatchQueue {
@@ -364,7 +400,8 @@ model Invoice {
   orgId           String
   jobId           String?
   customerId      String
-  invoiceNumber   Int
+  invoiceNumber   String
+  terms           InvoiceTerms         @default(DUE_ON_RECEIPT)
   status          BillingInvoiceStatus @default(DRAFT)
   subtotal        Decimal              @default(0) @db.Decimal(12, 2)
   taxRate         Decimal              @default(0) @db.Decimal(6, 4)
@@ -478,6 +515,7 @@ model OrganizationTwilioConfig {
   twilioAuthTokenEncrypted String
   messagingServiceSid     String
   phoneNumber             String
+  voiceForwardingNumber   String?
   status                  TwilioConfigStatus @default(PENDING_A2P)
   createdAt               DateTime          @default(now())
   updatedAt               DateTime          @updatedAt
@@ -506,6 +544,78 @@ model TwilioConfigAuditLog {
   @@index([organizationId, createdAt])
   @@index([twilioConfigId, createdAt])
   @@index([actorUserId, createdAt])
+}
+
+model OrganizationMessagingSettings {
+  id                  String   @id @default(uuid())
+  orgId               String   @unique
+  smsTone             SmsTone  @default(FRIENDLY)
+  autoReplyEnabled    Boolean  @default(true)
+  followUpsEnabled    Boolean  @default(true)
+  autoBookingEnabled  Boolean  @default(true)
+  workingHoursStart   String   @default("09:00")
+  workingHoursEnd     String   @default("17:00")
+  slotDurationMinutes Int      @default(60)
+  bufferMinutes       Int      @default(15)
+  daysAhead           Int      @default(3)
+  timezone            String   @default("America/Los_Angeles")
+  customTemplates     Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, smsTone])
+}
+
+model LeadConversationState {
+  id                    String                @id @default(uuid())
+  orgId                 String
+  leadId                String                @unique
+  stage                 ConversationStage     @default(NEW)
+  workSummary           String?
+  addressText           String?
+  addressCity           String?
+  timeframe             ConversationTimeframe?
+  lastInboundAt         DateTime?
+  lastOutboundAt        DateTime?
+  nextFollowUpAt        DateTime?
+  pausedUntil           DateTime?
+  stoppedAt             DateTime?
+  bookingOptions        Json?
+  bookedStartAt         DateTime?
+  bookedEndAt           DateTime?
+  bookedCalendarEventId String?
+  followUpStep          Int                   @default(0)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead  Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  audits LeadConversationAuditEvent[]
+
+  @@index([orgId, stage, updatedAt])
+  @@index([orgId, nextFollowUpAt])
+  @@index([orgId, pausedUntil])
+  @@index([orgId, stoppedAt])
+}
+
+model LeadConversationAuditEvent {
+  id             String                  @id @default(uuid())
+  orgId          String
+  leadId         String
+  conversationStateId String?
+  action         ConversationAuditAction
+  metadataJson   Json?
+  createdAt      DateTime                @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversationState LeadConversationState? @relation(fields: [conversationStateId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([leadId, createdAt])
+  @@index([conversationStateId, createdAt])
 }
 
 model ClientMutationReceipt {
@@ -842,6 +952,24 @@ model AdSpendEntry {
   @@index([orgId, spendDate])
 }
 
+model MarketingSpend {
+  id              String           @id @default(uuid())
+  orgId           String
+  monthStart      DateTime
+  channel         MarketingChannel
+  spendCents      Int
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("MarketingSpendCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, monthStart, channel])
+  @@index([orgId, monthStart])
+}
+
 model LeadNote {
   id              String   @id @default(uuid())
   orgId           String
@@ -865,11 +993,13 @@ model Photo {
   contentType  String
   sizeBytes    Int
   originalName String?
+  imageDataUrl String?
   createdAt    DateTime @default(now())
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   leadPhotos LeadPhoto[]
+  logoOrganizations Organization[] @relation("OrganizationLogo")
 
   @@unique([orgId, key])
   @@index([orgId, createdAt])
@@ -1254,10 +1384,34 @@ enum LeadSourceType {
   UNKNOWN
 }
 
+enum LeadSourceChannel {
+  GOOGLE_ADS
+  META_ADS
+  ORGANIC
+  REFERRAL
+  OTHER
+}
+
+enum MarketingChannel {
+  GOOGLE_ADS
+  META_ADS
+  OTHER
+}
+
 enum MessageLanguage {
   EN
   ES
   AUTO
+}
+
+enum SmsTone {
+  FRIENDLY
+  PROFESSIONAL
+  DIRECT
+  SALES
+  PREMIUM
+  BILINGUAL
+  CUSTOM
 }
 
 enum LeadPreferredLanguage {
@@ -1361,6 +1515,13 @@ enum InvoicePaymentMethod {
   CARD
   TRANSFER
   OTHER
+}
+
+enum InvoiceTerms {
+  DUE_ON_RECEIPT
+  NET_7
+  NET_15
+  NET_30
 }
 
 enum MetaCapiStatus {
@@ -1467,4 +1628,31 @@ enum TwilioConfigAuditAction {
   STATUS_CHANGED
   VALIDATED
   TEST_SMS_SENT
+}
+
+enum ConversationStage {
+  NEW
+  ASKED_WORK
+  ASKED_ADDRESS
+  ASKED_TIMEFRAME
+  OFFERED_BOOKING
+  BOOKED
+  HUMAN_TAKEOVER
+  CLOSED
+}
+
+enum ConversationTimeframe {
+  ASAP
+  THIS_WEEK
+  NEXT_WEEK
+  QUOTE_ONLY
+}
+
+enum ConversationAuditAction {
+  AUTO_MESSAGE_SENT
+  STAGE_CHANGED
+  FOLLOWUP_SCHEDULED
+  TAKEOVER_TRIGGERED
+  OPT_OUT
+  BOOKED_CREATED
 }

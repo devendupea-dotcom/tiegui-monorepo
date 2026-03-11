@@ -1,6 +1,6 @@
 import { addMinutes } from "date-fns";
 import { NextResponse } from "next/server";
-import type { CalendarEventStatus, EventType, LeadSourceType } from "@prisma/client";
+import type { CalendarEventStatus, EventType, LeadSourceChannel, LeadSourceType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
@@ -24,6 +24,9 @@ type CreateLeadPayload = {
   note?: string;
   sourceType?: string;
   sourceDetail?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
   scheduleNow?: boolean;
   schedule?: {
     startAt?: string;
@@ -92,6 +95,47 @@ function mapLeadSource(sourceType: LeadSourceType): "REFERRAL" | "OTHER" {
   if (sourceType === "REFERRAL") {
     return "REFERRAL";
   }
+  return "OTHER";
+}
+
+function normalizeOptionalText(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, maxLength);
+}
+
+function inferSourceChannel(input: {
+  sourceType: LeadSourceType;
+  utmSource: string | null;
+  utmMedium: string | null;
+  fbClickId: string | null;
+}): LeadSourceChannel {
+  const utmSource = (input.utmSource || "").trim().toLowerCase();
+  const utmMedium = (input.utmMedium || "").trim().toLowerCase();
+  const paidMedium = ["cpc", "ppc", "paid", "paid_social", "paid-social"].includes(utmMedium);
+
+  if (
+    utmSource === "facebook" ||
+    utmSource === "instagram" ||
+    utmSource === "meta" ||
+    input.fbClickId
+  ) {
+    return "META_ADS";
+  }
+
+  if (utmSource === "google" || (paidMedium && utmSource !== "facebook" && utmSource !== "instagram" && utmSource !== "meta")) {
+    return "GOOGLE_ADS";
+  }
+
+  if (input.sourceType === "REFERRAL") {
+    return "REFERRAL";
+  }
+
+  if (utmMedium === "organic" || utmSource === "organic") {
+    return "ORGANIC";
+  }
+
   return "OTHER";
 }
 
@@ -202,6 +246,15 @@ export async function POST(req: Request) {
     const note = (payload.note || "").trim() || null;
     const sourceType = parseSourceType(payload.sourceType);
     const sourceDetail = (payload.sourceDetail || "").trim() || null;
+    const utmSource = normalizeOptionalText(payload.utmSource, 120);
+    const utmMedium = normalizeOptionalText(payload.utmMedium, 120);
+    const utmCampaign = normalizeOptionalText(payload.utmCampaign, 160);
+    const sourceChannel = inferSourceChannel({
+      sourceType,
+      utmSource,
+      utmMedium,
+      fbClickId,
+    });
 
     if (!name) {
       throw new AppApiError("Name is required.", 400);
@@ -306,6 +359,10 @@ export async function POST(req: Request) {
           notes: note,
           sourceType,
           sourceDetail,
+          sourceChannel,
+          utmSource,
+          utmMedium,
+          utmCampaign,
           attributionLocked: true,
           commissionEligible: false,
           leadSource: mapLeadSource(sourceType),
@@ -319,6 +376,7 @@ export async function POST(req: Request) {
           contactName: true,
           phoneE164: true,
           sourceType: true,
+          sourceChannel: true,
           sourceDetail: true,
           attributionLocked: true,
           commissionEligible: true,

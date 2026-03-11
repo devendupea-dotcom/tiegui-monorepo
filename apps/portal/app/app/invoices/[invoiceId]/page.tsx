@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
-import type { BillingInvoiceStatus, InvoicePaymentMethod } from "@prisma/client";
+import type { BillingInvoiceStatus, InvoicePaymentMethod, InvoiceTerms } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   billingInvoiceStatusOptions,
@@ -9,6 +9,7 @@ import {
   formatCurrency,
   formatInvoiceNumber,
   invoicePaymentMethodOptions,
+  invoiceTermsOptions,
   parseMoneyInput,
   parseTaxRatePercent,
   recomputeInvoiceTotals,
@@ -39,6 +40,15 @@ function toDateInputValue(value: Date | null | undefined): string {
   return value.toISOString().slice(0, 10);
 }
 
+function formatDateOnly(value: Date | null | undefined): string {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  }).format(value);
+}
+
 function parseDateInput(value: string): Date | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -53,8 +63,54 @@ function isAllowedManualStatus(value: string): value is BillingInvoiceStatus {
   return value === "DRAFT" || value === "SENT";
 }
 
+function isInvoiceTerms(value: string): value is InvoiceTerms {
+  return invoiceTermsOptions.some((option) => option === value);
+}
+
+function formatInvoiceTermsLabel(value: InvoiceTerms): string {
+  switch (value) {
+    case "NET_7":
+      return "Net 7";
+    case "NET_15":
+      return "Net 15";
+    case "NET_30":
+      return "Net 30";
+    case "DUE_ON_RECEIPT":
+    default:
+      return "Due on receipt";
+  }
+}
+
 function isPaymentMethod(value: string): value is InvoicePaymentMethod {
   return invoicePaymentMethodOptions.some((option) => option === value);
+}
+
+function formatOrgAddress(input: {
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+}): string | null {
+  const line1 = input.addressLine1?.trim() || "";
+  const line2 = input.addressLine2?.trim() || "";
+  const line3 = [input.city, input.state, input.zip]
+    .map((part) => (part || "").trim())
+    .filter(Boolean)
+    .join(", ")
+    .replace(", ,", ",");
+
+  const lines = [line1, line2, line3].filter(Boolean);
+  return lines.length > 0 ? lines.join(" • ") : null;
+}
+
+function formatOrgContact(input: {
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+}): string | null {
+  const parts = [input.phone, input.email, input.website].map((part) => (part || "").trim()).filter(Boolean);
+  return parts.length > 0 ? parts.join(" • ") : null;
 }
 
 async function requireInvoiceActionAccess(formData: FormData) {
@@ -149,12 +205,17 @@ async function saveInvoiceMetaAction(formData: FormData) {
   const issueDateRaw = String(formData.get("issueDate") || "").trim();
   const dueDateRaw = String(formData.get("dueDate") || "").trim();
   const statusRaw = String(formData.get("status") || "").trim().toUpperCase();
+  const termsRaw = String(formData.get("terms") || "").trim().toUpperCase();
   const taxRatePercentRaw = String(formData.get("taxRatePercent") || "").trim();
   const notes = String(formData.get("notes") || "").trim();
 
   const issueDate = parseDateInput(issueDateRaw);
   const dueDate = parseDateInput(dueDateRaw);
   const taxRate = parseTaxRatePercent(taxRatePercentRaw);
+
+  if (!isInvoiceTerms(termsRaw)) {
+    redirect(appendQuery(scoped.returnPath, "error", "meta-terms"));
+  }
 
   if (!issueDate || !dueDate) {
     redirect(appendQuery(scoped.returnPath, "error", "meta-date"));
@@ -182,6 +243,7 @@ async function saveInvoiceMetaAction(formData: FormData) {
       data: {
         issueDate,
         dueDate,
+        terms: termsRaw,
         status: statusRaw,
         taxRate,
         notes: notes || null,
@@ -450,7 +512,22 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
     },
     include: {
       org: {
-        select: { id: true, name: true },
+        select: {
+          id: true,
+          name: true,
+          legalName: true,
+          addressLine1: true,
+          addressLine2: true,
+          city: true,
+          state: true,
+          zip: true,
+          phone: true,
+          email: true,
+          website: true,
+          licenseNumber: true,
+          ein: true,
+          invoicePaymentInstructions: true,
+        },
       },
       customer: {
         select: {
@@ -523,6 +600,24 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
   const jobPath = invoice.jobId ? withOrgQuery(`/app/jobs/${invoice.jobId}?tab=invoice`, scope.orgId, scope.internalUser) : null;
   const pdfPath = `/api/invoices/${invoice.id}/pdf`;
   const paymentDefault = Number(toMoneyDecimal(invoice.balanceDue).toString()).toFixed(2);
+  const orgDisplayName = invoice.org.legalName?.trim() || invoice.org.name;
+  const orgAddress = formatOrgAddress({
+    addressLine1: invoice.org.addressLine1,
+    addressLine2: invoice.org.addressLine2,
+    city: invoice.org.city,
+    state: invoice.org.state,
+    zip: invoice.org.zip,
+  });
+  const orgContact = formatOrgContact({
+    phone: invoice.org.phone,
+    email: invoice.org.email,
+    website: invoice.org.website,
+  });
+  const hasTax = invoice.taxAmount.gt(0) || invoice.taxRate.gt(0);
+  const isPaidInvoice = invoice.status === "PAID" || invoice.balanceDue.lte(0);
+  const jobLabel = invoice.job
+    ? invoice.job.contactName || invoice.job.businessName || invoice.job.phoneE164
+    : null;
 
   return (
     <div className="invoice-detail-shell">
@@ -557,6 +652,145 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
         </div>
       </section>
 
+      <section className="card invoice-card invoice-pdf-preview">
+        <div className="invoice-header-row">
+          <div className="stack-cell">
+            <h2>Client-Ready Invoice</h2>
+            <p className="muted">Official layout preview before downloading the PDF.</p>
+          </div>
+          <div className="quick-links">
+            <a className="btn secondary" href={`${pdfPath}?inline=1`} target="_blank" rel="noreferrer">
+              Open PDF
+            </a>
+            <a className="btn primary" href={pdfPath}>
+              Download PDF
+            </a>
+          </div>
+        </div>
+
+        <div className="invoice-sheet-wrap">
+          <article className={`invoice-sheet ${isPaidInvoice ? "paid" : ""}`}>
+            {isPaidInvoice ? <div className="invoice-sheet-watermark">PAID</div> : null}
+
+            <header className="invoice-sheet-header">
+              <div className="invoice-sheet-org">
+                <h3>{orgDisplayName}</h3>
+                {orgAddress ? <p>{orgAddress}</p> : null}
+                {orgContact ? <p>{orgContact}</p> : null}
+                {invoice.org.licenseNumber ? <p>License: {invoice.org.licenseNumber}</p> : null}
+                {invoice.org.ein ? <p>EIN: {invoice.org.ein}</p> : null}
+              </div>
+
+              <div className="invoice-sheet-meta">
+                <p className="invoice-sheet-title">INVOICE</p>
+                <dl>
+                  <div>
+                    <dt>Invoice #</dt>
+                    <dd>{formatInvoiceNumber(invoice.invoiceNumber)}</dd>
+                  </div>
+                  <div>
+                    <dt>Invoice Date</dt>
+                    <dd>{formatDateOnly(invoice.issueDate)}</dd>
+                  </div>
+                  <div>
+                    <dt>Due Date</dt>
+                    <dd>{formatDateOnly(invoice.dueDate)}</dd>
+                  </div>
+                  <div>
+                    <dt>Terms</dt>
+                    <dd>{formatInvoiceTermsLabel(invoice.terms)}</dd>
+                  </div>
+                </dl>
+              </div>
+            </header>
+
+            <div className="invoice-sheet-divider" />
+
+            <section className="invoice-sheet-billto">
+              <h4>Bill To</h4>
+              <p className="invoice-sheet-strong">{invoice.customer.name}</p>
+              {invoice.customer.addressLine ? <p>{invoice.customer.addressLine}</p> : null}
+              {jobLabel ? <p>Job: {jobLabel}</p> : null}
+              {invoice.customer.phoneE164 ? <p>Phone: {invoice.customer.phoneE164}</p> : null}
+              {invoice.customer.email ? <p>Email: {invoice.customer.email}</p> : null}
+            </section>
+
+            <section className="invoice-sheet-table-wrap">
+              <table className="invoice-sheet-table">
+                <thead>
+                  <tr>
+                    <th>Description</th>
+                    <th className="right">Qty</th>
+                    <th className="right">Unit</th>
+                    <th className="right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoice.lineItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="empty">
+                        No line items yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    invoice.lineItems.map((lineItem) => (
+                      <tr key={lineItem.id}>
+                        <td>{lineItem.description}</td>
+                        <td className="right">{lineItem.quantity.toString()}</td>
+                        <td className="right">{formatCurrency(lineItem.unitPrice)}</td>
+                        <td className="right">{formatCurrency(lineItem.lineTotal)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </section>
+
+            <section className="invoice-sheet-bottom">
+              <div className="invoice-sheet-notes">
+                {invoice.notes?.trim() ? (
+                  <div>
+                    <h4>Notes</h4>
+                    <p>{invoice.notes.trim()}</p>
+                  </div>
+                ) : null}
+                {invoice.org.invoicePaymentInstructions?.trim() ? (
+                  <div>
+                    <h4>Payment Instructions</h4>
+                    <p>{invoice.org.invoicePaymentInstructions.trim()}</p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="invoice-sheet-totals">
+                <div>
+                  <span>Subtotal</span>
+                  <strong>{formatCurrency(invoice.subtotal)}</strong>
+                </div>
+                {hasTax ? (
+                  <div>
+                    <span>Tax ({taxRateToPercent(invoice.taxRate)}%)</span>
+                    <strong>{formatCurrency(invoice.taxAmount)}</strong>
+                  </div>
+                ) : null}
+                <div>
+                  <span>Total</span>
+                  <strong>{formatCurrency(invoice.total)}</strong>
+                </div>
+                <div>
+                  <span>Amount Paid</span>
+                  <strong>{formatCurrency(invoice.amountPaid)}</strong>
+                </div>
+                <div className="due">
+                  <span>Balance Due</span>
+                  <strong>{formatCurrency(invoice.balanceDue)}</strong>
+                </div>
+              </div>
+            </section>
+          </article>
+        </div>
+      </section>
+
       <section className="grid two-col">
         <article className="card">
           <h2>Invoice Details</h2>
@@ -576,6 +810,17 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
             <label>
               Issue Date
               <input type="date" name="issueDate" defaultValue={toDateInputValue(invoice.issueDate)} required />
+            </label>
+
+            <label>
+              Terms
+              <select name="terms" defaultValue={invoice.terms}>
+                {invoiceTermsOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {formatInvoiceTermsLabel(option)}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label>
@@ -635,6 +880,10 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
             <div>
               <dt>Issue</dt>
               <dd>{formatDateTime(invoice.issueDate)}</dd>
+            </div>
+            <div>
+              <dt>Terms</dt>
+              <dd>{formatInvoiceTermsLabel(invoice.terms)}</dd>
             </div>
             <div>
               <dt>Due</dt>

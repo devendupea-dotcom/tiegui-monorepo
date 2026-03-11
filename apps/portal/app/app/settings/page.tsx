@@ -1,12 +1,21 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { addDays } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { isR2Configured } from "@/lib/r2";
+import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { DEFAULT_CALENDAR_TIMEZONE, ensureTimeZone, isValidTimeZone } from "@/lib/calendar/dates";
+import { containsAutomationRevealLanguage, normalizeCustomTemplates } from "@/lib/conversational-sms-templates";
 import { getRequestTranslator } from "@/lib/i18n";
+import type { ResolvedMessageLocale } from "@/lib/message-language";
 import { normalizeE164 } from "@/lib/phone";
 import { isInternalRole, requireSessionUser } from "@/lib/session";
 import { getParam, requireAppOrgAccess, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
+import OrgLogoUploader from "./branding/org-logo-uploader";
+import { SmsVoiceSection, type SmsVoiceCustomTemplates } from "./sms-voice-section";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +45,94 @@ function parseMessageLanguage(value: string): "EN" | "ES" | "AUTO" | null {
   return null;
 }
 
+function parseSmsTone(
+  value: string,
+): "FRIENDLY" | "PROFESSIONAL" | "DIRECT" | "SALES" | "PREMIUM" | "BILINGUAL" | "CUSTOM" | null {
+  const normalized = value.trim().toUpperCase();
+  if (
+    normalized === "FRIENDLY" ||
+    normalized === "PROFESSIONAL" ||
+    normalized === "DIRECT" ||
+    normalized === "SALES" ||
+    normalized === "PREMIUM" ||
+    normalized === "BILINGUAL" ||
+    normalized === "CUSTOM"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function parseTimeInput(value: string): string | null {
+  const minute = parseQuietHourMinute(value);
+  if (minute === null) return null;
+  return minuteToTimeInput(minute);
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
+async function buildSettingsPreviewSlots(input: {
+  orgId: string;
+  connected: boolean;
+  slotDurationMinutes: number;
+  daysAhead: number;
+  timezone: string;
+}): Promise<string[]> {
+  if (!input.connected) {
+    return ["Tomorrow 10:00am", "Thu 2:00pm", "Fri 9:00am"];
+  }
+
+  const workers = await prisma.user.findMany({
+    where: {
+      orgId: input.orgId,
+      calendarAccessRole: { not: "READ_ONLY" },
+    },
+    select: { id: true },
+    take: 8,
+  });
+  if (workers.length === 0) {
+    return ["Tomorrow 10:00am", "Thu 2:00pm", "Fri 9:00am"];
+  }
+
+  const settings = await getOrgCalendarSettings(input.orgId);
+  const now = new Date();
+  const slots: string[] = [];
+  const seen = new Set<string>();
+  const maxDays = clampInt(input.daysAhead, 1, 14);
+
+  for (let offset = 0; offset < maxDays; offset += 1) {
+    const date = formatInTimeZone(addDays(now, offset), input.timezone || settings.calendarTimezone, "yyyy-MM-dd");
+    for (const worker of workers) {
+      if (slots.length >= 3) break;
+      const availability = await computeAvailabilityForWorker({
+        orgId: input.orgId,
+        workerUserId: worker.id,
+        date,
+        durationMinutes: clampInt(input.slotDurationMinutes, 15, 180),
+      });
+      for (const slotUtc of availability.slotsUtc) {
+        const slotDate = new Date(slotUtc);
+        if (slotDate <= now) continue;
+        if (seen.has(slotUtc)) continue;
+        seen.add(slotUtc);
+        const day = formatInTimeZone(slotDate, input.timezone || settings.calendarTimezone, "EEE");
+        const time = formatInTimeZone(slotDate, input.timezone || settings.calendarTimezone, "h:mmaaa").toLowerCase();
+        slots.push(`${day} ${time}`);
+        if (slots.length >= 3) break;
+      }
+    }
+    if (slots.length >= 3) break;
+  }
+
+  if (slots.length === 0) {
+    return ["Tomorrow 10:00am", "Thu 2:00pm", "Fri 9:00am"];
+  }
+  return slots;
+}
+
 async function updateSettingsAction(formData: FormData) {
   "use server";
 
@@ -49,6 +146,27 @@ async function updateSettingsAction(formData: FormData) {
   const senderRaw = String(formData.get("smsFromNumberE164") || "").trim();
   const organizationName = String(formData.get("organizationName") || "").trim();
   const messageLanguageRaw = String(formData.get("messageLanguage") || "").trim();
+  const smsToneRaw = String(formData.get("smsTone") || "").trim();
+  const autoReplyEnabled = String(formData.get("autoReplyEnabled") || "") === "on";
+  const followUpsEnabled = String(formData.get("followUpsEnabled") || "") === "on";
+  const autoBookingEnabled = String(formData.get("autoBookingEnabled") || "") === "on";
+  const smsGreetingLine = String(formData.get("smsGreetingLine") || "").trim();
+  const smsWorkingHoursText = String(formData.get("smsWorkingHoursText") || "").trim();
+  const smsWebsiteSignature = String(formData.get("smsWebsiteSignature") || "").trim();
+  const workingHoursStartRaw = String(formData.get("workingHoursStart") || "").trim();
+  const workingHoursEndRaw = String(formData.get("workingHoursEnd") || "").trim();
+  const slotDurationMinutesRaw = String(formData.get("slotDurationMinutes") || "").trim();
+  const bufferMinutesRaw = String(formData.get("bufferMinutes") || "").trim();
+  const daysAheadRaw = String(formData.get("daysAhead") || "").trim();
+  const messagingTimezoneRaw = String(formData.get("messagingTimezone") || "").trim();
+  const customTemplateGreeting = String(formData.get("customTemplateGreeting") || "").trim();
+  const customTemplateAskAddress = String(formData.get("customTemplateAskAddress") || "").trim();
+  const customTemplateAskTimeframe = String(formData.get("customTemplateAskTimeframe") || "").trim();
+  const customTemplateOfferBooking = String(formData.get("customTemplateOfferBooking") || "").trim();
+  const customTemplateBookingConfirmation = String(formData.get("customTemplateBookingConfirmation") || "").trim();
+  const customTemplateFollowUp1 = String(formData.get("customTemplateFollowUp1") || "").trim();
+  const customTemplateFollowUp2 = String(formData.get("customTemplateFollowUp2") || "").trim();
+  const customTemplateFollowUp3 = String(formData.get("customTemplateFollowUp3") || "").trim();
   const missedCallAutoReplyOn = String(formData.get("missedCallAutoReplyOn") || "") === "on";
   const missedCallMessageEn = String(formData.get("missedCallAutoReplyBodyEn") || "").trim();
   const missedCallMessageEs = String(formData.get("missedCallAutoReplyBodyEs") || "").trim();
@@ -92,6 +210,7 @@ async function updateSettingsAction(formData: FormData) {
 
   const sender = senderRaw ? normalizeE164(senderRaw) : null;
   const messageLanguage = parseMessageLanguage(messageLanguageRaw);
+  const smsTone = parseSmsTone(smsToneRaw);
   if (senderRaw && !sender) {
     redirect(withOrgQuery("/app/settings?error=invalid-sender", orgId, internalUser));
   }
@@ -99,6 +218,57 @@ async function updateSettingsAction(formData: FormData) {
   if (!messageLanguage) {
     redirect(withOrgQuery("/app/settings?error=invalid-message-language", orgId, internalUser));
   }
+
+  if (canManageAutomationSettings && !smsTone) {
+    redirect(withOrgQuery("/app/settings?error=invalid-sms-tone", orgId, internalUser));
+  }
+
+  if (smsGreetingLine.length > 220 || smsWorkingHoursText.length > 220 || smsWebsiteSignature.length > 220) {
+    redirect(withOrgQuery("/app/settings?error=invalid-message", orgId, internalUser));
+  }
+
+  const workingHoursStart = parseTimeInput(workingHoursStartRaw || "09:00");
+  const workingHoursEnd = parseTimeInput(workingHoursEndRaw || "17:00");
+  const slotDurationMinutes = clampInt(Number.parseInt(slotDurationMinutesRaw || "60", 10), 15, 180);
+  const bufferMinutes = clampInt(Number.parseInt(bufferMinutesRaw || "15", 10), 0, 120);
+  const daysAhead = clampInt(Number.parseInt(daysAheadRaw || "3", 10), 1, 14);
+  const messagingTimezone = messagingTimezoneRaw || calendarTimezone;
+
+  if (!workingHoursStart || !workingHoursEnd) {
+    redirect(withOrgQuery("/app/settings?error=invalid-working-hours", orgId, internalUser));
+  }
+
+  if (!isValidTimeZone(messagingTimezone)) {
+    redirect(withOrgQuery("/app/settings?error=invalid-messaging-timezone", orgId, internalUser));
+  }
+
+  const customTemplatesInput: SmsVoiceCustomTemplates = {
+    greeting: customTemplateGreeting,
+    askAddress: customTemplateAskAddress,
+    askTimeframe: customTemplateAskTimeframe,
+    offerBooking: customTemplateOfferBooking,
+    bookingConfirmation: customTemplateBookingConfirmation,
+    followUp1: customTemplateFollowUp1,
+    followUp2: customTemplateFollowUp2,
+    followUp3: customTemplateFollowUp3,
+  };
+
+  for (const value of Object.values(customTemplatesInput)) {
+    if (value.length > 1600) {
+      redirect(withOrgQuery("/app/settings?error=invalid-message", orgId, internalUser));
+    }
+    if (containsAutomationRevealLanguage(value)) {
+      redirect(withOrgQuery("/app/settings?error=invalid-custom-template", orgId, internalUser));
+    }
+  }
+
+  const customTemplatesJson = normalizeCustomTemplates(customTemplatesInput);
+  const customModeEnabled = canManageAutomationSettings && smsTone === "CUSTOM";
+  const legacyInitial = customModeEnabled ? customTemplateGreeting || null : undefined;
+  const legacyAskAddress = customModeEnabled ? customTemplateAskAddress || null : undefined;
+  const legacyAskTimeframe = customModeEnabled ? customTemplateAskTimeframe || null : undefined;
+  const legacyOfferBooking = customModeEnabled ? customTemplateOfferBooking || null : undefined;
+  const legacyBookingConfirmation = customModeEnabled ? customTemplateBookingConfirmation || null : undefined;
 
   if (!organizationName || organizationName.length > 120) {
     redirect(withOrgQuery("/app/settings?error=invalid-business-name", orgId, internalUser));
@@ -177,22 +347,24 @@ async function updateSettingsAction(formData: FormData) {
       smsFromNumberE164: sender,
       name: organizationName,
       messageLanguage,
+      smsTone: canManageAutomationSettings ? smsTone! : undefined,
+      autoReplyEnabled: canManageAutomationSettings ? autoReplyEnabled : undefined,
+      followUpsEnabled: canManageAutomationSettings ? followUpsEnabled : undefined,
+      autoBookingEnabled: canManageAutomationSettings ? autoBookingEnabled : undefined,
+      smsGreetingLine: canManageAutomationSettings ? (smsGreetingLine || null) : undefined,
+      smsWorkingHoursText: canManageAutomationSettings ? (smsWorkingHoursText || null) : undefined,
+      smsWebsiteSignature: canManageAutomationSettings ? (smsWebsiteSignature || null) : undefined,
       missedCallAutoReplyOn,
-      missedCallAutoReplyBody: missedCallMessageEn || missedCallMessageEs || null,
-      missedCallAutoReplyBodyEn: missedCallMessageEn || null,
-      missedCallAutoReplyBodyEs: missedCallMessageEs || null,
-      intakeAskLocationBody: intakeAskLocationBodyEn || intakeAskLocationBodyEs || null,
-      intakeAskLocationBodyEn: intakeAskLocationBodyEn || null,
-      intakeAskLocationBodyEs: intakeAskLocationBodyEs || null,
-      intakeAskWorkTypeBody: intakeAskWorkTypeBodyEn || intakeAskWorkTypeBodyEs || null,
-      intakeAskWorkTypeBodyEn: intakeAskWorkTypeBodyEn || null,
-      intakeAskWorkTypeBodyEs: intakeAskWorkTypeBodyEs || null,
-      intakeAskCallbackBody: intakeAskCallbackBodyEn || intakeAskCallbackBodyEs || null,
-      intakeAskCallbackBodyEn: intakeAskCallbackBodyEn || null,
-      intakeAskCallbackBodyEs: intakeAskCallbackBodyEs || null,
-      intakeCompletionBody: intakeCompletionBodyEn || intakeCompletionBodyEs || null,
-      intakeCompletionBodyEn: intakeCompletionBodyEn || null,
-      intakeCompletionBodyEs: intakeCompletionBodyEs || null,
+      missedCallAutoReplyBody: legacyInitial,
+      missedCallAutoReplyBodyEn: legacyInitial,
+      intakeAskLocationBody: legacyAskAddress,
+      intakeAskLocationBodyEn: legacyAskAddress,
+      intakeAskWorkTypeBody: legacyAskTimeframe,
+      intakeAskWorkTypeBodyEn: legacyAskTimeframe,
+      intakeAskCallbackBody: legacyOfferBooking,
+      intakeAskCallbackBodyEn: legacyOfferBooking,
+      intakeCompletionBody: legacyBookingConfirmation,
+      intakeCompletionBodyEn: legacyBookingConfirmation,
       allowWorkerLeadCreate: canManageLeadEntrySetting ? allowWorkerLeadCreate : undefined,
       ghostBustingEnabled: canManageAutomationSettings ? ghostBustingEnabled : undefined,
       voiceNotesEnabled: canManageAutomationSettings ? voiceNotesEnabled : undefined,
@@ -206,6 +378,39 @@ async function updateSettingsAction(formData: FormData) {
       smsQuietHoursEndMinute: smsQuietEndMinute,
     },
   });
+
+  if (canManageAutomationSettings) {
+    await prisma.organizationMessagingSettings.upsert({
+      where: { orgId },
+      update: {
+        smsTone: smsTone!,
+        autoReplyEnabled,
+        followUpsEnabled,
+        autoBookingEnabled,
+        workingHoursStart: workingHoursStart!,
+        workingHoursEnd: workingHoursEnd!,
+        slotDurationMinutes,
+        bufferMinutes,
+        daysAhead,
+        timezone: ensureTimeZone(messagingTimezone),
+        customTemplates: customModeEnabled ? (customTemplatesJson as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+      },
+      create: {
+        orgId,
+        smsTone: smsTone || "FRIENDLY",
+        autoReplyEnabled,
+        followUpsEnabled,
+        autoBookingEnabled,
+        workingHoursStart: workingHoursStart || "09:00",
+        workingHoursEnd: workingHoursEnd || "17:00",
+        slotDurationMinutes,
+        bufferMinutes,
+        daysAhead,
+        timezone: ensureTimeZone(messagingTimezone),
+        customTemplates: smsTone === "CUSTOM" ? (customTemplatesJson as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+      },
+    });
+  }
 
   await prisma.orgDashboardConfig.upsert({
     where: { orgId },
@@ -271,6 +476,13 @@ export default async function ClientSettingsPage({
         },
       },
       messageLanguage: true,
+      smsTone: true,
+      autoReplyEnabled: true,
+      followUpsEnabled: true,
+      autoBookingEnabled: true,
+      smsGreetingLine: true,
+      smsWorkingHoursText: true,
+      smsWebsiteSignature: true,
       missedCallAutoReplyOn: true,
       missedCallAutoReplyBody: true,
       missedCallAutoReplyBodyEn: true,
@@ -289,11 +501,27 @@ export default async function ClientSettingsPage({
       intakeCompletionBody: true,
       intakeCompletionBodyEn: true,
       intakeCompletionBodyEs: true,
+      messagingSettings: {
+        select: {
+          smsTone: true,
+          autoReplyEnabled: true,
+          followUpsEnabled: true,
+          autoBookingEnabled: true,
+          workingHoursStart: true,
+          workingHoursEnd: true,
+          slotDurationMinutes: true,
+          bufferMinutes: true,
+          daysAhead: true,
+          timezone: true,
+          customTemplates: true,
+        },
+      },
       dashboardConfig: {
         select: {
           jobReminderMinutesBefore: true,
           googleReviewUrl: true,
           calendarTimezone: true,
+          defaultSlotMinutes: true,
         },
       },
     },
@@ -340,6 +568,38 @@ export default async function ClientSettingsPage({
       organization.intakeCompletionBodyEs,
   );
   const googleConfigured = googleConnectedCount > 0;
+  const messagingSettings = organization.messagingSettings;
+  const effectiveTone = messagingSettings?.smsTone || organization.smsTone;
+  const effectiveAutoReplyEnabled = messagingSettings?.autoReplyEnabled ?? organization.autoReplyEnabled;
+  const effectiveFollowUpsEnabled = messagingSettings?.followUpsEnabled ?? organization.followUpsEnabled;
+  const effectiveAutoBookingEnabled = messagingSettings?.autoBookingEnabled ?? organization.autoBookingEnabled;
+  const effectiveWorkingHoursStart = messagingSettings?.workingHoursStart || "09:00";
+  const effectiveWorkingHoursEnd = messagingSettings?.workingHoursEnd || "17:00";
+  const effectiveSlotDurationMinutes = messagingSettings?.slotDurationMinutes || organization.dashboardConfig?.defaultSlotMinutes || 60;
+  const effectiveBufferMinutes = messagingSettings?.bufferMinutes ?? 15;
+  const effectiveDaysAhead = messagingSettings?.daysAhead ?? 3;
+  const effectiveMessagingTimezone =
+    messagingSettings?.timezone || organization.dashboardConfig?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE;
+  const normalizedCustomTemplates = normalizeCustomTemplates(messagingSettings?.customTemplates);
+  const initialCustomTemplates: SmsVoiceCustomTemplates = {
+    greeting: normalizedCustomTemplates.greeting || "",
+    askAddress: normalizedCustomTemplates.askAddress || "",
+    askTimeframe: normalizedCustomTemplates.askTimeframe || "",
+    offerBooking: normalizedCustomTemplates.offerBooking || "",
+    bookingConfirmation: normalizedCustomTemplates.bookingConfirmation || "",
+    followUp1: normalizedCustomTemplates.followUp1 || "",
+    followUp2: normalizedCustomTemplates.followUp2 || "",
+    followUp3: normalizedCustomTemplates.followUp3 || "",
+  };
+  const previewLocale: ResolvedMessageLocale = organization.messageLanguage === "ES" ? "ES" : "EN";
+  const previewSlots = await buildSettingsPreviewSlots({
+    orgId: organization.id,
+    connected: googleConfigured,
+    slotDurationMinutes: effectiveSlotDurationMinutes,
+    daysAhead: effectiveDaysAhead,
+    timezone: ensureTimeZone(effectiveMessagingTimezone),
+  });
+  const logoUploadsReady = isR2Configured();
 
   const saved = getParam(searchParams?.saved) === "1";
   const error = getParam(searchParams?.error);
@@ -378,7 +638,29 @@ export default async function ClientSettingsPage({
             Configure Intake Templates
           </a>
         </article>
+
+        <article className="settings-integration-card">
+          <strong>Branding & Invoices</strong>
+          <p className="settings-integration-status">Logo and business details for invoice PDFs.</p>
+          <Link className="btn secondary" href={withOrgQuery("/app/settings/branding", scope.orgId, scope.internalUser)}>
+            Open Branding
+          </Link>
+        </article>
       </div>
+
+      <article className="settings-integration-card" style={{ marginTop: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <strong>Business Logo</strong>
+          <Link className="btn secondary" href={withOrgQuery("/app/settings/branding", scope.orgId, scope.internalUser)}>
+            Open Full Branding
+          </Link>
+        </div>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Upload your company logo here so invoices and PDF exports look official for your business.
+        </p>
+        {!logoUploadsReady ? <p className="form-status">Object storage is unavailable. Logo uploads will fall back to inline storage.</p> : null}
+        <OrgLogoUploader orgId={organization.id} />
+      </article>
 
       <form action={updateSettingsAction} className="auth-form" style={{ marginTop: 12 }}>
         <input type="hidden" name="orgId" value={organization.id} />
@@ -458,6 +740,27 @@ export default async function ClientSettingsPage({
                   <option value="auto">{t("settings.messageLanguage.auto")}</option>
                 </select>
               </label>
+
+              <SmsVoiceSection
+                businessName={organization.name}
+                locale={previewLocale}
+                canManage={canManageAutomationSettings}
+                initialTone={effectiveTone}
+                initialAutoReplyEnabled={effectiveAutoReplyEnabled}
+                initialFollowUpsEnabled={effectiveFollowUpsEnabled}
+                initialAutoBookingEnabled={effectiveAutoBookingEnabled}
+                initialGreetingLine={organization.smsGreetingLine || ""}
+                initialWorkingHoursText={organization.smsWorkingHoursText || ""}
+                initialWebsiteSignature={organization.smsWebsiteSignature || ""}
+                initialWorkingHoursStart={effectiveWorkingHoursStart}
+                initialWorkingHoursEnd={effectiveWorkingHoursEnd}
+                initialSlotDurationMinutes={effectiveSlotDurationMinutes}
+                initialBufferMinutes={effectiveBufferMinutes}
+                initialDaysAhead={effectiveDaysAhead}
+                initialTimeZone={ensureTimeZone(effectiveMessagingTimezone)}
+                initialCustomTemplates={initialCustomTemplates}
+                previewSlots={previewSlots}
+              />
 
               <label>
                 {t("settings.smsQuietStartLabel")}
@@ -579,115 +882,13 @@ export default async function ClientSettingsPage({
           <details id="settings-templates">
             <summary>{t("settings.sectionTemplates")}</summary>
             <div className="settings-accordion-body">
-              <label>
-                {t("settings.missedCallMessageEnLabel")}
-                <textarea
-                  name="missedCallAutoReplyBodyEn"
-                  rows={4}
-                  maxLength={1600}
-                  defaultValue={organization.missedCallAutoReplyBodyEn || organization.missedCallAutoReplyBody || ""}
-                  placeholder={t("settings.missedCallPlaceholderEn")}
-                />
-              </label>
-
-              <label>
-                {t("settings.missedCallMessageEsLabel")}
-                <textarea
-                  name="missedCallAutoReplyBodyEs"
-                  rows={4}
-                  maxLength={1600}
-                  defaultValue={organization.missedCallAutoReplyBodyEs || ""}
-                  placeholder={t("settings.missedCallPlaceholderEs")}
-                />
-              </label>
-
-              <label>
-                {t("settings.intakeAskLocationEnLabel")}
-                <textarea
-                  name="intakeAskLocationBodyEn"
-                  rows={2}
-                  maxLength={1600}
-                  defaultValue={organization.intakeAskLocationBodyEn || organization.intakeAskLocationBody || ""}
-                  placeholder={t("settings.intakeAskLocationPlaceholderEn")}
-                />
-              </label>
-
-              <label>
-                {t("settings.intakeAskLocationEsLabel")}
-                <textarea
-                  name="intakeAskLocationBodyEs"
-                  rows={2}
-                  maxLength={1600}
-                  defaultValue={organization.intakeAskLocationBodyEs || ""}
-                  placeholder={t("settings.intakeAskLocationPlaceholderEs")}
-                />
-              </label>
-
-              <label>
-                {t("settings.intakeAskWorkTypeEnLabel")}
-                <textarea
-                  name="intakeAskWorkTypeBodyEn"
-                  rows={2}
-                  maxLength={1600}
-                  defaultValue={organization.intakeAskWorkTypeBodyEn || organization.intakeAskWorkTypeBody || ""}
-                  placeholder={t("settings.intakeAskWorkTypePlaceholderEn")}
-                />
-              </label>
-
-              <label>
-                {t("settings.intakeAskWorkTypeEsLabel")}
-                <textarea
-                  name="intakeAskWorkTypeBodyEs"
-                  rows={2}
-                  maxLength={1600}
-                  defaultValue={organization.intakeAskWorkTypeBodyEs || ""}
-                  placeholder={t("settings.intakeAskWorkTypePlaceholderEs")}
-                />
-              </label>
-
-              <label>
-                {t("settings.intakeAskCallbackEnLabel")}
-                <textarea
-                  name="intakeAskCallbackBodyEn"
-                  rows={2}
-                  maxLength={1600}
-                  defaultValue={organization.intakeAskCallbackBodyEn || organization.intakeAskCallbackBody || ""}
-                  placeholder={t("settings.intakeAskCallbackPlaceholderEn")}
-                />
-              </label>
-
-              <label>
-                {t("settings.intakeAskCallbackEsLabel")}
-                <textarea
-                  name="intakeAskCallbackBodyEs"
-                  rows={2}
-                  maxLength={1600}
-                  defaultValue={organization.intakeAskCallbackBodyEs || ""}
-                  placeholder={t("settings.intakeAskCallbackPlaceholderEs")}
-                />
-              </label>
-
-              <label>
-                {t("settings.intakeCompletionEnLabel")}
-                <textarea
-                  name="intakeCompletionBodyEn"
-                  rows={2}
-                  maxLength={1600}
-                  defaultValue={organization.intakeCompletionBodyEn || organization.intakeCompletionBody || ""}
-                  placeholder={t("settings.intakeCompletionPlaceholderEn")}
-                />
-              </label>
-
-              <label>
-                {t("settings.intakeCompletionEsLabel")}
-                <textarea
-                  name="intakeCompletionBodyEs"
-                  rows={2}
-                  maxLength={1600}
-                  defaultValue={organization.intakeCompletionBodyEs || ""}
-                  placeholder={t("settings.intakeCompletionPlaceholderEs")}
-                />
-              </label>
+              <p className="muted">
+                SMS template packs and custom copy are now managed in <strong>Messaging → SMS Voice</strong> above.
+              </p>
+              <p className="muted">
+                Logic for STOP handling, stage transitions, follow-up cadence, and silent human takeover stays locked for
+                compliance and reliability.
+              </p>
             </div>
           </details>
 
@@ -721,6 +922,7 @@ export default async function ClientSettingsPage({
         {error === "invalid-message-language" ? (
           <p className="form-status">{t("settings.errors.invalidMessageLanguage")}</p>
         ) : null}
+        {error === "invalid-sms-tone" ? <p className="form-status">Invalid SMS voice selection.</p> : null}
         {error === "invalid-message" ? <p className="form-status">{t("settings.errors.invalidMessage")}</p> : null}
         {error === "invalid-reminder" ? (
           <p className="form-status">{t("settings.errors.invalidReminder")}</p>

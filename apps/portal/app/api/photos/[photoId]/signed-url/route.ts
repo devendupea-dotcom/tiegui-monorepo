@@ -7,7 +7,8 @@ import {
   assertOrgReadAccess,
   requireAppApiActor,
 } from "@/lib/app-api-permissions";
-import { requireR2 } from "@/lib/r2";
+import { getPhotoStorageRecord } from "@/lib/photo-storage";
+import { isR2Configured, requireR2 } from "@/lib/r2";
 import { checkSlidingWindowLimit } from "@/lib/rate-limit";
 import { upstashRedis } from "@/lib/upstash";
 
@@ -43,20 +44,21 @@ export async function GET(_req: Request, { params }: RouteContext) {
       }
     }
 
-    const photo = await prisma.photo.findUnique({
-      where: { id: params.photoId },
-      select: {
-        id: true,
-        orgId: true,
-        key: true,
-      },
-    });
+    const photo = await getPhotoStorageRecord({ photoId: params.photoId });
 
     if (!photo) {
       throw new AppApiError("Photo not found.", 404);
     }
 
     assertOrgReadAccess(actor, photo.orgId);
+
+    if (photo.imageDataUrl) {
+      return NextResponse.json({ ok: true, url: photo.imageDataUrl });
+    }
+
+    if (!isR2Configured()) {
+      return NextResponse.json({ ok: true, url: null });
+    }
 
     const { r2, bucket } = requireR2();
     const url = await getSignedUrl(

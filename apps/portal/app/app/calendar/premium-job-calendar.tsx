@@ -150,6 +150,7 @@ const GRID_END_MINUTE = 22 * 60;
 const SLOT_ROW_HEIGHT = 26;
 const NEXT_OPEN_DURATIONS: NextOpenDuration[] = [30, 60, 90];
 const NEXT_OPEN_LOOKAHEAD_OPTIONS = [3, 7, 14] as const;
+const SLOT_INTERVAL_OPTIONS = [15, 30, 60, 90] as const;
 
 function clampNextOpenDuration(value: number): NextOpenDuration {
   if (value <= 30) return 30;
@@ -307,6 +308,7 @@ export default function PremiumJobCalendar({
   const quickActionHandledRef = useRef<string | null>(null);
   const firstColumnWrapRef = useRef<HTMLDivElement | null>(null);
   const firstDayColumnRef = useRef<HTMLDivElement | null>(null);
+  const mobileDayPillRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [timeAxisOffset, setTimeAxisOffset] = useState(0);
 
   useEffect(() => {
@@ -396,62 +398,7 @@ export default function PremiumJobCalendar({
       const target = events.find((eventItem) => eventItem.id === activeResize.eventId);
       setResizeState(null);
       if (!target) return;
-      const canEdit = canEditEvent({
-        internalUser,
-        currentUserId,
-        currentUserRole: currentUserCalendarRole,
-        event: target,
-      });
-      if (!canEdit || !canWrite) {
-        return;
-      }
-
-      const nextEndAt = addMinutes(new Date(target.startAt), target.durationMinutes).toISOString();
-      setEvents((current) =>
-        current.map((item) =>
-          item.id === target.id
-            ? {
-                ...item,
-                endAt: nextEndAt,
-                localPending: true,
-              }
-            : item,
-        ),
-      );
-      const response = await fetch(`/api/calendar/events/${target.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          orgId,
-          endAt: nextEndAt,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; suggestedSlots?: string[]; event?: CalendarEvent }
-        | null;
-      if (response.status === 409 && payload?.suggestedSlots && payload.suggestedSlots.length > 0) {
-        setConflict({
-          eventId: target.id,
-          suggestedSlots: payload.suggestedSlots,
-          durationMinutes: target.durationMinutes,
-        });
-        setEvents((current) =>
-          current.map((item) => (item.id === target.id ? { ...item, localPending: false } : item)),
-        );
-        return;
-      }
-
-      if (!response.ok || !payload?.ok || !payload.event) {
-        setError(payload?.error || "Couldn't save - retry.");
-        setFailedMutation({
-          kind: "resize",
-          eventId: target.id,
-          endAt: nextEndAt,
-        });
-        return;
-      }
-
-      mergeEventFromServer(payload.event);
+      await saveResizedEvent(target, target.durationMinutes);
     }
 
     window.addEventListener("pointermove", onPointerMove);
@@ -469,6 +416,7 @@ export default function PremiumJobCalendar({
     internalUser,
     orgId,
     resizeState,
+    saveResizedEvent,
     slotMinutes,
   ]);
 
@@ -693,6 +641,16 @@ export default function PremiumJobCalendar({
   }, [mobileWeekDays, view]);
 
   useEffect(() => {
+    if (!isMobile || view !== "week") return;
+    const target = mobileDayPillRefs.current[mobileExpandedDayKey];
+    target?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [isMobile, mobileExpandedDayKey, view]);
+
+  useEffect(() => {
     if (view === "month" || selectedWorkerIds.length < 2) {
       setSplitByWorker(false);
     }
@@ -782,6 +740,70 @@ export default function PremiumJobCalendar({
       ),
     );
     setFailedMutation(null);
+  }
+
+  async function saveResizedEvent(target: CalendarEvent, requestedDuration: number) {
+    const canEdit = canEditEvent({
+      internalUser,
+      currentUserId,
+      currentUserRole: currentUserCalendarRole,
+      event: target,
+    });
+    if (!canEdit || !canWrite) return;
+
+    const nextDuration = Math.max(slotMinutes, requestedDuration);
+    if (nextDuration === target.durationMinutes && !target.localPending) {
+      return;
+    }
+
+    const nextEndAt = addMinutes(new Date(target.startAt), nextDuration).toISOString();
+    setEvents((current) =>
+      current.map((item) =>
+        item.id === target.id
+          ? {
+              ...item,
+              durationMinutes: nextDuration,
+              endAt: nextEndAt,
+              localPending: true,
+            }
+          : item,
+      ),
+    );
+
+    const response = await fetch(`/api/calendar/events/${target.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        orgId,
+        endAt: nextEndAt,
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; suggestedSlots?: string[]; event?: CalendarEvent }
+      | null;
+    if (response.status === 409 && payload?.suggestedSlots && payload.suggestedSlots.length > 0) {
+      setConflict({
+        eventId: target.id,
+        suggestedSlots: payload.suggestedSlots,
+        durationMinutes: nextDuration,
+      });
+      setEvents((current) =>
+        current.map((item) => (item.id === target.id ? { ...item, localPending: false } : item)),
+      );
+      return;
+    }
+
+    if (!response.ok || !payload?.ok || !payload.event) {
+      setError(payload?.error || "Couldn't save - retry.");
+      setFailedMutation({
+        kind: "resize",
+        eventId: target.id,
+        endAt: nextEndAt,
+      });
+      return;
+    }
+
+    mergeEventFromServer(payload.event);
   }
 
   async function submitEventForm(event: React.FormEvent<HTMLFormElement>) {
@@ -1155,7 +1177,7 @@ export default function PremiumJobCalendar({
         </div>
 
         <div className="jobcal-toolbar-controls">
-          <div className="jobcal-segment">
+          <div className="jobcal-segment" aria-label="Calendar view">
             {(["day", "week", "month"] as const).map((item) => (
               <button
                 key={item}
@@ -1187,25 +1209,45 @@ export default function PremiumJobCalendar({
             </button>
           </div>
 
-          <div className="jobcal-segment">
-            {[15, 30, 60, 90].map((interval) => (
-              <button
-                key={interval}
-                type="button"
-                className={`jobcal-segment-btn ${slotMinutes === interval ? "active" : ""}`}
-                onClick={() => setSlotMinutes(clampSlotMinutes(interval))}
+          {isMobile ? (
+            <label className="jobcal-toolbar-field">
+              <span>Spacing</span>
+              <select
+                aria-label="Calendar spacing"
+                value={slotMinutes}
+                onChange={(event) => setSlotMinutes(clampSlotMinutes(Number.parseInt(event.target.value, 10)))}
               >
-                {interval}m
-              </button>
-            ))}
-          </div>
+                {SLOT_INTERVAL_OPTIONS.map((interval) => (
+                  <option key={interval} value={interval}>
+                    {interval} minutes
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="jobcal-segment" aria-label="Calendar spacing">
+              {SLOT_INTERVAL_OPTIONS.map((interval) => (
+                <button
+                  key={interval}
+                  type="button"
+                  className={`jobcal-segment-btn ${slotMinutes === interval ? "active" : ""}`}
+                  onClick={() => setSlotMinutes(clampSlotMinutes(interval))}
+                >
+                  {interval}m
+                </button>
+              ))}
+            </div>
+          )}
 
-          <input
-            type="month"
-            value={monthPickerValue}
-            className="jobcal-month-picker"
-            onChange={(event) => onMonthPickerChange(event.target.value)}
-          />
+          <label className="jobcal-toolbar-field">
+            <span>Jump to month</span>
+            <input
+              type="month"
+              value={monthPickerValue}
+              className="jobcal-month-picker"
+              onChange={(event) => onMonthPickerChange(event.target.value)}
+            />
+          </label>
 
           <details className="jobcal-worker-filter">
             <summary>Workers ({selectedWorkerIds.length})</summary>
@@ -1367,6 +1409,9 @@ export default function PremiumJobCalendar({
                 <button
                   key={dayKey}
                   type="button"
+                  ref={(node) => {
+                    mobileDayPillRefs.current[dayKey] = node;
+                  }}
                   className={`jobcal-mobile-day-pill ${mobileExpandedDayKey === dayKey ? "active" : ""}`}
                   onClick={() => setMobileExpandedDayKey(dayKey)}
                 >
@@ -1808,10 +1853,10 @@ export default function PremiumJobCalendar({
                               </span>
                             </button>
                             {canEdit && canWrite ? (
-                              <span
-                                role="button"
-                                tabIndex={0}
+                              <button
+                                type="button"
                                 className="jobcal-resize-handle"
+                                aria-label={`Resize ${eventItem.customerName || eventItem.title}`}
                                 onPointerDown={(pointerEvent) => {
                                   pointerEvent.preventDefault();
                                   pointerEvent.stopPropagation();
@@ -1821,6 +1866,24 @@ export default function PremiumJobCalendar({
                                     startY: pointerEvent.clientY,
                                     initialDuration: eventItem.durationMinutes,
                                   });
+                                }}
+                                onKeyDown={(keyboardEvent) => {
+                                  let nextDuration: number | null = null;
+                                  if (
+                                    keyboardEvent.key === "Enter" ||
+                                    keyboardEvent.key === " " ||
+                                    keyboardEvent.key === "ArrowDown"
+                                  ) {
+                                    nextDuration = eventItem.durationMinutes + slotMinutes;
+                                  } else if (keyboardEvent.key === "ArrowUp") {
+                                    nextDuration = eventItem.durationMinutes - slotMinutes;
+                                  }
+
+                                  if (nextDuration === null) return;
+
+                                  keyboardEvent.preventDefault();
+                                  keyboardEvent.stopPropagation();
+                                  void saveResizedEvent(eventItem, nextDuration);
                                 }}
                               />
                             ) : null}

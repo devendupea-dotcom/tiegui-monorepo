@@ -1,50 +1,75 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { isInternalRole } from "@/lib/session";
 import { normalizeE164 } from "@/lib/phone";
 import { sendOutboundSms } from "@/lib/sms";
+import {
+  AppApiError,
+  assertCanMutateLeadJob,
+  assertOrgReadAccess,
+  canManageAnyOrgJobs,
+  requireAppApiActor,
+} from "@/lib/app-api-permissions";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type RouteContext = {
   params: { leadId: string };
 };
 
-// Twilio inbound webhook plan:
-// 1) Normalize inbound From number to E.164.
-// 2) Resolve orgId from the destination Twilio number.
-// 3) Find lead by { orgId, phoneE164: fromNumber }.
-// 4) If found, create INBOUND Message linked to that lead.
-// 5) If not found, create Lead first, then create linked Message.
-
-async function getScopedLeadOrResponse(leadId: string) {
-  const session = await getServerSession(authOptions);
-  const user = session?.user;
-  if (!user) {
-    return { response: NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 }) };
-  }
-
-  const lead = await prisma.lead.findUnique({
-    where: { id: leadId },
-    select: {
-      id: true,
-      orgId: true,
-      phoneE164: true,
-      status: true,
+async function assertWorkerCanViewLead(input: { actorId: string; orgId: string; leadId: string }) {
+  const allowed = await prisma.lead.findFirst({
+    where: {
+      id: input.leadId,
+      orgId: input.orgId,
+      OR: [
+        { assignedToUserId: input.actorId },
+        { createdByUserId: input.actorId },
+        { events: { some: { assignedToUserId: input.actorId } } },
+        { events: { some: { workerAssignments: { some: { workerUserId: input.actorId } } } } },
+      ],
     },
+    select: { id: true },
   });
 
-  if (!lead) {
-    return { response: NextResponse.json({ ok: false, error: "Lead not found" }, { status: 404 }) };
+  if (!allowed) {
+    throw new AppApiError("Workers can only access assigned jobs.", 403);
   }
+}
 
-  if (!isInternalRole(user.role)) {
-    if (!user.orgId || user.orgId !== lead.orgId) {
-      return { response: NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 }) };
+async function getScopedLeadOrResponse(leadId: string) {
+  try {
+    const actor = await requireAppApiActor();
+    const lead = await prisma.lead.findUnique({
+      where: { id: leadId },
+      select: {
+        id: true,
+        orgId: true,
+        phoneE164: true,
+        status: true,
+      },
+    });
+
+    if (!lead) {
+      return { response: NextResponse.json({ ok: false, error: "Lead not found" }, { status: 404 }) };
     }
-  }
 
-  return { lead, user };
+    assertOrgReadAccess(actor, lead.orgId);
+
+    if (!actor.internalUser && !canManageAnyOrgJobs(actor) && actor.calendarAccessRole === "WORKER") {
+      await assertWorkerCanViewLead({ actorId: actor.id, orgId: lead.orgId, leadId: lead.id });
+    }
+
+    return { lead, actor };
+  } catch (error) {
+    if (error instanceof AppApiError) {
+      return { response: NextResponse.json({ ok: false, error: error.message }, { status: error.status }) };
+    }
+
+    const message = error instanceof Error ? error.message : "Unauthorized";
+    return { response: NextResponse.json({ ok: false, error: message }, { status: 401 }) };
+  }
 }
 
 export async function GET(_req: Request, { params }: RouteContext) {
@@ -81,6 +106,8 @@ export async function POST(req: Request, { params }: RouteContext) {
     return scoped.response;
   }
 
+  await assertCanMutateLeadJob({ actor: scoped.actor, orgId: scoped.lead.orgId, leadId: scoped.lead.id });
+
   let body = "";
   let fromNumberE164: string | null = null;
   try {
@@ -89,8 +116,7 @@ export async function POST(req: Request, { params }: RouteContext) {
       fromNumberE164?: unknown;
     };
     body = typeof payload.body === "string" ? payload.body : "";
-    fromNumberE164 =
-      typeof payload.fromNumberE164 === "string" ? normalizeE164(payload.fromNumberE164) : null;
+    fromNumberE164 = typeof payload.fromNumberE164 === "string" ? normalizeE164(payload.fromNumberE164) : null;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
   }
@@ -142,6 +168,7 @@ export async function POST(req: Request, { params }: RouteContext) {
   }
 
   const now = new Date();
+  const pausedUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
   const providerResult = await sendOutboundSms({
     orgId: scoped.lead.orgId,
@@ -197,8 +224,50 @@ export async function POST(req: Request, { params }: RouteContext) {
       },
     });
 
+    await tx.leadConversationState.updateMany({
+      where: {
+        leadId: scoped.lead.id,
+        stage: {
+          in: ["NEW", "ASKED_WORK", "ASKED_ADDRESS", "ASKED_TIMEFRAME", "OFFERED_BOOKING", "HUMAN_TAKEOVER"],
+        },
+      },
+      data: {
+        stage: "HUMAN_TAKEOVER",
+        pausedUntil,
+        nextFollowUpAt: null,
+        followUpStep: 0,
+        bookingOptions: Prisma.DbNull,
+      },
+    });
+
+    await tx.leadConversationAuditEvent.create({
+      data: {
+        orgId: scoped.lead.orgId,
+        leadId: scoped.lead.id,
+        action: "TAKEOVER_TRIGGERED",
+        metadataJson: {
+          reason: "Manual outbound message",
+          actorUserId: scoped.actor.id || "unknown",
+          pausedUntil: pausedUntil.toISOString(),
+        },
+      },
+    });
+
+    await tx.smsDispatchQueue.updateMany({
+      where: {
+        orgId: scoped.lead.orgId,
+        leadId: scoped.lead.id,
+        status: "QUEUED",
+      },
+      data: {
+        status: "FAILED",
+        lastError: "Canceled after manual outbound message.",
+      },
+    });
+
     return message;
   });
 
   return NextResponse.json({ ok: true, message: created, notice: providerResult.notice });
 }
+

@@ -7,7 +7,8 @@ import {
   assertCanMutateLeadJob,
   requireAppApiActor,
 } from "@/lib/app-api-permissions";
-import { requireR2 } from "@/lib/r2";
+import { fileToDataUrl } from "@/lib/inline-images";
+import { isR2Configured, requireR2 } from "@/lib/r2";
 
 type RouteContext = {
   params: { jobId: string };
@@ -135,6 +136,39 @@ export async function POST(req: Request, { params }: RouteContext) {
     const ext = contentTypeToExt[file.type];
     if (!ext) {
       throw new AppApiError("Unsupported image type. Use JPEG, PNG, WebP, or HEIC.", 400);
+    }
+
+    if (!isR2Configured()) {
+      const created = await prisma.leadPhoto.create({
+        data: {
+          orgId: lead.orgId,
+          leadId: lead.id,
+          photoId: null,
+          createdByUserId: actor.id,
+          fileName: file.name?.slice(0, 255) || "job-photo",
+          mimeType: file.type,
+          imageDataUrl: await fileToDataUrl(file),
+          caption: captionRaw || null,
+        },
+        select: {
+          id: true,
+          leadId: true,
+          photoId: true,
+          fileName: true,
+          mimeType: true,
+          caption: true,
+          createdAt: true,
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      return NextResponse.json({ ok: true, photo: created });
     }
 
     const { r2, bucket } = requireR2();

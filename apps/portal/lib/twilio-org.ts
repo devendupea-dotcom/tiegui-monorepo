@@ -17,6 +17,7 @@ export type TwilioOrgRuntimeConfig = {
   twilioAuthToken: string;
   messagingServiceSid: string;
   phoneNumber: string;
+  voiceForwardingNumber: string | null;
   status: "PENDING_A2P" | "ACTIVE" | "PAUSED";
 };
 
@@ -84,6 +85,7 @@ export async function getTwilioOrgRuntimeConfigByOrgId(orgId: string): Promise<T
       twilioAuthTokenEncrypted: true,
       messagingServiceSid: true,
       phoneNumber: true,
+      voiceForwardingNumber: true,
       status: true,
     },
   });
@@ -99,6 +101,7 @@ export async function getTwilioOrgRuntimeConfigByOrgId(orgId: string): Promise<T
     twilioAuthToken: decryptTwilioAuthToken(config.twilioAuthTokenEncrypted),
     messagingServiceSid: config.messagingServiceSid,
     phoneNumber: config.phoneNumber,
+    voiceForwardingNumber: config.voiceForwardingNumber,
     status: config.status,
   };
 }
@@ -115,6 +118,7 @@ export async function getTwilioOrgRuntimeConfigByAccountSid(
       twilioAuthTokenEncrypted: true,
       messagingServiceSid: true,
       phoneNumber: true,
+      voiceForwardingNumber: true,
       status: true,
     },
   });
@@ -130,8 +134,60 @@ export async function getTwilioOrgRuntimeConfigByAccountSid(
     twilioAuthToken: decryptTwilioAuthToken(config.twilioAuthTokenEncrypted),
     messagingServiceSid: config.messagingServiceSid,
     phoneNumber: config.phoneNumber,
+    voiceForwardingNumber: config.voiceForwardingNumber,
     status: config.status,
   };
+}
+
+export async function resolveTwilioVoiceForwardingNumber(input: {
+  organizationId: string;
+  configuredNumber?: string | null;
+}): Promise<string | null> {
+  const configuredNumber = normalizeTwilioPhone(input.configuredNumber || "");
+  if (configuredNumber) {
+    return configuredNumber;
+  }
+
+  const candidates = await prisma.user.findMany({
+    where: {
+      orgId: input.organizationId,
+      phoneE164: { not: null },
+      calendarAccessRole: { in: ["OWNER", "ADMIN"] },
+    },
+    select: {
+      phoneE164: true,
+      calendarAccessRole: true,
+      createdAt: true,
+      id: true,
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+
+  const rank: Record<string, number> = {
+    OWNER: 0,
+    ADMIN: 1,
+  };
+
+  candidates.sort((left, right) => {
+    const rankDiff = (rank[left.calendarAccessRole] ?? 99) - (rank[right.calendarAccessRole] ?? 99);
+    if (rankDiff !== 0) {
+      return rankDiff;
+    }
+    const createdAtDiff = left.createdAt.getTime() - right.createdAt.getTime();
+    if (createdAtDiff !== 0) {
+      return createdAtDiff;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
+  for (const candidate of candidates) {
+    const normalizedPhone = normalizeTwilioPhone(candidate.phoneE164 || "");
+    if (normalizedPhone) {
+      return normalizedPhone;
+    }
+  }
+
+  return null;
 }
 
 export async function validateTwilioOrgConfig(input: ValidateConfigInput): Promise<ValidateConfigResult> {

@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import {
   ensureIntakeCallbackEvent,
-  sendMissedCallIntroAndStartFlow,
-  type IntakeOrganizationSettings,
 } from "@/lib/intake-automation";
+import {
+  processDueConversationalFollowUps,
+  queueConversationalIntroForQuietHours,
+  startConversationalSmsFromMissedCall,
+} from "@/lib/conversational-sms";
 import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { processDueSmsDispatchQueue } from "@/lib/sms-dispatch-queue";
+import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 
 export const dynamic = "force-dynamic";
 
@@ -47,19 +51,6 @@ function getBearerToken(headerValue: string | null): string | null {
   }
   const token = trimmed.slice(7).trim();
   return token || null;
-}
-
-function getOrganizationSettings(call: {
-  org: Omit<IntakeOrganizationSettings, "calendarTimezone"> & {
-    twilioConfig?: { phoneNumber: string } | null;
-    dashboardConfig?: { calendarTimezone: string } | null;
-  };
-}): IntakeOrganizationSettings {
-  return {
-    ...call.org,
-    smsFromNumberE164: call.org.smsFromNumberE164 || call.org.twilioConfig?.phoneNumber || null,
-    calendarTimezone: call.org.dashboardConfig?.calendarTimezone || "America/Los_Angeles",
-  };
 }
 
 function getCronSecret(req: Request): string | null {
@@ -117,6 +108,7 @@ export async function POST(req: Request) {
   const now = new Date();
   const since = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
   const queueDispatchResult = await processDueSmsDispatchQueue({ maxJobs: limit });
+  const conversationalFollowUps = await processDueConversationalFollowUps({ maxLeads: limit });
 
   const missedCalls = await prisma.call.findMany({
     where: {
@@ -205,11 +197,34 @@ export async function POST(req: Request) {
       continue;
     }
 
-    await sendMissedCallIntroAndStartFlow({
-      organization: getOrganizationSettings(call),
-      leadId: call.lead.id,
-      toNumberE164: call.lead.phoneE164,
+    const calendarTimezone = call.org.dashboardConfig?.calendarTimezone || "America/Los_Angeles";
+    const inAllowedWindow = isWithinSmsSendWindow({
+      at: now,
+      timeZone: calendarTimezone,
+      startMinute: call.org.smsQuietHoursStartMinute,
+      endMinute: call.org.smsQuietHoursEndMinute,
     });
+
+    if (inAllowedWindow) {
+      await startConversationalSmsFromMissedCall({
+        orgId: call.org.id,
+        leadId: call.lead.id,
+        toNumberE164: call.lead.phoneE164,
+      });
+    } else {
+      const sendAfterAt = nextSmsSendWindowStartUtc({
+        at: now,
+        timeZone: calendarTimezone,
+        startMinute: call.org.smsQuietHoursStartMinute,
+        endMinute: call.org.smsQuietHoursEndMinute,
+      });
+      await queueConversationalIntroForQuietHours({
+        orgId: call.org.id,
+        leadId: call.lead.id,
+        toNumberE164: call.lead.phoneE164,
+        sendAfterAt,
+      });
+    }
     introsSent += 1;
   }
 
@@ -262,5 +277,6 @@ export async function POST(req: Request) {
     callbackEventsCreated,
     callbackEventsSkipped,
     queuedSmsDispatch: queueDispatchResult,
+    conversationalFollowUps,
   });
 }

@@ -48,6 +48,7 @@ async function saveTwilioConfigAction(formData: FormData) {
   const messagingServiceSid = getString(formData.get("messagingServiceSid"));
   const authTokenRaw = getString(formData.get("twilioAuthToken"));
   const phoneNumberRaw = getString(formData.get("phoneNumber"));
+  const voiceForwardingNumberRaw = getString(formData.get("voiceForwardingNumber"));
   const status = parseStatus(getString(formData.get("status")));
 
   if (!twilioSubaccountSid.startsWith("AC")) {
@@ -63,6 +64,11 @@ async function saveTwilioConfigAction(formData: FormData) {
   const phoneNumber = normalizeE164(phoneNumberRaw);
   if (!phoneNumber) {
     redirect(statusUrl(orgId, { error: "Phone number must be valid E.164." }));
+  }
+
+  const voiceForwardingNumber = voiceForwardingNumberRaw ? normalizeE164(voiceForwardingNumberRaw) : null;
+  if (voiceForwardingNumberRaw && !voiceForwardingNumber) {
+    redirect(statusUrl(orgId, { error: "Forwarding number must be valid E.164." }));
   }
 
   const existing = await prisma.organizationTwilioConfig.findUnique({
@@ -109,6 +115,7 @@ async function saveTwilioConfigAction(formData: FormData) {
         twilioAuthTokenEncrypted: encryptedToken,
         messagingServiceSid,
         phoneNumber,
+        voiceForwardingNumber,
         status,
       },
       update: {
@@ -116,6 +123,7 @@ async function saveTwilioConfigAction(formData: FormData) {
         twilioAuthTokenEncrypted: encryptedToken,
         messagingServiceSid,
         phoneNumber,
+        voiceForwardingNumber,
         status,
       },
       select: {
@@ -142,6 +150,7 @@ async function saveTwilioConfigAction(formData: FormData) {
           twilioSubaccountSid,
           messagingServiceSid,
           phoneNumber,
+          voiceForwardingNumber,
           tokenUpdated: Boolean(authTokenRaw),
         },
       },
@@ -319,6 +328,7 @@ export default async function HqOrgTwilioPage({
           twilioAuthTokenEncrypted: true,
           messagingServiceSid: true,
           phoneNumber: true,
+          voiceForwardingNumber: true,
           status: true,
           updatedAt: true,
         },
@@ -409,6 +419,14 @@ export default async function HqOrgTwilioPage({
               />
             </label>
             <label>
+              Voice Forwarding Number (E.164)
+              <input
+                name="voiceForwardingNumber"
+                defaultValue={organization.twilioConfig?.voiceForwardingNumber || ""}
+                placeholder="+12065550199"
+              />
+            </label>
+            <label>
               Status
               <select name="status" defaultValue={organization.twilioConfig?.status || "PENDING_A2P"}>
                 {STATUS_OPTIONS.map((option) => (
@@ -428,6 +446,11 @@ export default async function HqOrgTwilioPage({
               />
             </label>
           </div>
+
+          <p className="muted" style={{ marginTop: 0 }}>
+            Calls to the Twilio line ring this number first. Leave it blank to fall back to the first owner or admin
+            phone on file.
+          </p>
 
           <div className="quick-links">
             <button type="submit" className="btn primary">

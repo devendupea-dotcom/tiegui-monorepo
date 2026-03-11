@@ -22,55 +22,26 @@ export default function JobPhotoUploader({ jobId }: JobPhotoUploaderProps) {
     setSuccess(null);
 
     try {
-      const signResponse = await fetch("/api/photos/sign-upload", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          leadId: jobId,
-          contentType: file.type,
-          sizeBytes: file.size,
-          originalName: file.name,
-        }),
-      });
-
-      const signed = (await signResponse.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            uploadUrl?: string;
-            photoId?: string;
-            error?: string;
-          }
-        | null;
-
-      if (!signResponse.ok || !signed?.ok || !signed.uploadUrl || !signed.photoId) {
-        throw new Error(signed?.error || "Couldn't start upload.");
+      const formData = new FormData();
+      formData.set("photoFile", file);
+      if (caption.trim()) {
+        formData.set("caption", caption.trim());
       }
 
-      const putResponse = await fetch(signed.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-
-      if (!putResponse.ok) {
-        throw new Error("Upload failed.");
-      }
-
-      const attachResponse = await fetch(`/api/jobs/${jobId}/photos`, {
+      const uploadResponse = await fetch(`/api/jobs/${jobId}/photos`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ photoId: signed.photoId, caption: caption.trim() || null }),
+        body: formData,
       });
 
-      const attached = (await attachResponse.json().catch(() => null)) as
+      const uploaded = (await uploadResponse.json().catch(() => null)) as
         | {
             ok?: boolean;
             error?: string;
           }
         | null;
 
-      if (!attachResponse.ok || !attached?.ok) {
-        throw new Error(attached?.error || "Couldn't attach photo to job.");
+      if (!uploadResponse.ok || !uploaded?.ok) {
+        throw new Error(uploaded?.error || "Couldn't upload photo.");
       }
 
       setCaption("");

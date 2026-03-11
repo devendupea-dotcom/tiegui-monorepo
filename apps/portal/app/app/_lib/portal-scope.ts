@@ -17,8 +17,11 @@ export function withOrgQuery(path: string, orgId: string, internalUser: boolean)
   if (!internalUser) {
     return path;
   }
-  const joiner = path.includes("?") ? "&" : "?";
-  return `${path}${joiner}orgId=${encodeURIComponent(orgId)}`;
+  const hashIndex = path.indexOf("#");
+  const basePath = hashIndex >= 0 ? path.slice(0, hashIndex) : path;
+  const hash = hashIndex >= 0 ? path.slice(hashIndex) : "";
+  const joiner = basePath.includes("?") ? "&" : "?";
+  return `${basePath}${joiner}orgId=${encodeURIComponent(orgId)}${hash}`;
 }
 
 export function isOpenJobStatus(status: string): boolean {

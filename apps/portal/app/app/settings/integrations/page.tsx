@@ -18,6 +18,7 @@ import {
   syncGoogleBusyBlocksForOrgUser,
 } from "@/lib/integrations/google-sync";
 import { runProviderImport } from "@/lib/integrations/import";
+import { getIntegrationProviderConfiguration } from "@/lib/integrations/provider-config";
 import { formatDateTime } from "@/lib/hq";
 import { getParam, requireAppOrgAccess, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
 
@@ -62,6 +63,132 @@ function summarizeStats(statsJson: unknown): string {
     `payments:${Number(stats.payments || 0)}`,
   ];
   return parts.join(" • ");
+}
+
+function formatIntegrationErrorMessage(error: string): string {
+  switch (error) {
+    case "jobber_not_configured":
+      return "Jobber isn't configured in this environment.";
+    case "qbo_not_configured":
+      return "QuickBooks Online isn't configured in this environment.";
+    case "google_not_configured":
+      return "Google Calendar isn't configured in this environment.";
+    default:
+      return error;
+  }
+}
+
+function isProviderConfigurationError(error: string): boolean {
+  return error === "jobber_not_configured" || error === "qbo_not_configured" || error === "google_not_configured";
+}
+
+function IntegrationConnectAction({
+  configured,
+  href,
+  className,
+  label,
+}: {
+  configured: boolean;
+  href: string;
+  className: string;
+  label: string;
+}) {
+  if (!configured) {
+    return (
+      <button className={className} type="button" disabled>
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <a className={className} href={href}>
+      {label}
+    </a>
+  );
+}
+
+type IntegrationHealthItem = {
+  label: string;
+  configured: boolean;
+  missingKeys: string[];
+};
+
+function formatConfigurationStatus(configured: boolean): string {
+  return configured ? "Configured ✅" : "Not configured ⚠️";
+}
+
+function IntegrationHealthPanel({
+  items,
+  showMissingKeys,
+}: {
+  items: IntegrationHealthItem[];
+  showMissingKeys: boolean;
+}) {
+  return (
+    <section className="card" id="integrations-health">
+      <h2>Integrations Health</h2>
+      <p className="muted">
+        Environment readiness for OAuth providers. Set any missing keys and redeploy to enable connections. This
+        shows key names only, never secret values.
+      </p>
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          marginTop: 12,
+        }}
+      >
+        {items.map((item) => (
+          <article
+            key={item.label}
+            style={{
+              border: "1px solid rgba(89,127,178,0.2)",
+              borderRadius: 14,
+              padding: 14,
+              background: "rgba(255,255,255,0.03)",
+            }}
+          >
+            <p style={{ margin: 0 }}>
+              <strong>{item.label}</strong>
+            </p>
+            <p className="muted" style={{ marginTop: 8 }}>
+              {formatConfigurationStatus(item.configured)}
+            </p>
+            {!item.configured && showMissingKeys && item.missingKeys.length > 0 ? (
+              <div style={{ marginTop: 10 }}>
+                <p className="muted" style={{ margin: 0 }}>
+                  Missing env keys:
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 8,
+                    marginTop: 8,
+                  }}
+                >
+                  {item.missingKeys.map((key) => (
+                    <code
+                      key={key}
+                      style={{
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        background: "rgba(89,127,178,0.12)",
+                      }}
+                    >
+                      {key}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 async function runImportAction(formData: FormData) {
@@ -308,6 +435,14 @@ export default async function IntegrationsSettingsPage({
   const saved = getParam(searchParams?.saved);
   const error = getParam(searchParams?.error);
   const sessionUser = await requireSessionUser("/app/settings/integrations");
+  const {
+    jobberConfigured,
+    qboConfigured,
+    googleConfigured,
+    jobberMissingKeys,
+    qboMissingKeys,
+    googleMissingKeys,
+  } = getIntegrationProviderConfiguration();
 
   const googleResult = sessionUser.id
     ? await fetchGoogleCalendarsForOrgUser({
@@ -328,7 +463,7 @@ export default async function IntegrationsSettingsPage({
         error: "Session user is missing id.",
       };
 
-  const [organization, accounts, runs] = await Promise.all([
+  const [organization, accounts, runs, currentUser] = await Promise.all([
     prisma.organization.findUnique({
       where: { id: scope.orgId },
       select: { id: true, name: true },
@@ -342,6 +477,12 @@ export default async function IntegrationsSettingsPage({
       orderBy: { startedAt: "desc" },
       take: 12,
     }),
+    sessionUser.id
+      ? prisma.user.findUnique({
+          where: { id: sessionUser.id },
+          select: { calendarAccessRole: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   if (!organization) {
@@ -356,6 +497,25 @@ export default async function IntegrationsSettingsPage({
   const googleBlockRules = googleAccount ? getGoogleAccountBlockRules(googleAccount) : {};
   const googleHasWriteScope = googleAccount ? hasWritePermissionFromScopes(googleAccount.scopes) : false;
   const googleLoadError = "error" in googleResult ? String(googleResult.error || "") : "";
+  const providerConfigurationError = error && isProviderConfigurationError(error) ? formatIntegrationErrorMessage(error) : null;
+  const canViewMissingKeyDetails = scope.internalUser || currentUser?.calendarAccessRole === "OWNER";
+  const healthItems: IntegrationHealthItem[] = [
+    {
+      label: "Jobber",
+      configured: jobberConfigured,
+      missingKeys: jobberMissingKeys,
+    },
+    {
+      label: "QuickBooks Online",
+      configured: qboConfigured,
+      missingKeys: qboMissingKeys,
+    },
+    {
+      label: "Google Calendar",
+      configured: googleConfigured,
+      missingKeys: googleMissingKeys,
+    },
+  ];
 
   return (
     <>
@@ -374,8 +534,21 @@ export default async function IntegrationsSettingsPage({
           </a>
         </div>
         {saved ? <p className="form-status">Saved: {saved}</p> : null}
-        {error ? <p className="form-status">Error: {error}</p> : null}
+        {error ? (
+          <p className="form-status">
+            {providerConfigurationError ? (
+              <>
+                {providerConfigurationError}{" "}
+                <a href="#integrations-health">View details</a>
+              </>
+            ) : (
+              <>Error: {formatIntegrationErrorMessage(error)}</>
+            )}
+          </p>
+        ) : null}
       </section>
+
+      <IntegrationHealthPanel items={healthItems} showMissingKeys={canViewMissingKeyDetails} />
 
       <section className="grid">
         <article className="card">
@@ -389,10 +562,14 @@ export default async function IntegrationsSettingsPage({
           <p className="muted">Connected at: {jobber ? formatDateTime(jobber.connectedAt) : "-"}</p>
           <p className="muted">Last sync: {jobber?.lastSyncedAt ? formatDateTime(jobber.lastSyncedAt) : "-"}</p>
           <p className="muted">Scopes: {jobber?.scopes.join(", ") || "-"}</p>
+          {!jobberConfigured ? <p className="form-status">Not configured. See status above.</p> : null}
           <div className="quick-links" style={{ marginTop: 10 }}>
-            <a className="btn primary" href={withOrgQuery("/api/integrations/jobber/connect", scope.orgId, scope.internalUser)}>
-              {jobber ? "Reconnect Jobber" : "Connect Jobber"}
-            </a>
+            <IntegrationConnectAction
+              configured={jobberConfigured}
+              className="btn primary"
+              href={withOrgQuery("/api/integrations/jobber/connect", scope.orgId, scope.internalUser)}
+              label={jobber ? "Reconnect Jobber" : "Connect Jobber"}
+            />
             {jobber ? (
               <form action={disconnectAction}>
                 <input type="hidden" name="orgId" value={scope.orgId} />
@@ -429,10 +606,14 @@ export default async function IntegrationsSettingsPage({
           <p className="muted">Connected at: {qbo ? formatDateTime(qbo.connectedAt) : "-"}</p>
           <p className="muted">Last sync: {qbo?.lastSyncedAt ? formatDateTime(qbo.lastSyncedAt) : "-"}</p>
           <p className="muted">Realm ID: {qbo?.realmId || "-"}</p>
+          {!qboConfigured ? <p className="form-status">Not configured. See status above.</p> : null}
           <div className="quick-links" style={{ marginTop: 10 }}>
-            <a className="btn primary" href={withOrgQuery("/api/integrations/qbo/connect", scope.orgId, scope.internalUser)}>
-              {qbo ? "Reconnect QBO" : "Connect QuickBooks"}
-            </a>
+            <IntegrationConnectAction
+              configured={qboConfigured}
+              className="btn primary"
+              href={withOrgQuery("/api/integrations/qbo/connect", scope.orgId, scope.internalUser)}
+              label={qbo ? "Reconnect QBO" : "Connect QuickBooks"}
+            />
             {qbo ? (
               <form action={disconnectAction}>
                 <input type="hidden" name="orgId" value={scope.orgId} />
@@ -471,20 +652,21 @@ export default async function IntegrationsSettingsPage({
           <p className="muted">Last sync: {googleAccount?.lastSyncAt ? formatDateTime(googleAccount.lastSyncAt) : "-"}</p>
           <p className="muted">Scopes: {googleAccount?.scopes.join(", ") || "-"}</p>
           <p className="muted">Sync error: {googleAccount?.syncError || googleLoadError || "-"}</p>
+          {!googleConfigured ? <p className="form-status">Not configured. See status above.</p> : null}
 
           <div className="quick-links" style={{ marginTop: 10 }}>
-            <a
+            <IntegrationConnectAction
+              configured={googleConfigured}
               className="btn primary"
               href={withOrgQuery("/api/integrations/google/connect?mode=read", scope.orgId, scope.internalUser)}
-            >
-              {googleAccount ? "Reconnect (Read)" : "Connect Google (Read)"}
-            </a>
-            <a
+              label={googleAccount ? "Reconnect (Read)" : "Connect Google (Read)"}
+            />
+            <IntegrationConnectAction
+              configured={googleConfigured}
               className="btn secondary"
               href={withOrgQuery("/api/integrations/google/connect?mode=write", scope.orgId, scope.internalUser)}
-            >
-              {googleHasWriteScope ? "Reconnect (Read + Write)" : "Connect with Write Access"}
-            </a>
+              label={googleHasWriteScope ? "Reconnect (Read + Write)" : "Connect with Write Access"}
+            />
             {googleAccount ? (
               <form action={disconnectGoogleAction}>
                 <input type="hidden" name="orgId" value={scope.orgId} />

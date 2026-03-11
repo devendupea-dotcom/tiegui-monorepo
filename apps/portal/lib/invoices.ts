@@ -1,7 +1,8 @@
-import { Prisma, type BillingInvoiceStatus } from "@prisma/client";
+import { Prisma, type BillingInvoiceStatus, type InvoiceTerms } from "@prisma/client";
 
 const ZERO = new Prisma.Decimal(0);
 const ONE_HUNDRED = new Prisma.Decimal(100);
+export const DEFAULT_INVOICE_TERMS: InvoiceTerms = "DUE_ON_RECEIPT";
 
 export const billingInvoiceStatusOptions: BillingInvoiceStatus[] = [
   "DRAFT",
@@ -12,6 +13,11 @@ export const billingInvoiceStatusOptions: BillingInvoiceStatus[] = [
 ];
 
 export const invoicePaymentMethodOptions = ["CASH", "CHECK", "CARD", "TRANSFER", "OTHER"] as const;
+export const invoiceTermsOptions: InvoiceTerms[] = [DEFAULT_INVOICE_TERMS, "NET_7", "NET_15", "NET_30"];
+
+export function normalizeInvoiceTerms(value: unknown): InvoiceTerms {
+  return invoiceTermsOptions.includes(value as InvoiceTerms) ? (value as InvoiceTerms) : DEFAULT_INVOICE_TERMS;
+}
 
 export function toMoneyDecimal(value: Prisma.Decimal | number | string | null | undefined): Prisma.Decimal {
   if (value === null || value === undefined || value === "") {
@@ -101,24 +107,72 @@ export function formatCurrency(value: Prisma.Decimal | number | string | null | 
   }).format(amount);
 }
 
-export function formatInvoiceNumber(invoiceNumber: number): string {
-  return `INV-${String(invoiceNumber).padStart(5, "0")}`;
+export function formatInvoiceNumber(invoiceNumber: string): string {
+  return String(invoiceNumber || "").trim();
 }
 
-export async function reserveNextInvoiceNumber(tx: Prisma.TransactionClient, orgId: string): Promise<number> {
-  const updatedOrg = await tx.organization.update({
-    where: { id: orgId },
-    data: {
-      invoiceSequence: {
-        increment: 1,
-      },
-    },
-    select: {
-      invoiceSequence: true,
-    },
-  });
+export function computeInvoiceDueDate(issueDate: Date, terms: InvoiceTerms): Date {
+  const normalized = new Date(issueDate);
+  const addDays = (days: number) => new Date(normalized.getTime() + days * 24 * 60 * 60 * 1000);
 
-  return updatedOrg.invoiceSequence;
+  switch (terms) {
+    case "NET_7":
+      return addDays(7);
+    case "NET_15":
+      return addDays(15);
+    case "NET_30":
+      return addDays(30);
+    case "DUE_ON_RECEIPT":
+    default:
+      return normalized;
+  }
+}
+
+function buildInvoiceNumberCode(prefix: string, issueDate: Date, sequence: number): string {
+  const year = issueDate.getUTCFullYear();
+  return `${prefix}-${year}-${String(sequence).padStart(4, "0")}`;
+}
+
+export async function reserveNextInvoiceNumber(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  issueDate = new Date(),
+): Promise<string> {
+  // Uses optimistic concurrency to avoid duplicate invoice numbers without relying on DB locks.
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const org = await tx.organization.findUnique({
+      where: { id: orgId },
+      select: {
+        invoicePrefix: true,
+        invoiceNextNumber: true,
+      },
+    });
+
+    if (!org) {
+      throw new Error("Organization not found.");
+    }
+
+    const prefix = (org.invoicePrefix || "INV").trim() || "INV";
+    const reserved = org.invoiceNextNumber;
+
+    const updated = await tx.organization.updateMany({
+      where: {
+        id: orgId,
+        invoiceNextNumber: reserved,
+      },
+      data: {
+        invoiceNextNumber: {
+          increment: 1,
+        },
+      },
+    });
+
+    if (updated.count === 1) {
+      return buildInvoiceNumberCode(prefix, issueDate, reserved);
+    }
+  }
+
+  throw new Error("Failed to reserve invoice number. Try again.");
 }
 
 export async function recomputeInvoiceTotals(tx: Prisma.TransactionClient, invoiceId: string) {
@@ -215,116 +269,4 @@ export async function recomputeInvoiceTotals(tx: Prisma.TransactionClient, invoi
   });
 }
 
-function escapePdfText(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-}
-
-function createSimplePdf(lines: string[]): Buffer {
-  const safeLines = lines.map((line) => line.slice(0, 120));
-  const contentParts: string[] = ["BT", "/F1 11 Tf", "50 760 Td", "14 TL"];
-
-  for (let index = 0; index < safeLines.length; index += 1) {
-    const escaped = escapePdfText(safeLines[index] || "");
-    if (index === 0) {
-      contentParts.push(`(${escaped}) Tj`);
-    } else {
-      contentParts.push("T*");
-      contentParts.push(`(${escaped}) Tj`);
-    }
-  }
-
-  contentParts.push("ET");
-  const content = `${contentParts.join("\n")}\n`;
-  const contentLength = Buffer.byteLength(content, "utf8");
-
-  const objects = [
-    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
-    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
-    `4 0 obj\n<< /Length ${contentLength} >>\nstream\n${content}endstream\nendobj\n`,
-    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
-  ];
-
-  let pdf = "%PDF-1.4\n";
-  const offsets: number[] = [0];
-  for (const object of objects) {
-    offsets.push(Buffer.byteLength(pdf, "utf8"));
-    pdf += object;
-  }
-
-  const xrefOffset = Buffer.byteLength(pdf, "utf8");
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += "0000000000 65535 f \n";
-  for (let index = 1; index <= objects.length; index += 1) {
-    pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-  return Buffer.from(pdf, "utf8");
-}
-
-export function buildInvoicePdfDocument(input: {
-  invoiceNumber: number;
-  status: BillingInvoiceStatus;
-  issueDate: Date;
-  dueDate: Date;
-  orgName: string;
-  customerName: string;
-  customerPhone?: string | null;
-  customerEmail?: string | null;
-  customerAddress?: string | null;
-  jobLabel?: string | null;
-  lineItems: Array<{ description: string; quantity: Prisma.Decimal; unitPrice: Prisma.Decimal; lineTotal: Prisma.Decimal }>;
-  subtotal: Prisma.Decimal;
-  taxRate: Prisma.Decimal;
-  taxAmount: Prisma.Decimal;
-  total: Prisma.Decimal;
-  amountPaid: Prisma.Decimal;
-  balanceDue: Prisma.Decimal;
-  notes?: string | null;
-}) {
-  const dateFormat = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-
-  const lines: string[] = [
-    `${input.orgName} - Invoice ${formatInvoiceNumber(input.invoiceNumber)}`,
-    `Status: ${input.status}`,
-    `Issue Date: ${dateFormat.format(input.issueDate)}    Due Date: ${dateFormat.format(input.dueDate)}`,
-    "",
-    `Bill To: ${input.customerName}`,
-    input.customerPhone ? `Phone: ${input.customerPhone}` : "",
-    input.customerEmail ? `Email: ${input.customerEmail}` : "",
-    input.customerAddress ? `Address: ${input.customerAddress}` : "",
-    input.jobLabel ? `Job: ${input.jobLabel}` : "",
-    "",
-    "Line Items",
-    "Description | Qty | Unit Price | Line Total",
-    "------------------------------------------------------------",
-    ...input.lineItems.map(
-      (item) =>
-        `${item.description} | ${item.quantity.toString()} | ${formatCurrency(item.unitPrice)} | ${formatCurrency(item.lineTotal)}`,
-    ),
-    "",
-    `Subtotal: ${formatCurrency(input.subtotal)}`,
-    `Tax (${taxRateToPercent(input.taxRate)}%): ${formatCurrency(input.taxAmount)}`,
-    `Total: ${formatCurrency(input.total)}`,
-    `Amount Paid: ${formatCurrency(input.amountPaid)}`,
-    `Balance Due: ${formatCurrency(input.balanceDue)}`,
-  ];
-
-  if (input.notes?.trim()) {
-    lines.push("", "Notes:");
-    for (const line of input.notes.split("\n")) {
-      lines.push(line.trim());
-    }
-  }
-
-  if (lines.length > 52) {
-    lines.splice(52, lines.length - 52, "... (truncated for PDF page limit)");
-  }
-
-  return createSimplePdf(lines.filter(Boolean));
-}
+// PDF generation moved to server-only module: lib/invoice-pdf.tsx

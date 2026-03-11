@@ -197,6 +197,7 @@ export async function processDueSmsDispatchQueue(input?: {
       fromNumberE164: job.fromNumberE164,
       toNumberE164: job.toNumberE164,
       body: job.body,
+      allowPendingA2P: job.kind === "MISSED_CALL_INTRO",
     });
 
     if (providerResult.status === "QUEUED" && !providerResult.providerMessageSid) {

@@ -50,13 +50,14 @@ Behavior:
 Twilio webhook URLs:
 
 - Inbound SMS: `/api/webhooks/twilio/sms` (aliases: `/api/twilio/sms`, `/api/twilio/sms/inbound`)
-- Voice status callbacks: `/api/webhooks/twilio/voice` (aliases: `/api/twilio/voice`, `/api/twilio/voice/status`)
+- Inbound voice: `/api/webhooks/twilio/voice` (alias: `/api/twilio/voice`)
+- Voice dial status callback: `/api/webhooks/twilio/after-call` (aliases: `/api/webhooks/twilio/voice/after-dial`, `/api/twilio/voice/status`)
 - Intake backfill cron: `POST /api/cron/intake`
 
 Per-client setup is in HQ:
 
 - Go to `/hq/orgs/:orgId/twilio`
-- Enter `Subaccount SID`, `Auth Token`, `Messaging Service SID`, `Phone Number`, and `Status`
+- Enter `Subaccount SID`, `Auth Token`, `Messaging Service SID`, `Phone Number`, optional `Voice Forwarding Number`, and `Status`
 - Click `Validate` to verify messaging service + sender assignment
 - Click `Send Test SMS` to confirm outbound routing
 
@@ -78,7 +79,8 @@ Local testing notes:
 
 1. Set `TWILIO_VALIDATE_SIGNATURE=false` for local webhook testing.
 2. Run portal and post form-data test payloads:
-   - `curl -X POST http://localhost:3001/api/webhooks/twilio/voice -d "AccountSid=ACsubaccount123&CallSid=CA123&From=+12065550199&To=+12065550100&Direction=inbound&CallStatus=no-answer"`
+   - `curl -X POST http://localhost:3001/api/webhooks/twilio/voice -d "AccountSid=ACsubaccount123&CallSid=CA123&From=+12065550199&To=+12065550100&Direction=inbound&CallStatus=ringing"`
+   - `curl -X POST http://localhost:3001/api/webhooks/twilio/after-call -d "AccountSid=ACsubaccount123&CallSid=CA123&From=+12065550199&To=+12065550100&Direction=inbound&DialCallStatus=no-answer&CallStatus=completed"`
    - `curl -X POST http://localhost:3001/api/webhooks/twilio/sms -d "AccountSid=ACsubaccount123&MessageSid=SM123&From=+12065550199&To=+12065550100&Body=STOP"`
 3. Trigger cron intake manually:
    - `curl -X POST http://localhost:3001/api/cron/intake -H "Authorization: Bearer $CRON_SECRET"`
@@ -107,12 +109,13 @@ Use this checklist every time portal Twilio routing or mobile shell changes are 
    - legacy link `/hq/businesses/<orgId>/twilio` redirects to `/hq/orgs/<orgId>/twilio`
 5. Validate Velocity organization setup:
    - Open `/hq/orgs/1b328092-64d8-4b38-9ce2-25c39d8edf34/twilio`
-   - Save Subaccount SID/Auth Token/Messaging Service/Phone/Status
+   - Save Subaccount SID/Auth Token/Messaging Service/Phone/Voice Forwarding Number/Status
    - Click `Validate`
    - Click `Send Test SMS`
 6. Validate inbound/outbound messaging:
    - post Twilio SMS webhook payload to `/api/webhooks/twilio/sms` and expect `200`
-   - post Twilio voice status webhook payload to `/api/webhooks/twilio/voice` and expect `200`
+   - post Twilio inbound voice webhook payload to `/api/webhooks/twilio/voice` and expect TwiML with `<Dial>`
+   - post Twilio voice dial status payload to `/api/webhooks/twilio/after-call` and expect `200`
    - confirm lead/message/call records land in the correct org
 7. Validate mobile app packaging:
    - `cd apps/mobile`

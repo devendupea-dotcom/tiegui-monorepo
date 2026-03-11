@@ -291,6 +291,7 @@ export default function QuickAddLeadButton({
     const hasPossibleMatch = possibleMatches.length > 0;
     const explicitForceCreate = forceCreateDuplicate || options?.ignorePossibleMatch === true;
     if (hasPossibleMatch && explicitForceCreate && !confirmDuplicateCreate) {
+      setAdvancedForceCreateOpen(true);
       setError("Confirm duplicate creation before saving.");
       return;
     }
@@ -384,8 +385,6 @@ export default function QuickAddLeadButton({
   if (!canOpen) {
     return null;
   }
-
-  const duplicateConfirmationRequired = possibleMatches.length > 0 && forceCreateDuplicate && !confirmDuplicateCreate;
 
   return (
     <>
@@ -594,13 +593,13 @@ export default function QuickAddLeadButton({
                   <button type="button" className="btn secondary" onClick={closeModal} disabled={submitting}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn secondary" disabled={submitting || duplicateConfirmationRequired}>
+                  <button type="submit" className="btn secondary" disabled={submitting}>
                     {submitting ? "Saving..." : "Save Lead"}
                   </button>
                   <button
                     type="button"
                     className="btn primary"
-                    disabled={submitting || duplicateConfirmationRequired}
+                    disabled={submitting}
                     onClick={() => void submitLead("schedule")}
                   >
                     {submitting ? "Saving..." : "Save + Schedule"}
