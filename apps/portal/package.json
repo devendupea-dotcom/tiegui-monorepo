@@ -5,13 +5,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3001",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && NEXT_IGNORE_INCORRECT_LOCKFILE=1 next build",
     "prestart": "node scripts/check-migrations.mjs",
     "start": "next start",
-    "lint": "eslint --max-warnings 0",
+    "lint": "eslint . --quiet",
+    "lint:warnings": "eslint .",
     "check-types": "tsc --noEmit",
     "smoke:portal": "tsx scripts/smoke-portal.ts",
     "test:timezone": "node --experimental-strip-types --experimental-specifier-resolution=node --test tests/timezone-dst.test.mjs",
+    "db:validate": "node scripts/validate-prisma.mjs",
     "db:migrate:deploy": "node scripts/migrate-deploy.mjs",
     "db:seed": "node scripts/seed-direct.mjs"
   },

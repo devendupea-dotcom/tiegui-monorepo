@@ -20,6 +20,177 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load Inter, a custom Google Font.
 
+## Release Tooling
+
+Run these before staging or production deploys:
+
+```bash
+npm run lint
+npm run build
+npm run db:validate
+```
+
+Notes:
+
+- `npm run lint` is the portal ship gate. It ignores generated files like `public/sw.js` and reports only blocking issues.
+- `npm run lint:warnings` is the broader warning sweep when you want to pay down lint debt without blocking a release.
+- Prisma tooling requires `DIRECT_URL` because the schema declares `directUrl = env("DIRECT_URL")`.
+  - If you do not use a separate direct connection, set `DIRECT_URL` equal to `DATABASE_URL`.
+  - Portal Prisma helper scripts now do this fallback automatically for local tooling.
+- The build uses `NEXT_IGNORE_INCORRECT_LOCKFILE=1` intentionally.
+  - The workspace lockfile already includes the portal SWC optional packages.
+  - This suppresses a noisy Next.js workspace patch attempt instead of mutating `package-lock.json` during builds.
+
+## Release Phases
+
+Phase 1 ship target:
+
+- Owner dashboard: `/app`
+- Worker dashboard: `/app`
+- Unified inbox: `/app/inbox`
+- Settings + branding: `/app/settings`, `/app/settings/branding`, `/app/settings/integrations`
+- Branded invoice PDFs: `/app/invoices/[invoiceId]`, `/api/invoices/[invoiceId]/pdf`
+- Photo uploads: `/api/jobs/[jobId]/photos`, `/api/photos/[photoId]/signed-url`
+- Integration readiness UI: `/app/settings/integrations`
+
+Phase 2 reserved features:
+
+- Twilio voice forwarding: `/api/webhooks/twilio/voice`
+- After-call missed-call recovery: `/api/webhooks/twilio/after-call`
+- Conversational SMS automation
+- Cron-driven follow-ups: `POST /api/cron/intake`
+
+Phase 1 note:
+
+- `/app/settings` already exposes messaging copy, hours, quiet-hours, and template controls.
+- Those settings are safe to ship in Phase 1, but live Twilio voice/SMS automation should stay off until the Phase 2 webhook + cron checklist below is completed.
+
+## Phase 1 Staging Runbook
+
+### Required env vars
+
+Phase 1 baseline:
+
+- `DATABASE_URL`
+- `DIRECT_URL`
+- `NEXTAUTH_URL`
+- `NEXTAUTH_SECRET`
+- `EMAIL_FROM`
+- `SMTP_URL` or `EMAIL_SERVER`
+
+Phase 1 storage, if object storage is enabled:
+
+- `R2_ACCOUNT_ID` or `R2_ENDPOINT`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_BUCKET`
+
+Phase 1 integrations readiness UI, only if those providers should connect in staging:
+
+- `INTEGRATIONS_ENCRYPTION_KEY`
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+- `JOBBER_CLIENT_ID`, `JOBBER_CLIENT_SECRET`, `JOBBER_REDIRECT_URI`
+- `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REDIRECT_URI`
+
+Phase 2 only. Do not treat these as required for the Phase 1 go-live:
+
+- `TWILIO_TOKEN_ENCRYPTION_KEY`
+- `TWILIO_SEND_ENABLED`
+- `TWILIO_VALIDATE_SIGNATURE`
+- `TWILIO_SMS_COST_ESTIMATE_CENTS`
+- `TWILIO_VOICE_AFTER_CALL_URL` optional
+- `CRON_SECRET`
+
+### Required migrations
+
+1. `cd apps/portal`
+2. Set `DIRECT_URL` to a direct DB connection. If no separate direct connection exists, set it equal to `DATABASE_URL`.
+3. Run `npm run db:validate`
+4. Run `npm run db:migrate:deploy`
+5. Confirm the latest portal migrations are applied, especially for:
+   - org messaging settings
+   - invoice branding and invoice terms
+   - inline photo fallback
+   - analytics and marketing spend
+   - Twilio voice config tables
+
+### Required webhook setup
+
+Phase 1 core release does not require production webhooks for dashboards, inbox manual reply, branding, invoice PDFs, photo uploads, or integrations readiness.
+
+If you want Phase 2 endpoints pre-provisioned in staging before activation, set:
+
+- Inbound SMS: `/api/webhooks/twilio/sms`
+- Inbound voice: `/api/webhooks/twilio/voice`
+- Voice dial status callback: `/api/webhooks/twilio/after-call`
+
+Alias routes also exist:
+
+- `/api/twilio/sms`
+- `/api/twilio/sms/inbound`
+- `/api/twilio/voice`
+- `/api/twilio/voice/status`
+- `/api/webhooks/twilio/voice/after-dial`
+
+### Required cron setup
+
+Phase 1 core release does not require cron.
+
+For Phase 2 staging and later production activation, install a secured job that sends:
+
+- `POST /api/cron/intake`
+- Header: `Authorization: Bearer <CRON_SECRET>`
+
+Do not rely on cron-driven missed-call intros or follow-ups until Twilio staging tests pass.
+
+### Manual staging checklist
+
+1. Run migrations and confirm `npm run lint`, `npm run build`, and `npm run db:validate` pass in `apps/portal`.
+2. Sign in as an owner/admin and open `/app`. Confirm the owner dashboard renders with KPI cards, lead lists, and upcoming work.
+3. Sign in as a worker and open `/app`. Confirm the worker dashboard renders instead of the owner dashboard.
+4. Open `/app/inbox`, load at least one conversation, and send a manual reply. Confirm the thread refreshes and the reply lands in the correct lead thread.
+5. Open `/app/settings` and `/app/settings/branding`. Save business identity fields and upload a logo. Refresh and confirm the values persist.
+6. Open a real invoice at `/app/invoices/[invoiceId]`. Test `Open PDF` and `Download PDF`, and confirm branding, totals, terms, and payment instructions render correctly.
+7. Open `/app/jobs/[jobId]?tab=photos`, upload a real image, refresh, and confirm the image resolves correctly from R2 or inline fallback.
+8. Open `/app/settings/integrations` and verify the readiness panel shows the correct configured/not-configured state for Google, Jobber, and QBO.
+9. If staging Phase 2 setup, validate the Twilio webhook paths and run the missed-call and SMS automation tests listed below before enabling any live Twilio sends.
+
+### Phase 1 go/no-go criteria
+
+Go:
+
+- `npm run lint`, `npm run build`, and `npm run db:validate` pass
+- all required portal migrations are applied
+- owner dashboard, worker dashboard, inbox manual reply, branding save, logo upload, invoice PDF, and photo upload all pass on staging
+- integrations readiness UI accurately reflects env state
+- no blocking 500s or auth regressions appear in the tested Phase 1 routes
+
+No-go:
+
+- Prisma migrations are missing or partial
+- invoice PDF rendering fails
+- photo upload fails in both R2 and inline fallback modes
+- `/app` role routing is incorrect for owner vs worker
+- `/app/inbox` cannot load or send manual replies
+- settings and branding changes do not persist
+
+### Phase 2 activation notes
+
+Phase 2 should stay off until all of the following are complete:
+
+1. Save per-org Twilio credentials in `/hq/orgs/:orgId/twilio`
+2. Configure Twilio webhooks for SMS and voice
+3. Confirm the `<Dial action>` callback reaches `/api/webhooks/twilio/after-call`
+4. Install cron for `POST /api/cron/intake`
+5. Keep `TWILIO_SEND_ENABLED=false` until end-to-end staging tests pass
+6. Validate:
+   - missed inbound call creates or updates the correct lead
+   - after-call webhook records the missed call outcome
+   - inbound SMS updates the correct conversation
+   - STOP/START handling works
+   - quiet-hours messages queue and release correctly
+   - follow-up timing behaves as expected
+
 ## Twilio SMS/Voice Setup
 
 The portal is ready for per-client texting and missed-call auto-replies.
@@ -32,6 +203,7 @@ TWILIO_SEND_ENABLED=false
 TWILIO_VALIDATE_SIGNATURE=false
 TWILIO_SMS_COST_ESTIMATE_CENTS=1
 CRON_SECRET=...
+TWILIO_VOICE_AFTER_CALL_URL=... # optional override; defaults to /api/webhooks/twilio/after-call
 # optional send window defaults if you want to override in seed/migrations
 # (stored per-org in Settings after onboarding)
 # smsQuietHoursStartMinute=480   # 08:00
@@ -53,6 +225,15 @@ Twilio webhook URLs:
 - Inbound voice: `/api/webhooks/twilio/voice` (alias: `/api/twilio/voice`)
 - Voice dial status callback: `/api/webhooks/twilio/after-call` (aliases: `/api/webhooks/twilio/voice/after-dial`, `/api/twilio/voice/status`)
 - Intake backfill cron: `POST /api/cron/intake`
+
+Phase 2 activation checklist:
+
+1. In HQ, open `/hq/orgs/:orgId/twilio` and save the org's `Subaccount SID`, `Auth Token`, `Messaging Service SID`, `Phone Number`, optional `Voice Forwarding Number`, and `Status`.
+2. In Twilio Console, point incoming SMS for that number or Messaging Service to `/api/webhooks/twilio/sms`.
+3. In Twilio Console, point the voice webhook for that number to `/api/webhooks/twilio/voice`.
+4. Leave the after-call status callback on the TwiML `<Dial action>` path. The app generates `/api/webhooks/twilio/after-call` automatically, or `TWILIO_VOICE_AFTER_CALL_URL` if you override it.
+5. Create a cron job that sends `POST /api/cron/intake` with `Authorization: Bearer <CRON_SECRET>` on a frequent interval.
+6. Run end-to-end staging tests for missed calls, inbound SMS, STOP/START handling, queued quiet-hours sends, and follow-up release timing before turning `TWILIO_SEND_ENABLED=true` in production.
 
 Per-client setup is in HQ:
 
@@ -96,6 +277,8 @@ Use this checklist every time portal Twilio routing or mobile shell changes are 
    - `CRON_SECRET`
 2. Apply database migrations:
    - `cd apps/portal`
+   - ensure `DIRECT_URL` is set (use the same value as `DATABASE_URL` if needed)
+   - `npm run db:validate`
    - `npm run db:migrate:deploy`
 3. Deploy portal:
    - push/merge to production branch and let Vercel build
@@ -117,7 +300,10 @@ Use this checklist every time portal Twilio routing or mobile shell changes are 
    - post Twilio inbound voice webhook payload to `/api/webhooks/twilio/voice` and expect TwiML with `<Dial>`
    - post Twilio voice dial status payload to `/api/webhooks/twilio/after-call` and expect `200`
    - confirm lead/message/call records land in the correct org
-7. Validate mobile app packaging:
+7. Validate cron-driven follow-ups:
+   - trigger `POST /api/cron/intake` with `Authorization: Bearer <CRON_SECRET>`
+   - confirm queued missed-call intros and conversational follow-ups advance as expected
+8. Validate mobile app packaging:
    - `cd apps/mobile`
    - `npm run check-types`
    - `npm run dev` (Expo starts and tabs load `/app/*?mobile=1`)

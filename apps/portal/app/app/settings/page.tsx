@@ -624,9 +624,9 @@ export default async function ClientSettingsPage({
           <p className={`settings-integration-status ${twilioConfigured ? "connected" : "warning"}`}>
             {twilioConfigured ? t("settings.statusConnected") : t("settings.statusNotConnected")}
           </p>
-          <Link className="btn secondary" href={withOrgQuery("/app/settings/integrations", scope.orgId, scope.internalUser)}>
-            Connect Twilio SMS
-          </Link>
+          <a className="btn secondary" href="#settings-messaging">
+            Review Messaging Setup
+          </a>
         </article>
 
         <article className="settings-integration-card">
@@ -720,7 +720,7 @@ export default async function ClientSettingsPage({
             </div>
           </details>
 
-          <details open>
+          <details id="settings-messaging" open>
             <summary>{t("settings.sectionMessaging")}</summary>
             <div className="settings-accordion-body">
               <label>
