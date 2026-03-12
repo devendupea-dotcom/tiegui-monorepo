@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Buffer } from "node:buffer";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import sharp from "sharp";
+import { PNG } from "pngjs";
 import type { InvoiceTerms } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
@@ -87,14 +87,33 @@ async function normalizeInvoicePdfLogo(input: {
   source: "inline" | "object-storage";
 }): Promise<InvoicePdfImageSource | null> {
   try {
-    const normalized = await sharp(input.data, { failOn: "none" })
-      .rotate()
-      .flatten({ background: "#ffffff" })
-      .jpeg({ quality: 92, mozjpeg: true })
-      .toBuffer();
+    const data = Buffer.from(input.data);
 
-    if (normalized.length === 0) {
-      console.warn("Invoice PDF skipped org logo because normalization returned no bytes.", {
+    if (data.length >= 8 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) {
+      const normalized = Buffer.from(PNG.sync.write(PNG.sync.read(data, { checkCRC: false })));
+      if (normalized.length === 0) {
+        console.warn("Invoice PDF skipped org logo because PNG normalization returned no bytes.", {
+          invoiceId: input.invoiceId,
+          orgId: input.orgId,
+          logoPhotoId: input.logoPhotoId,
+          source: input.source,
+        });
+        return null;
+      }
+
+      return { data: normalized, format: "png" };
+    }
+
+    if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
+      return { data, format: "jpg" };
+    }
+
+    if (
+      data.length >= 12
+      && data.subarray(0, 4).toString("ascii") === "RIFF"
+      && data.subarray(8, 12).toString("ascii") === "WEBP"
+    ) {
+      console.warn("Invoice PDF skipped org logo because WEBP is not supported by the PDF renderer.", {
         invoiceId: input.invoiceId,
         orgId: input.orgId,
         logoPhotoId: input.logoPhotoId,
@@ -103,7 +122,13 @@ async function normalizeInvoicePdfLogo(input: {
       return null;
     }
 
-    return { data: normalized, format: "jpg" };
+    console.warn("Invoice PDF skipped org logo because the image format is unsupported for PDF rendering.", {
+      invoiceId: input.invoiceId,
+      orgId: input.orgId,
+      logoPhotoId: input.logoPhotoId,
+      source: input.source,
+    });
+    return null;
   } catch (error) {
     console.warn("Invoice PDF skipped org logo because normalization failed.", {
       invoiceId: input.invoiceId,
