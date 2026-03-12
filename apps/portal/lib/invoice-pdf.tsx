@@ -637,6 +637,7 @@ export async function buildInvoicePdfV2(input: InvoicePdfV2Input): Promise<Buffe
     console.warn("Invoice PDF render failed with branding logo. Retrying without logo.", {
       error: error instanceof Error ? error.message : "unknown",
       invoiceNumber: input.invoiceNumber,
+      logoSourceType: typeof input.org.logo === "string" ? "url" : input.org.logo.format,
     });
 
     const fallbackBuffer = await renderToBuffer(

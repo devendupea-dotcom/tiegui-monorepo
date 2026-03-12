@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { Buffer } from "node:buffer";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import sharp from "sharp";
 import type { InvoiceTerms } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
@@ -24,22 +25,93 @@ type RouteContext = {
   };
 };
 
-function toInlineInvoicePdfLogoSource(input: string): InvoicePdfImageSource | null {
+function decodeInlineInvoicePdfLogo(input: string): Buffer | null {
   const trimmed = input.trim();
-  const match = trimmed.match(/^data:image\/(png|jpe?g);base64,([\s\S]+)$/i);
+  const match = trimmed.match(/^data:image\/[a-z0-9.+-]+;base64,([\s\S]+)$/i);
   if (!match) {
     return null;
   }
 
   try {
-    const format = match[1]?.toLowerCase() === "png" ? "png" : "jpg";
-    const base64 = (match[2] || "").replace(/\s+/g, "");
+    const base64 = (match[1] || "").replace(/\s+/g, "");
     const data = Buffer.from(base64, "base64");
     if (data.length === 0) {
       return null;
     }
-    return { data, format };
+    return data;
   } catch {
+    return null;
+  }
+}
+
+async function readObjectBodyToBuffer(body: unknown): Promise<Buffer | null> {
+  if (!body) {
+    return null;
+  }
+
+  if (Buffer.isBuffer(body)) {
+    return body;
+  }
+
+  if (body instanceof Uint8Array) {
+    return Buffer.from(body);
+  }
+
+  if (typeof body === "object" && body && "transformToByteArray" in body && typeof body.transformToByteArray === "function") {
+    const bytes = await body.transformToByteArray();
+    return Buffer.from(bytes);
+  }
+
+  if (typeof body === "object" && body && Symbol.asyncIterator in body) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of body as AsyncIterable<Uint8Array | Buffer | string>) {
+      if (typeof chunk === "string") {
+        chunks.push(Buffer.from(chunk));
+      } else if (Buffer.isBuffer(chunk)) {
+        chunks.push(chunk);
+      } else {
+        chunks.push(Buffer.from(chunk));
+      }
+    }
+    return chunks.length > 0 ? Buffer.concat(chunks) : null;
+  }
+
+  return null;
+}
+
+async function normalizeInvoicePdfLogo(input: {
+  data: Buffer;
+  invoiceId: string;
+  orgId: string;
+  logoPhotoId: string;
+  source: "inline" | "object-storage";
+}): Promise<InvoicePdfImageSource | null> {
+  try {
+    const normalized = await sharp(input.data, { failOn: "none" })
+      .rotate()
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toBuffer();
+
+    if (normalized.length === 0) {
+      console.warn("Invoice PDF skipped org logo because normalization returned no bytes.", {
+        invoiceId: input.invoiceId,
+        orgId: input.orgId,
+        logoPhotoId: input.logoPhotoId,
+        source: input.source,
+      });
+      return null;
+    }
+
+    return { data: normalized, format: "jpg" };
+  } catch (error) {
+    console.warn("Invoice PDF skipped org logo because normalization failed.", {
+      invoiceId: input.invoiceId,
+      orgId: input.orgId,
+      logoPhotoId: input.logoPhotoId,
+      source: input.source,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -204,27 +276,62 @@ export async function GET(req: Request, { params }: RouteContext) {
         });
 
         if (photo?.imageDataUrl) {
-          logo = toInlineInvoicePdfLogoSource(photo.imageDataUrl);
-          if (!logo) {
+          const decodedLogo = decodeInlineInvoicePdfLogo(photo.imageDataUrl);
+          if (!decodedLogo) {
             console.warn("Invoice PDF skipped inline org logo because it could not be decoded for PDF rendering.", {
               invoiceId: invoice.id,
               orgId: invoice.orgId,
               logoPhotoId: invoice.org.logoPhotoId,
             });
+          } else {
+            logo = await normalizeInvoicePdfLogo({
+              data: decodedLogo,
+              invoiceId: invoice.id,
+              orgId: invoice.orgId,
+              logoPhotoId: invoice.org.logoPhotoId,
+              source: "inline",
+            });
           }
         } else if (photo && isR2Configured()) {
           const { r2, bucket } = requireR2();
-          logo = await getSignedUrl(
-            r2,
+          const object = await r2.send(
             new GetObjectCommand({
               Bucket: bucket,
               Key: photo.key,
             }),
-            { expiresIn: 60 },
           );
+          const objectBytes = await readObjectBodyToBuffer(object.Body);
+          if (!objectBytes) {
+            console.warn("Invoice PDF skipped object-storage org logo because the file body could not be read.", {
+              invoiceId: invoice.id,
+              orgId: invoice.orgId,
+              logoPhotoId: invoice.org.logoPhotoId,
+              logoKey: photo.key,
+            });
+          } else {
+            logo = await normalizeInvoicePdfLogo({
+              data: objectBytes,
+              invoiceId: invoice.id,
+              orgId: invoice.orgId,
+              logoPhotoId: invoice.org.logoPhotoId,
+              source: "object-storage",
+            });
+          }
+        } else if (photo) {
+          console.warn("Invoice PDF skipped org logo because no inline data was available and object storage is not configured.", {
+            invoiceId: invoice.id,
+            orgId: invoice.orgId,
+            logoPhotoId: invoice.org.logoPhotoId,
+            logoKey: photo.key,
+          });
         }
       } catch (error) {
-        console.error("Invoice PDF failed to load org logo. Continuing without logo.", error);
+        console.error("Invoice PDF failed to prepare org logo. Continuing without logo.", {
+          invoiceId: invoice.id,
+          orgId: invoice.orgId,
+          logoPhotoId: invoice.org.logoPhotoId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
