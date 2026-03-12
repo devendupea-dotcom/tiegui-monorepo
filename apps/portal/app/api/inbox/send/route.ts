@@ -61,15 +61,32 @@ export async function POST(req: Request) {
         smsFromNumberE164: true,
         twilioConfig: {
           select: {
+            id: true,
             phoneNumber: true,
+            messagingServiceSid: true,
+            status: true,
           },
         },
       },
     });
 
+    if (!organization?.twilioConfig?.id || !organization.twilioConfig.phoneNumber || !organization.twilioConfig.messagingServiceSid) {
+      throw new AppApiError(
+        "Inbox sending is unavailable until Twilio is configured in HQ org settings. Ask an internal admin to complete HQ -> Org -> Twilio setup first.",
+        409,
+      );
+    }
+
+    if (organization.twilioConfig.status !== "ACTIVE") {
+      throw new AppApiError(
+        `Inbox sending is unavailable while Twilio is ${organization.twilioConfig.status}. Ask an internal admin to finish HQ -> Org -> Twilio setup first.`,
+        409,
+      );
+    }
+
     const resolvedFromNumber =
       fromNumberE164 ||
-      normalizeE164(organization?.twilioConfig?.phoneNumber || null) ||
+      normalizeE164(organization.twilioConfig.phoneNumber || null) ||
       normalizeE164(organization?.smsFromNumberE164 || null);
 
     if (!resolvedFromNumber) {
@@ -181,4 +198,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
-

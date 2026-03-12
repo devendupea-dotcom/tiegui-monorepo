@@ -1,5 +1,6 @@
 import "server-only";
 
+import { Buffer } from "node:buffer";
 import { Prisma, type BillingInvoiceStatus, type InvoiceTerms } from "@prisma/client";
 import {
   Document,
@@ -11,6 +12,8 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import { DEFAULT_INVOICE_TERMS, formatCurrency, normalizeInvoiceTerms, taxRateToPercent, toMoneyDecimal } from "@/lib/invoices";
+
+export type InvoicePdfImageSource = string | { data: Buffer; format: "png" | "jpg" };
 
 type PdfOrgBranding = {
   name: string;
@@ -26,7 +29,7 @@ type PdfOrgBranding = {
   licenseNumber?: string | null;
   ein?: string | null;
   invoicePaymentInstructions?: string | null;
-  logoUrl?: string | null;
+  logo?: InvoicePdfImageSource | null;
 };
 
 type PdfCustomer = {
@@ -457,7 +460,7 @@ function InvoicePdfPage(props: {
 
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          {input.org.logoUrl ? <Image style={styles.logo} src={input.org.logoUrl} /> : null}
+          {input.org.logo ? <Image style={styles.logo} src={input.org.logo} /> : null}
           <Text style={styles.orgName}>{orgName}</Text>
           {orgAddress ? <Text style={styles.muted}>{orgAddress}</Text> : null}
           {contactLine ? <Text style={styles.muted}>{contactLine}</Text> : null}
@@ -623,6 +626,32 @@ export async function buildInvoicePdfV2(input: InvoicePdfV2Input): Promise<Buffe
     paymentInstructions: input.org.invoicePaymentInstructions,
   });
 
-  const buffer = await renderToBuffer(<InvoicePdfDocument input={input} pages={pages} />);
-  return Buffer.from(buffer);
+  try {
+    const buffer = await renderToBuffer(<InvoicePdfDocument input={input} pages={pages} />);
+    return Buffer.from(buffer);
+  } catch (error) {
+    if (!input.org.logo) {
+      throw error;
+    }
+
+    console.warn("Invoice PDF render failed with branding logo. Retrying without logo.", {
+      error: error instanceof Error ? error.message : "unknown",
+      invoiceNumber: input.invoiceNumber,
+    });
+
+    const fallbackBuffer = await renderToBuffer(
+      <InvoicePdfDocument
+        input={{
+          ...input,
+          org: {
+            ...input.org,
+            logo: null,
+          },
+        }}
+        pages={pages}
+      />,
+    );
+
+    return Buffer.from(fallbackBuffer);
+  }
 }

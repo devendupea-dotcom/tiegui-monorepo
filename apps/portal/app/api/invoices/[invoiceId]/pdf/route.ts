@@ -10,7 +10,7 @@ import {
   requireAppApiActor,
 } from "@/lib/app-api-permissions";
 import { DEFAULT_INVOICE_TERMS, formatInvoiceNumber, normalizeInvoiceTerms } from "@/lib/invoices";
-import { buildInvoicePdfV2 } from "@/lib/invoice-pdf";
+import { buildInvoicePdfV2, type InvoicePdfImageSource } from "@/lib/invoice-pdf";
 import { getPhotoStorageRecord } from "@/lib/photo-storage";
 import { isR2Configured, requireR2 } from "@/lib/r2";
 import { capturePortalError, trackPortalEvent } from "@/lib/telemetry";
@@ -23,6 +23,26 @@ type RouteContext = {
     invoiceId: string;
   };
 };
+
+function toInlineInvoicePdfLogoSource(input: string): InvoicePdfImageSource | null {
+  const trimmed = input.trim();
+  const match = trimmed.match(/^data:image\/(png|jpe?g);base64,([\s\S]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  try {
+    const format = match[1]?.toLowerCase() === "png" ? "png" : "jpg";
+    const base64 = (match[2] || "").replace(/\s+/g, "");
+    const data = Buffer.from(base64, "base64");
+    if (data.length === 0) {
+      return null;
+    }
+    return { data, format };
+  } catch {
+    return null;
+  }
+}
 
 async function hasInvoiceTermsColumn(): Promise<boolean> {
   const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>`
@@ -175,7 +195,7 @@ export async function GET(req: Request, { params }: RouteContext) {
       ? invoice.job.contactName || invoice.job.businessName || invoice.job.phoneE164
       : null;
 
-    let logoUrl: string | null = null;
+    let logo: InvoicePdfImageSource | null = null;
     if (invoice.org.logoPhotoId) {
       try {
         const photo = await getPhotoStorageRecord({
@@ -184,10 +204,17 @@ export async function GET(req: Request, { params }: RouteContext) {
         });
 
         if (photo?.imageDataUrl) {
-          logoUrl = photo.imageDataUrl;
+          logo = toInlineInvoicePdfLogoSource(photo.imageDataUrl);
+          if (!logo) {
+            console.warn("Invoice PDF skipped inline org logo because it could not be decoded for PDF rendering.", {
+              invoiceId: invoice.id,
+              orgId: invoice.orgId,
+              logoPhotoId: invoice.org.logoPhotoId,
+            });
+          }
         } else if (photo && isR2Configured()) {
           const { r2, bucket } = requireR2();
-          logoUrl = await getSignedUrl(
+          logo = await getSignedUrl(
             r2,
             new GetObjectCommand({
               Bucket: bucket,
@@ -221,7 +248,7 @@ export async function GET(req: Request, { params }: RouteContext) {
         licenseNumber: invoice.org.licenseNumber,
         ein: invoice.org.ein,
         invoicePaymentInstructions: invoice.org.invoicePaymentInstructions,
-        logoUrl,
+        logo,
       },
       customer: {
         name: invoice.customer.name,
