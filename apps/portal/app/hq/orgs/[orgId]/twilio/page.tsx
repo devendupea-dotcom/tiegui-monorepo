@@ -51,7 +51,7 @@ async function saveTwilioConfigAction(formData: FormData) {
   const status = parseStatus(getString(formData.get("status")));
 
   if (!twilioSubaccountSid.startsWith("AC")) {
-    redirect(statusUrl(orgId, { error: "Subaccount SID must start with AC." }));
+    redirect(statusUrl(orgId, { error: "Account SID must start with AC." }));
   }
   if (!messagingServiceSid.startsWith("MG")) {
     redirect(statusUrl(orgId, { error: "Messaging Service SID must start with MG." }));
@@ -368,7 +368,7 @@ export default async function HqOrgTwilioPage({
           ← Back to Business Folder
         </Link>
         <h2 style={{ marginTop: 10 }}>Twilio Config · {organization.name}</h2>
-        <p className="muted">Per-org subaccount setup for inbound routing, outbound messaging, and test sends.</p>
+        <p className="muted">Per-org Twilio account setup for inbound routing, outbound messaging, and test sends.</p>
 
         {error ? <p className="form-error">{error}</p> : null}
         {saved ? <p className="form-status">Twilio config saved.</p> : null}
@@ -382,7 +382,7 @@ export default async function HqOrgTwilioPage({
           <input type="hidden" name="orgId" value={organization.id} />
           <div className="form-grid">
             <label>
-              Twilio Subaccount SID
+              Twilio Account SID
               <input
                 name="twilioSubaccountSid"
                 defaultValue={organization.twilioConfig?.twilioSubaccountSid || ""}
@@ -429,6 +429,11 @@ export default async function HqOrgTwilioPage({
             </label>
           </div>
 
+          <p className="muted" style={{ marginTop: 0 }}>
+            Use the Twilio account SID, auth token, messaging service SID, and phone number that all belong to the
+            same Twilio account. Calls to the Twilio line ring this number first. Leave it blank to fall back to the
+            first owner or admin phone on file.
+          </p>
           <div className="quick-links">
             <button type="submit" className="btn primary">
               Save Config
@@ -443,7 +448,7 @@ export default async function HqOrgTwilioPage({
       <section className="card">
         <h3>Send Test SMS</h3>
         <p className="muted">
-          Uses this organization&apos;s Twilio subaccount + Messaging Service credentials. Works in ACTIVE or
+          Uses this organization&apos;s Twilio account + Messaging Service credentials. Works in ACTIVE or
           PENDING_A2P mode.
         </p>
         <form action={sendTestSmsAction} className="stack" style={{ marginTop: 12 }}>

@@ -6,6 +6,7 @@ type TwilioRequestInput = {
   accountSid: string;
   authToken: string;
   path: string;
+  baseUrl?: string;
   method?: "GET" | "POST";
   formBody?: URLSearchParams;
 };
@@ -46,7 +47,8 @@ export type ValidateConfigResult =
     };
 
 async function twilioRequest(input: TwilioRequestInput): Promise<TwilioApiResult> {
-  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${input.accountSid}${input.path}`, {
+  const baseUrl = input.baseUrl || `https://api.twilio.com/2010-04-01/Accounts/${input.accountSid}`;
+  const response = await fetch(`${baseUrl}${input.path}`, {
     method: input.method || "GET",
     headers: {
       Authorization: `Basic ${Buffer.from(`${input.accountSid}:${input.authToken}`).toString("base64")}`,
@@ -143,7 +145,8 @@ export async function validateTwilioOrgConfig(input: ValidateConfigInput): Promi
   const service = await twilioRequest({
     accountSid: input.twilioSubaccountSid,
     authToken: input.twilioAuthToken,
-    path: `/Messaging/Services/${encodeURIComponent(input.messagingServiceSid)}.json`,
+    baseUrl: "https://messaging.twilio.com/v1",
+    path: `/Services/${encodeURIComponent(input.messagingServiceSid)}`,
   });
 
   if (!service.ok) {
@@ -178,14 +181,15 @@ export async function validateTwilioOrgConfig(input: ValidateConfigInput): Promi
   if (!incomingNumber || typeof incomingNumber.sid !== "string") {
     return {
       ok: false,
-      error: "Phone number was not found in this Twilio subaccount.",
+      error: "Phone number was not found in this Twilio account.",
     };
   }
 
   const servicePhoneNumbers = await twilioRequest({
     accountSid: input.twilioSubaccountSid,
     authToken: input.twilioAuthToken,
-    path: `/Messaging/Services/${encodeURIComponent(input.messagingServiceSid)}/PhoneNumbers.json?PageSize=1000`,
+    baseUrl: "https://messaging.twilio.com/v1",
+    path: `/Services/${encodeURIComponent(input.messagingServiceSid)}/PhoneNumbers?PageSize=1000`,
   });
 
   if (!servicePhoneNumbers.ok) {
@@ -203,7 +207,7 @@ export async function validateTwilioOrgConfig(input: ValidateConfigInput): Promi
     ? servicePhoneNumbers.payload.phone_numbers
     : [];
 
-  const isAssigned = assignedNumbers.some((item: any) => item?.phone_number_sid === incomingNumber.sid);
+  const isAssigned = assignedNumbers.some((item: any) => item?.sid === incomingNumber.sid);
   if (!isAssigned) {
     return {
       ok: false,
