@@ -40,6 +40,29 @@ function mapCallStatus(value: string): CallStatus {
   return "RINGING";
 }
 
+function mapDialCallStatus(value: string): CallStatus | null {
+  const normalized = value.toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "answered" || normalized === "completed") {
+    return "ANSWERED";
+  }
+  if (
+    normalized === "no-answer" ||
+    normalized === "busy" ||
+    normalized === "failed" ||
+    normalized === "canceled"
+  ) {
+    return "MISSED";
+  }
+  return null;
+}
+
+function hasVoicemailRecording(form: FormData): boolean {
+  return Boolean(asString(form.get("RecordingSid")) || asString(form.get("RecordingUrl")));
+}
+
 export async function POST(req: Request) {
   const form = await req.formData();
   const accountSid = asString(form.get("AccountSid"));
@@ -69,7 +92,9 @@ export async function POST(req: Request) {
   const fromNumber = normalizeE164(asString(form.get("From")));
   const toNumber = normalizeE164(asString(form.get("To"))) || normalizeE164(twilioConfig.phoneNumber);
   const direction = mapCallDirection(asString(form.get("Direction")));
-  const mappedStatus = mapCallStatus(asString(form.get("CallStatus")));
+  const mappedStatus = hasVoicemailRecording(form)
+    ? ("VOICEMAIL" as CallStatus)
+    : mapDialCallStatus(asString(form.get("DialCallStatus"))) || mapCallStatus(asString(form.get("CallStatus")));
   const startedAtRaw = asString(form.get("Timestamp"));
   const startedAt = startedAtRaw ? new Date(startedAtRaw) : new Date();
   const now = new Date();

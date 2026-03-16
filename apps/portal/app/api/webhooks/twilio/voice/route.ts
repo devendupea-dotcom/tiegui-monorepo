@@ -1,1 +1,1 @@
-export { POST } from "../../../twilio/voice/status/route";
+export { POST } from "../../../twilio/voice/route";

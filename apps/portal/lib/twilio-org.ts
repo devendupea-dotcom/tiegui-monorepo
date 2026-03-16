@@ -136,6 +136,49 @@ export async function getTwilioOrgRuntimeConfigByAccountSid(
   };
 }
 
+export async function resolveTwilioVoiceForwardingNumber(organizationId: string): Promise<string | null> {
+  const candidates = await prisma.user.findMany({
+    where: {
+      orgId: organizationId,
+      phoneE164: { not: null },
+      calendarAccessRole: { in: ["OWNER", "ADMIN"] },
+    },
+    select: {
+      phoneE164: true,
+      calendarAccessRole: true,
+      createdAt: true,
+      id: true,
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+
+  const rank: Record<string, number> = {
+    OWNER: 0,
+    ADMIN: 1,
+  };
+
+  candidates.sort((left, right) => {
+    const rankDiff = (rank[left.calendarAccessRole] ?? 99) - (rank[right.calendarAccessRole] ?? 99);
+    if (rankDiff !== 0) {
+      return rankDiff;
+    }
+    const createdAtDiff = left.createdAt.getTime() - right.createdAt.getTime();
+    if (createdAtDiff !== 0) {
+      return createdAtDiff;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
+  for (const candidate of candidates) {
+    const normalizedPhone = normalizeTwilioPhone(candidate.phoneE164 || "");
+    if (normalizedPhone) {
+      return normalizedPhone;
+    }
+  }
+
+  return null;
+}
+
 export async function validateTwilioOrgConfig(input: ValidateConfigInput): Promise<ValidateConfigResult> {
   const normalizedPhoneNumber = normalizeTwilioPhone(input.phoneNumber);
   if (!normalizedPhoneNumber) {
