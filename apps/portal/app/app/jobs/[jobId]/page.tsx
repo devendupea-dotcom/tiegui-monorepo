@@ -11,6 +11,7 @@ import {
   formatInvoiceNumber,
   recomputeInvoiceTotals,
   reserveNextInvoiceNumber,
+  toMoneyDecimal,
 } from "@/lib/invoices";
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
 import { isR2Configured, requireR2 } from "@/lib/r2";
@@ -66,6 +67,14 @@ function formatCurrencyFromCents(value: number | null | undefined): string {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value / 100);
+}
+
+function isInvoiceSettled(invoice: { status: string; balanceDue: Prisma.Decimal | number | string | null | undefined }) {
+  return invoice.status === "PAID" || toMoneyDecimal(invoice.balanceDue).lte(0);
+}
+
+function getInvoiceStatusClass(status: string | null | undefined) {
+  return String(status || "DRAFT").toLowerCase();
 }
 
 async function requireLeadActionAccess(formData: FormData) {
@@ -296,14 +305,15 @@ async function quickMarkInvoicePaidAction(formData: FormData) {
       },
     });
 
-    if (!invoice || invoice.balanceDue.lte(0)) {
+    const balanceDue = toMoneyDecimal(invoice?.balanceDue);
+    if (!invoice || balanceDue.lte(0)) {
       return;
     }
 
     await tx.invoicePayment.create({
       data: {
         invoiceId: invoice.id,
-        amount: invoice.balanceDue,
+        amount: balanceDue,
         date: new Date(),
         method: "OTHER",
         note: "Quick mark paid from project folder.",
@@ -630,7 +640,7 @@ export default async function ClientJobDetailPage({
       : [];
   const latestInvoice = lead.invoices[0] || null;
   const primaryStatusLabel = formatLabel(primaryJobEvent?.status || lead.status);
-  const hasPaidInvoice = latestInvoice ? latestInvoice.status === "PAID" || latestInvoice.balanceDue.lte(0) : false;
+  const hasPaidInvoice = latestInvoice ? isInvoiceSettled(latestInvoice) : false;
   const jobValueLabel =
     lead.estimatedRevenueCents && lead.estimatedRevenueCents > 0
       ? formatCurrencyFromCents(lead.estimatedRevenueCents)
@@ -1087,6 +1097,8 @@ export default async function ClientJobDetailPage({
                   {lead.invoices.map((invoice) => {
                     const detailPath = withOrgQuery(`/app/invoices/${invoice.id}`, scope.orgId, scope.internalUser);
                     const downloadablePdfPath = `/api/invoices/${invoice.id}/pdf`;
+                    const settled = isInvoiceSettled(invoice);
+                    const statusClass = getInvoiceStatusClass(invoice.status);
 
                     return (
                       <tr key={invoice.id}>
@@ -1096,7 +1108,7 @@ export default async function ClientJobDetailPage({
                           </Link>
                         </td>
                         <td>
-                          <span className={`badge status-${invoice.status.toLowerCase()}`}>{formatLabel(invoice.status)}</span>
+                          <span className={`badge status-${statusClass}`}>{formatLabel(invoice.status)}</span>
                         </td>
                         <td>{formatCurrency(invoice.total)}</td>
                         <td>{formatCurrency(invoice.amountPaid)}</td>
@@ -1115,7 +1127,7 @@ export default async function ClientJobDetailPage({
                               <input type="hidden" name="orgId" value={lead.orgId} />
                               <input type="hidden" name="returnPath" value={returnPathFor("invoice")} />
                               <input type="hidden" name="invoiceId" value={invoice.id} />
-                              <button className="btn secondary" type="submit" disabled={invoice.balanceDue.lte(0)}>
+                              <button className="btn secondary" type="submit" disabled={settled}>
                                 Mark Paid
                               </button>
                             </form>
