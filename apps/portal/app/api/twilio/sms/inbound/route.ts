@@ -253,6 +253,7 @@ export async function POST(req: Request) {
       organization: organizationSettings,
       leadId: lead.id,
       inboundBody: body,
+      toNumberE164: toNumber,
     });
   }
 

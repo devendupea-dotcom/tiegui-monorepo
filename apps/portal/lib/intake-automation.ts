@@ -43,6 +43,45 @@ const CALLBACK_EVENT_DESCRIPTION = "Auto-scheduled from SMS intake flow.";
 const INTAKE_SLOT_OPTION_COUNT = 3;
 const INTAKE_SLOT_LOOKAHEAD_DAYS = 10;
 const INTAKE_SLOT_HOLD_MINUTES = 10;
+const HUMANIZED_REPLY_DELAY_MINUTES = 2;
+const ADDRESS_PATTERN =
+  /\b\d{1,6}\s+[a-z0-9.\-'\s]{2,}\b(st|street|ave|avenue|rd|road|dr|drive|ln|lane|way|blvd|boulevard|ct|court|pl|place|pkwy|parkway)\b/i;
+const CROSS_STREET_PATTERN = /\b[a-z]+(?:\s+[a-z]+)?\s+(?:and|&|y)\s+[a-z]+(?:\s+[a-z]+)?\b/i;
+const ZIP_PATTERN = /\b\d{5}(?:-\d{4})?\b/;
+const CITY_PATTERN = /^[a-zA-ZÀ-ÿ.\-\s]{2,60}$/;
+const COMMON_WORK_LOCATION_COLLISION_TERMS = new Set([
+  "cleanup",
+  "concrete",
+  "deck",
+  "driveway",
+  "fence",
+  "flooring",
+  "gutter",
+  "gutters",
+  "hardscape",
+  "irrigation",
+  "landscape",
+  "landscaping",
+  "lawn",
+  "mowing",
+  "mulch",
+  "paint",
+  "painting",
+  "patio",
+  "paver",
+  "paving",
+  "roof",
+  "roofing",
+  "siding",
+  "sod",
+  "sprinkler",
+  "sprinklers",
+  "stump",
+  "tree",
+  "trees",
+  "wall",
+  "windows",
+]);
 
 export const intakeAutomationDefaults = {
   intro: DEFAULT_INTRO,
@@ -58,6 +97,10 @@ type TimeParts = {
   hour: number;
   minute: number;
 };
+
+function sanitizeMessageBody(body: string): string {
+  return body.replace(/\s+/g, " ").trim();
+}
 
 function formatCallbackTime(
   value: Date,
@@ -141,6 +184,135 @@ async function sendAutomationMessage({
       },
     }),
   ]);
+}
+
+async function queueAutomationReply({
+  organization,
+  leadId,
+  toNumberE164,
+  body,
+  fallbackFromNumberE164,
+  delayMinutes,
+}: {
+  organization: IntakeOrganizationSettings;
+  leadId: string;
+  toNumberE164: string;
+  body: string;
+  fallbackFromNumberE164?: string | null;
+  delayMinutes?: number;
+}) {
+  const text = sanitizeMessageBody(body);
+  if (!text) {
+    return;
+  }
+
+  const fromNumberE164 = organization.smsFromNumberE164 || fallbackFromNumberE164 || null;
+  if (!fromNumberE164) {
+    await sendAutomationMessage({
+      organization,
+      leadId,
+      toNumberE164,
+      body: text,
+    });
+    return;
+  }
+
+  await queueSmsDispatch({
+    orgId: organization.id,
+    leadId,
+    kind: "AUTOMATION_GENERIC",
+    messageType: "AUTOMATION",
+    fromNumberE164,
+    toNumberE164,
+    body: text,
+    sendAfterAt: addMinutes(new Date(), Math.max(1, Math.min(5, delayMinutes ?? HUMANIZED_REPLY_DELAY_MINUTES))),
+  });
+}
+
+function parseAddress(value: string): { kind: "ADDRESS" | "CITY" | "UNKNOWN"; addressText?: string; city?: string } {
+  const trimmed = sanitizeMessageBody(value);
+  if (!trimmed) return { kind: "UNKNOWN" };
+  const lower = trimmed.toLowerCase();
+
+  if (ADDRESS_PATTERN.test(lower) || CROSS_STREET_PATTERN.test(lower) || ZIP_PATTERN.test(lower)) {
+    return { kind: "ADDRESS", addressText: trimmed };
+  }
+
+  const words = trimmed.split(/\s+/);
+  if (!/\d/.test(trimmed) && words.length <= 5 && CITY_PATTERN.test(trimmed)) {
+    return { kind: "CITY", city: trimmed };
+  }
+
+  if (/\d/.test(trimmed) && words.length >= 3) {
+    return { kind: "ADDRESS", addressText: trimmed };
+  }
+
+  return { kind: "UNKNOWN" };
+}
+
+function looksLikeLocationPhrase(value: string): boolean {
+  const normalized = sanitizeMessageBody(value);
+  if (!normalized) return false;
+  const words = normalized.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.some((word) => COMMON_WORK_LOCATION_COLLISION_TERMS.has(word))) {
+    return false;
+  }
+  const parsed = parseAddress(normalized);
+  return parsed.kind === "CITY" || parsed.kind === "ADDRESS";
+}
+
+function looksLikeWorkSummary(value: string): boolean {
+  const normalized = sanitizeMessageBody(value);
+  if (!normalized) return false;
+  return /[a-zA-ZÀ-ÿ]/.test(normalized);
+}
+
+function parseWorkAndLocation(value: string): {
+  workSummary: string;
+  addressText: string | null;
+  addressCity: string | null;
+} | null {
+  const trimmed = sanitizeMessageBody(value);
+  if (!trimmed) return null;
+
+  const explicitSplit = trimmed.match(/^(.*?)(?:\s+|,\s*)(?:in|at|near|around)\s+(.+)$/i);
+  if (explicitSplit) {
+    const workSummary = sanitizeMessageBody(explicitSplit[1] || "");
+    const locationSummary = sanitizeMessageBody(explicitSplit[2] || "");
+    const parsedLocation = parseAddress(locationSummary);
+    if (
+      looksLikeWorkSummary(workSummary) &&
+      (parsedLocation.kind === "ADDRESS" || parsedLocation.kind === "CITY")
+    ) {
+      return {
+        workSummary,
+        addressText: parsedLocation.kind === "ADDRESS" ? parsedLocation.addressText || locationSummary : null,
+        addressCity: parsedLocation.kind === "CITY" ? parsedLocation.city || locationSummary : null,
+      };
+    }
+  }
+
+  const words = trimmed.split(/\s+/);
+  if (words.length < 3 || /\d/.test(trimmed)) {
+    return null;
+  }
+
+  for (let cityWordCount = Math.min(2, words.length - 1); cityWordCount >= 1; cityWordCount -= 1) {
+    const workCandidate = sanitizeMessageBody(words.slice(0, -cityWordCount).join(" "));
+    const cityCandidate = sanitizeMessageBody(words.slice(-cityWordCount).join(" "));
+    if (!looksLikeWorkSummary(workCandidate)) {
+      continue;
+    }
+    if (looksLikeLocationPhrase(cityCandidate)) {
+      return {
+        workSummary: workCandidate,
+        addressText: null,
+        addressCity: cityCandidate,
+      };
+    }
+  }
+
+  return null;
 }
 
 function parseTimeParts(text: string): TimeParts {
@@ -508,6 +680,8 @@ async function sendCallbackOptionsMessage(input: {
   toNumberE164: string;
   locale: "EN" | "ES";
   invalidChoice?: boolean;
+  deferReply?: boolean;
+  fallbackFromNumberE164?: string | null;
 }): Promise<boolean> {
   const settings = await getOrgCalendarSettings(input.organization.id);
   const durationMinutes = Math.max(30, settings.defaultSlotMinutes);
@@ -547,12 +721,22 @@ async function sendCallbackOptionsMessage(input: {
   const prefix = input.invalidChoice ? `${callbackInvalidChoicePrefix(input.locale)}\n\n` : "";
   const body = `${prefix}${callbackPrompt}\n\n${optionsList}\n\n${callbackOptionInstruction(input.locale)}`;
 
-  await sendAutomationMessage({
-    organization: input.organization,
-    leadId: input.leadId,
-    toNumberE164: input.toNumberE164,
-    body,
-  });
+  if (input.deferReply) {
+    await queueAutomationReply({
+      organization: input.organization,
+      leadId: input.leadId,
+      toNumberE164: input.toNumberE164,
+      body,
+      fallbackFromNumberE164: input.fallbackFromNumberE164,
+    });
+  } else {
+    await sendAutomationMessage({
+      organization: input.organization,
+      leadId: input.leadId,
+      toNumberE164: input.toNumberE164,
+      body,
+    });
+  }
 
   return true;
 }
@@ -686,10 +870,12 @@ export async function advanceLeadIntakeFromInbound({
   organization,
   leadId,
   inboundBody,
+  toNumberE164,
 }: {
   organization: IntakeOrganizationSettings;
   leadId: string;
   inboundBody: string;
+  toNumberE164?: string | null;
 }) {
   if (!organization.intakeAutomationEnabled) {
     return;
@@ -710,7 +896,7 @@ export async function advanceLeadIntakeFromInbound({
     return;
   }
 
-  const messageBody = inboundBody.trim();
+  const messageBody = sanitizeMessageBody(inboundBody);
   if (!messageBody) {
     return;
   }
@@ -725,7 +911,7 @@ export async function advanceLeadIntakeFromInbound({
   });
 
   if (lead.intakeStage === "NONE" || lead.intakeStage === "INTRO_SENT") {
-    await sendAutomationMessage({
+    await queueAutomationReply({
       organization,
       leadId: lead.id,
       toNumberE164: lead.phoneE164,
@@ -736,6 +922,7 @@ export async function advanceLeadIntakeFromInbound({
         legacyTemplate: organization.intakeAskLocationBody,
         fallbackTemplate: DEFAULT_ASK_LOCATION,
       }),
+      fallbackFromNumberE164: toNumberE164,
     });
     await prisma.lead.update({
       where: { id: lead.id },
@@ -747,16 +934,59 @@ export async function advanceLeadIntakeFromInbound({
   }
 
   if (lead.intakeStage === "WAITING_LOCATION") {
+    const inferred = parseWorkAndLocation(messageBody);
+    if (inferred) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          city: inferred.addressCity,
+          businessType: inferred.workSummary,
+          intakeLocationText: inferred.addressText || inferred.addressCity,
+          intakeWorkTypeText: inferred.workSummary,
+          intakeStage: "WAITING_CALLBACK",
+        },
+      });
+
+      await sendCallbackOptionsMessage({
+        organization,
+        leadId: lead.id,
+        toNumberE164: lead.phoneE164,
+        locale,
+        deferReply: true,
+        fallbackFromNumberE164: toNumberE164,
+      });
+      return;
+    }
+
+    const parsedLocation = parseAddress(messageBody);
+    if (parsedLocation.kind === "UNKNOWN") {
+      await queueAutomationReply({
+        organization,
+        leadId: lead.id,
+        toNumberE164: lead.phoneE164,
+        body: pickLocalizedTemplate({
+          locale,
+          englishTemplate: organization.intakeAskLocationBodyEn,
+          spanishTemplate: organization.intakeAskLocationBodyEs,
+          legacyTemplate: organization.intakeAskLocationBody,
+          fallbackTemplate: DEFAULT_ASK_LOCATION,
+        }),
+        fallbackFromNumberE164: toNumberE164,
+      });
+      return;
+    }
+
     await prisma.lead.update({
       where: { id: lead.id },
       data: {
-        city: messageBody,
-        intakeLocationText: messageBody,
+        city: parsedLocation.kind === "CITY" ? parsedLocation.city || messageBody : null,
+        intakeLocationText:
+          parsedLocation.kind === "ADDRESS" ? parsedLocation.addressText || messageBody : parsedLocation.city || messageBody,
         intakeStage: "WAITING_WORK_TYPE",
       },
     });
 
-    await sendAutomationMessage({
+    await queueAutomationReply({
       organization,
       leadId: lead.id,
       toNumberE164: lead.phoneE164,
@@ -767,16 +997,20 @@ export async function advanceLeadIntakeFromInbound({
         legacyTemplate: organization.intakeAskWorkTypeBody,
         fallbackTemplate: DEFAULT_ASK_WORK_TYPE,
       }),
+      fallbackFromNumberE164: toNumberE164,
     });
     return;
   }
 
   if (lead.intakeStage === "WAITING_WORK_TYPE") {
+    const inferred = parseWorkAndLocation(messageBody);
     await prisma.lead.update({
       where: { id: lead.id },
       data: {
-        businessType: messageBody,
-        intakeWorkTypeText: messageBody,
+        businessType: inferred?.workSummary || messageBody,
+        intakeWorkTypeText: inferred?.workSummary || messageBody,
+        city: inferred?.addressCity || undefined,
+        intakeLocationText: inferred ? inferred.addressText || inferred.addressCity : undefined,
         intakeStage: "WAITING_CALLBACK",
       },
     });
@@ -786,6 +1020,8 @@ export async function advanceLeadIntakeFromInbound({
       leadId: lead.id,
       toNumberE164: lead.phoneE164,
       locale,
+      deferReply: true,
+      fallbackFromNumberE164: toNumberE164,
     });
     return;
   }
@@ -799,6 +1035,8 @@ export async function advanceLeadIntakeFromInbound({
         toNumberE164: lead.phoneE164,
         locale,
         invalidChoice: true,
+        deferReply: true,
+        fallbackFromNumberE164: toNumberE164,
       });
       return;
     }
@@ -829,6 +1067,8 @@ export async function advanceLeadIntakeFromInbound({
         toNumberE164: lead.phoneE164,
         locale,
         invalidChoice: true,
+        deferReply: true,
+        fallbackFromNumberE164: toNumberE164,
       });
       return;
     }
@@ -882,11 +1122,12 @@ export async function advanceLeadIntakeFromInbound({
       settings.calendarTimezone,
     );
 
-    await sendAutomationMessage({
+    await queueAutomationReply({
       organization,
       leadId: lead.id,
       toNumberE164: lead.phoneE164,
       body: completionBody,
+      fallbackFromNumberE164: toNumberE164,
     });
   }
 }
