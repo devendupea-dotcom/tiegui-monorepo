@@ -186,6 +186,7 @@ export async function POST(req: Request) {
         orgId: organization.id,
         leadId: lead.id,
         inboundBody: body,
+        toNumberE164: toNumber,
       });
     } catch (error) {
       console.error("[twilio:sms] conversational handler failed", {

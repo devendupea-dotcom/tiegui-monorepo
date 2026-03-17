@@ -55,6 +55,13 @@ async function createOutboundMessageFromDispatch(input: {
         lastOutboundAt: now,
       },
     });
+
+    await tx.leadConversationState.updateMany({
+      where: { leadId: input.leadId },
+      data: {
+        lastOutboundAt: now,
+      },
+    });
   });
 }
 

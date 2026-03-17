@@ -30,11 +30,45 @@ const ZIP_PATTERN = /\b\d{5}(?:-\d{4})?\b/;
 const CITY_PATTERN = /^[a-zA-ZÀ-ÿ.\-\s]{2,60}$/;
 const AMBIGUOUS_TIME_PATTERN =
   /\b(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|noon|afternoon|morning|\d{1,2}(?::\d{2})?\s?(am|pm)?)\b/i;
+const COMMON_WORK_LOCATION_COLLISION_TERMS = new Set([
+  "cleanup",
+  "concrete",
+  "deck",
+  "driveway",
+  "fence",
+  "flooring",
+  "gutter",
+  "gutters",
+  "hardscape",
+  "irrigation",
+  "landscape",
+  "landscaping",
+  "lawn",
+  "mowing",
+  "mulch",
+  "paint",
+  "painting",
+  "patio",
+  "paver",
+  "paving",
+  "roof",
+  "roofing",
+  "siding",
+  "sod",
+  "sprinkler",
+  "sprinklers",
+  "stump",
+  "tree",
+  "trees",
+  "wall",
+  "windows",
+]);
 
 const OFFERED_SLOT_COUNT = 3;
 const OFFERED_SLOT_LOOKAHEAD_DAYS = 10;
 const OFFER_HOLD_MINUTES = 10;
 const TAKEOVER_PAUSE_HOURS = 24;
+const HUMANIZED_REPLY_DELAY_MINUTES = 2;
 
 type ConversationOrgConfig = {
   id: string;
@@ -232,6 +266,86 @@ function parseAddress(value: string): { kind: "ADDRESS" | "CITY" | "UNKNOWN"; ad
   }
 
   return { kind: "UNKNOWN" };
+}
+
+function looksLikeWorkSummary(value: string): boolean {
+  const normalized = sanitizeMessageBody(value);
+  if (!normalized) return false;
+  if (hasStopKeyword(normalized) || hasStartKeyword(normalized)) return false;
+  if (TAKEOVER_PATTERN.test(normalized)) return false;
+  if (parseTimeframe(normalized)) return false;
+  return /[a-zA-ZÀ-ÿ]/.test(normalized);
+}
+
+function looksLikeLocationPhrase(value: string): boolean {
+  const normalized = sanitizeMessageBody(value);
+  if (!normalized) return false;
+  const words = normalized
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.some((word) => COMMON_WORK_LOCATION_COLLISION_TERMS.has(word))) {
+    return false;
+  }
+  const parsed = parseAddress(normalized);
+  return parsed.kind === "CITY" || parsed.kind === "ADDRESS";
+}
+
+function parseWorkAndLocation(value: string): {
+  workSummary: string;
+  addressText: string | null;
+  addressCity: string | null;
+} | null {
+  const trimmed = sanitizeMessageBody(value);
+  if (!trimmed) return null;
+
+  const explicitSplit = trimmed.match(/^(.*?)(?:\s+|,\s*)(?:in|at|near|around)\s+(.+)$/i);
+  if (explicitSplit) {
+    const workSummary = sanitizeMessageBody(explicitSplit[1] || "");
+    const locationSummary = sanitizeMessageBody(explicitSplit[2] || "");
+    const parsedLocation = parseAddress(locationSummary);
+    if (
+      looksLikeWorkSummary(workSummary) &&
+      (parsedLocation.kind === "ADDRESS" || parsedLocation.kind === "CITY")
+    ) {
+      return {
+        workSummary,
+        addressText: parsedLocation.kind === "ADDRESS" ? parsedLocation.addressText || locationSummary : null,
+        addressCity: parsedLocation.kind === "CITY" ? parsedLocation.city || locationSummary : null,
+      };
+    }
+  }
+
+  const words = trimmed.split(/\s+/);
+  if (words.length < 3 || /\d/.test(trimmed)) {
+    const parsedWhole = parseAddress(trimmed);
+    if (parsedWhole.kind === "ADDRESS" || parsedWhole.kind === "CITY") {
+      return null;
+    }
+    return null;
+  }
+
+  for (let cityWordCount = Math.min(2, words.length - 1); cityWordCount >= 1; cityWordCount -= 1) {
+    const workCandidate = sanitizeMessageBody(words.slice(0, -cityWordCount).join(" "));
+    const cityCandidate = sanitizeMessageBody(words.slice(-cityWordCount).join(" "));
+    if (!looksLikeWorkSummary(workCandidate)) {
+      continue;
+    }
+    if (looksLikeLocationPhrase(cityCandidate)) {
+      return {
+        workSummary: workCandidate,
+        addressText: null,
+        addressCity: cityCandidate,
+      };
+    }
+  }
+
+  const parsedWhole = parseAddress(trimmed);
+  if (parsedWhole.kind === "ADDRESS" || parsedWhole.kind === "CITY") {
+    return null;
+  }
+
+  return null;
 }
 
 function parseBookingSelection(input: { inboundBody: string; options: SlotOption[] }): SlotOption | null {
@@ -610,6 +724,49 @@ async function sendConversationMessage(input: {
   return { ok: outbound.status !== "FAILED", status: outbound.status, notice: outbound.notice };
 }
 
+async function queueConversationReply(input: {
+  organization: ConversationOrgConfig;
+  lead: ConversationLead;
+  stateId: string;
+  body: string;
+  messageType: "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
+  fallbackFromNumberE164?: string | null;
+  delayMinutes?: number;
+}) {
+  if (input.lead.status === "DNC") {
+    return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Lead is opted out." };
+  }
+
+  const text = sanitizeMessageBody(input.body);
+  if (!text) {
+    return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Message body is empty." };
+  }
+
+  const fromNumberE164 = input.organization.smsFromNumberE164 || input.fallbackFromNumberE164 || null;
+  if (!fromNumberE164) {
+    return {
+      ok: false as const,
+      status: "FAILED" as MessageStatus,
+      notice: "No sender number configured for delayed SMS reply.",
+    };
+  }
+
+  const delayMinutes = Math.max(1, Math.min(5, input.delayMinutes ?? HUMANIZED_REPLY_DELAY_MINUTES));
+  const sendAfterAt = addMinutes(new Date(), delayMinutes);
+  await queueSmsDispatch({
+    orgId: input.organization.id,
+    leadId: input.lead.id,
+    kind: "AUTOMATION_GENERIC",
+    messageType: input.messageType,
+    fromNumberE164,
+    toNumberE164: input.lead.phoneE164,
+    body: text,
+    sendAfterAt,
+  });
+
+  return { ok: true as const, status: "QUEUED" as MessageStatus, sendAfterAt };
+}
+
 async function setConversationStage(input: {
   orgId: string;
   leadId: string;
@@ -617,6 +774,7 @@ async function setConversationStage(input: {
   previousStage: ConversationStage;
   stage: ConversationStage;
   data?: Prisma.LeadConversationStateUpdateInput;
+  leadData?: Prisma.LeadUpdateInput;
 }) {
   await prisma.$transaction(async (tx) => {
     await tx.leadConversationState.update({
@@ -630,6 +788,7 @@ async function setConversationStage(input: {
       where: { id: input.leadId },
       data: {
         intakeStage: mapStageToLeadIntake(input.stage),
+        ...(input.leadData || {}),
       },
     });
   });
@@ -1176,6 +1335,7 @@ export async function handleConversationalSmsInbound(input: {
   orgId: string;
   leadId: string;
   inboundBody: string;
+  toNumberE164?: string | null;
 }): Promise<HandleInboundResult> {
   const body = sanitizeMessageBody(input.inboundBody);
   if (!body) {
@@ -1338,10 +1498,23 @@ export async function handleConversationalSmsInbound(input: {
   }
 
   if (currentStage === "ASKED_WORK") {
-    workSummary = body;
-    const parsedAddress = parseAddress(body);
-    if (parsedAddress.kind === "ADDRESS") {
-      addressText = parsedAddress.addressText || body;
+    const inferred = parseWorkAndLocation(body);
+    if (inferred) {
+      workSummary = inferred.workSummary;
+      addressText = inferred.addressText;
+      addressCity = inferred.addressCity;
+    } else {
+      const standaloneLocation = parseAddress(body);
+      if (standaloneLocation.kind === "ADDRESS") {
+        addressText = standaloneLocation.addressText || body;
+      } else if (standaloneLocation.kind === "CITY") {
+        addressCity = standaloneLocation.city || body;
+      } else {
+        workSummary = body;
+      }
+    }
+
+    if (workSummary && (addressText || addressCity)) {
       currentStage = "ASKED_TIMEFRAME";
       await setConversationStage({
         orgId: organization.id,
@@ -1357,17 +1530,24 @@ export async function handleConversationalSmsInbound(input: {
           bookingOptions: Prisma.DbNull,
           followUpStep: 0,
         },
+        leadData: {
+          businessType: workSummary,
+          intakeWorkTypeText: workSummary,
+          city: addressCity,
+          intakeLocationText: addressText || addressCity,
+        },
       });
       const askTimeframe = renderSmsTemplate(templates.askTimeframe, {
         bizName: organization.name,
         workingHours: organization.smsWorkingHoursText || "",
       });
-      await sendConversationMessage({
+      await queueConversationReply({
         organization,
         lead,
         stateId: state.id,
         body: withSignature({ body: askTimeframe, websiteSignature: organization.smsWebsiteSignature }),
         messageType: "AUTOMATION",
+        fallbackFromNumberE164: input.toNumberE164,
       });
       await setNextFollowUp({
         organization,
@@ -1377,6 +1557,49 @@ export async function handleConversationalSmsInbound(input: {
         sentFollowUpCount: 0,
       });
       return { stage: "ASKED_TIMEFRAME", action: "ADVANCED" };
+    }
+
+    if (!workSummary && (addressText || addressCity)) {
+      await prisma.$transaction([
+        prisma.leadConversationState.update({
+          where: { id: state.id },
+          data: {
+            addressText,
+            addressCity,
+            followUpStep: 0,
+          },
+        }),
+        prisma.lead.update({
+          where: { id: lead.id },
+          data: {
+            city: addressCity,
+            intakeLocationText: addressText || addressCity,
+          },
+        }),
+      ]);
+
+      await queueConversationReply({
+        organization,
+        lead,
+        stateId: state.id,
+        body: withSignature({
+          body: renderSmsTemplate(templates.clarification, {
+            bizName: organization.name,
+            missingField: formatMissingField("ASKED_WORK", templates.locale),
+          }),
+          websiteSignature: organization.smsWebsiteSignature,
+        }),
+        messageType: "AUTOMATION",
+        fallbackFromNumberE164: input.toNumberE164,
+      });
+      await setNextFollowUp({
+        organization,
+        leadId: lead.id,
+        stateId: state.id,
+        stage: "ASKED_WORK",
+        sentFollowUpCount: 0,
+      });
+      return { stage: "ASKED_WORK", action: "ADVANCED" };
     }
 
     currentStage = "ASKED_ADDRESS";
@@ -1394,8 +1617,12 @@ export async function handleConversationalSmsInbound(input: {
         bookingOptions: Prisma.DbNull,
         followUpStep: 0,
       },
+      leadData: {
+        businessType: workSummary,
+        intakeWorkTypeText: workSummary,
+      },
     });
-    await sendConversationMessage({
+    await queueConversationReply({
       organization,
       lead,
       stateId: state.id,
@@ -1404,6 +1631,7 @@ export async function handleConversationalSmsInbound(input: {
         websiteSignature: organization.smsWebsiteSignature,
       }),
       messageType: "AUTOMATION",
+      fallbackFromNumberE164: input.toNumberE164,
     });
     await setNextFollowUp({
       organization,
@@ -1416,9 +1644,18 @@ export async function handleConversationalSmsInbound(input: {
   }
 
   if (currentStage === "ASKED_ADDRESS") {
-    const parsed = parseAddress(body);
-    if (parsed.kind === "ADDRESS") {
-      addressText = parsed.addressText || body;
+    const inferred = parseWorkAndLocation(body);
+    workSummary = inferred?.workSummary || workSummary;
+    const parsed = inferred
+      ? inferred.addressText
+        ? { kind: "ADDRESS" as const, addressText: inferred.addressText }
+        : inferred.addressCity
+          ? { kind: "CITY" as const, city: inferred.addressCity }
+          : parseAddress(body)
+      : parseAddress(body);
+    if (parsed.kind === "ADDRESS" || parsed.kind === "CITY") {
+      addressText = parsed.kind === "ADDRESS" ? parsed.addressText || null : null;
+      addressCity = parsed.kind === "CITY" ? parsed.city || body : addressCity;
       currentStage = "ASKED_TIMEFRAME";
       await setConversationStage({
         orgId: organization.id,
@@ -1434,8 +1671,14 @@ export async function handleConversationalSmsInbound(input: {
           bookingOptions: Prisma.DbNull,
           followUpStep: 0,
         },
+        leadData: {
+          businessType: workSummary,
+          intakeWorkTypeText: workSummary,
+          city: addressCity,
+          intakeLocationText: addressText || addressCity,
+        },
       });
-      await sendConversationMessage({
+      await queueConversationReply({
         organization,
         lead,
         stateId: state.id,
@@ -1447,6 +1690,7 @@ export async function handleConversationalSmsInbound(input: {
           websiteSignature: organization.smsWebsiteSignature,
         }),
         messageType: "AUTOMATION",
+        fallbackFromNumberE164: input.toNumberE164,
       });
       await setNextFollowUp({
         organization,
@@ -1458,44 +1702,19 @@ export async function handleConversationalSmsInbound(input: {
       return { stage: "ASKED_TIMEFRAME", action: "ADVANCED" };
     }
 
-    if (parsed.kind === "CITY") {
-      addressCity = parsed.city || body;
-      await prisma.leadConversationState.update({
-        where: { id: state.id },
-        data: { addressCity, followUpStep: 0 },
-      });
-      await sendConversationMessage({
-        organization,
-        lead,
-        stateId: state.id,
-        body: withSignature({
-          body: renderSmsTemplate(templates.askAddress, { bizName: organization.name }),
-          websiteSignature: organization.smsWebsiteSignature,
-        }),
-        messageType: "AUTOMATION",
-      });
-      await setNextFollowUp({
-        organization,
-        leadId: lead.id,
-        stateId: state.id,
-        stage: "ASKED_ADDRESS",
-        sentFollowUpCount: 0,
-      });
-      return { stage: "ASKED_ADDRESS", action: "ADVANCED" };
-    }
-
     const prompt = addressCity
       ? renderSmsTemplate(templates.clarification, {
           bizName: organization.name,
           missingField: formatMissingField("ASKED_ADDRESS", templates.locale),
         })
       : renderSmsTemplate(templates.askCity, { bizName: organization.name });
-    await sendConversationMessage({
+    await queueConversationReply({
       organization,
       lead,
       stateId: state.id,
       body: withSignature({ body: prompt, websiteSignature: organization.smsWebsiteSignature }),
       messageType: "AUTOMATION",
+      fallbackFromNumberE164: input.toNumberE164,
     });
     await setNextFollowUp({
       organization,
@@ -1510,7 +1729,7 @@ export async function handleConversationalSmsInbound(input: {
   if (currentStage === "ASKED_TIMEFRAME") {
     timeframe = parseTimeframe(body);
     if (!timeframe) {
-      await sendConversationMessage({
+      await queueConversationReply({
         organization,
         lead,
         stateId: state.id,
@@ -1522,6 +1741,7 @@ export async function handleConversationalSmsInbound(input: {
           websiteSignature: organization.smsWebsiteSignature,
         }),
         messageType: "AUTOMATION",
+        fallbackFromNumberE164: input.toNumberE164,
       });
       await setNextFollowUp({
         organization,
@@ -1581,12 +1801,13 @@ export async function handleConversationalSmsInbound(input: {
       const fallback = templates.locale === "ES"
         ? "No vemos horarios abiertos ahora mismo. Te enviaremos nuevas opciones en breve."
         : "I don't have open slots right now. I'll send fresh options shortly.";
-      await sendConversationMessage({
+      await queueConversationReply({
         organization,
         lead,
         stateId: state.id,
         body: withSignature({ body: fallback, websiteSignature: organization.smsWebsiteSignature }),
         messageType: "AUTOMATION",
+        fallbackFromNumberE164: input.toNumberE164,
       });
     } else {
       const slotList = buildSlotList(options);
@@ -1595,12 +1816,13 @@ export async function handleConversationalSmsInbound(input: {
         slotList,
         workingHours: organization.smsWorkingHoursText || "",
       });
-      await sendConversationMessage({
+      await queueConversationReply({
         organization,
         lead,
         stateId: state.id,
         body: withSignature({ body: offer, websiteSignature: organization.smsWebsiteSignature }),
         messageType: "AUTOMATION",
+        fallbackFromNumberE164: input.toNumberE164,
       });
     }
 
@@ -1667,7 +1889,7 @@ export async function handleConversationalSmsInbound(input: {
       missingField: formatMissingField("OFFERED_BOOKING", templates.locale),
     });
     const slotList = bookingOptions.length > 0 ? `\n\n${buildSlotList(bookingOptions)}` : "";
-    await sendConversationMessage({
+    await queueConversationReply({
       organization,
       lead,
       stateId: state.id,
@@ -1676,6 +1898,7 @@ export async function handleConversationalSmsInbound(input: {
         websiteSignature: organization.smsWebsiteSignature,
       }),
       messageType: "AUTOMATION",
+      fallbackFromNumberE164: input.toNumberE164,
     });
     await setNextFollowUp({
       organization,
