@@ -13,9 +13,14 @@ function isLocalHostname(hostname: string): boolean {
 
 export function getBaseUrlFromRequest(req: Request): string {
   const configured = normalizeEnvValue(process.env.NEXTAUTH_URL);
+  const vercelEnv = normalizeEnvValue(process.env.VERCEL_ENV);
   const forwardedProto = firstHeaderValue(req.headers.get("x-forwarded-proto"));
   const forwardedHost = firstHeaderValue(req.headers.get("x-forwarded-host"));
   const host = forwardedHost || firstHeaderValue(req.headers.get("host"));
+
+  if (host && vercelEnv === "preview") {
+    return `${forwardedProto || "https"}://${host}`;
+  }
 
   if (configured) {
     try {

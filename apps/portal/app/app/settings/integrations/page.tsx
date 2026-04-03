@@ -27,7 +27,7 @@ export const dynamic = "force-dynamic";
 type ImportProviderOption = IntegrationProvider | "ALL";
 
 function parseProvider(value: string): ImportProviderOption {
-  if (value === "JOBBER" || value === "QBO" || value === "ALL") {
+  if (value === "JOBBER" || value === "QBO" || value === "OUTLOOK" || value === "ALL") {
     return value;
   }
   throw new Error("Invalid provider value.");
@@ -73,13 +73,20 @@ function formatIntegrationErrorMessage(error: string): string {
       return "QuickBooks Online isn't configured in this environment.";
     case "google_not_configured":
       return "Google Calendar isn't configured in this environment.";
+    case "outlook_not_configured":
+      return "Microsoft Outlook isn't configured in this environment.";
     default:
       return error;
   }
 }
 
 function isProviderConfigurationError(error: string): boolean {
-  return error === "jobber_not_configured" || error === "qbo_not_configured" || error === "google_not_configured";
+  return (
+    error === "jobber_not_configured" ||
+    error === "qbo_not_configured" ||
+    error === "google_not_configured" ||
+    error === "outlook_not_configured"
+  );
 }
 
 function IntegrationConnectAction({
@@ -132,24 +139,9 @@ function IntegrationHealthPanel({
         Environment readiness for OAuth providers. Set any missing keys and redeploy to enable connections. This
         shows key names only, never secret values.
       </p>
-      <div
-        style={{
-          display: "grid",
-          gap: 12,
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          marginTop: 12,
-        }}
-      >
+      <div className="integration-health-grid">
         {items.map((item) => (
-          <article
-            key={item.label}
-            style={{
-              border: "1px solid rgba(89,127,178,0.2)",
-              borderRadius: 14,
-              padding: 14,
-              background: "rgba(255,255,255,0.03)",
-            }}
-          >
+          <article key={item.label} className="integration-health-card">
             <p style={{ margin: 0 }}>
               <strong>{item.label}</strong>
             </p>
@@ -170,14 +162,7 @@ function IntegrationHealthPanel({
                   }}
                 >
                   {item.missingKeys.map((key) => (
-                    <code
-                      key={key}
-                      style={{
-                        padding: "4px 8px",
-                        borderRadius: 999,
-                        background: "rgba(89,127,178,0.12)",
-                      }}
-                    >
+                    <code key={key} className="integration-health-chip">
                       {key}
                     </code>
                   ))}
@@ -203,6 +188,9 @@ async function runImportAction(formData: FormData) {
 
   try {
     const provider = parseProvider(String(formData.get("provider") || ""));
+    if (provider === "OUTLOOK") {
+      throw new Error("Outlook import is not supported.");
+    }
     const dateFrom = parseDateInput(String(formData.get("dateFrom") || ""));
     const dateTo = parseDateInput(String(formData.get("dateTo") || ""));
     if (dateFrom && dateTo && dateFrom > dateTo) {
@@ -439,9 +427,11 @@ export default async function IntegrationsSettingsPage({
     jobberConfigured,
     qboConfigured,
     googleConfigured,
+    outlookConfigured,
     jobberMissingKeys,
     qboMissingKeys,
     googleMissingKeys,
+    outlookMissingKeys,
   } = getIntegrationProviderConfiguration();
 
   const googleResult = sessionUser.id
@@ -491,6 +481,7 @@ export default async function IntegrationsSettingsPage({
 
   const jobber = accounts.find((account) => account.provider === "JOBBER");
   const qbo = accounts.find((account) => account.provider === "QBO");
+  const outlook = accounts.find((account) => account.provider === "OUTLOOK");
   const googleAccount = googleResult.connected ? googleResult.account : null;
   const googleCalendars = googleResult.calendars || [];
   const googleReadCalendarIds = googleAccount ? normalizeReadCalendarIds(googleAccount.readCalendarIdsJson) : [];
@@ -515,6 +506,11 @@ export default async function IntegrationsSettingsPage({
       configured: googleConfigured,
       missingKeys: googleMissingKeys,
     },
+    {
+      label: "Microsoft Outlook",
+      configured: outlookConfigured,
+      missingKeys: outlookMissingKeys,
+    },
   ];
 
   return (
@@ -522,7 +518,7 @@ export default async function IntegrationsSettingsPage({
       <section className="card">
         <h2>Integrations</h2>
         <p className="muted">
-          Connect Jobber and QuickBooks Online, run imports, and export all org-owned data for{" "}
+          Connect Jobber, QuickBooks, Google Calendar, and Outlook for{" "}
           <strong>{organization.name}</strong>.
         </p>
         <div className="quick-links" style={{ marginTop: 12 }}>
@@ -640,6 +636,40 @@ export default async function IntegrationsSettingsPage({
         </article>
 
         <article className="card">
+          <h2>Microsoft Outlook</h2>
+          <p className="muted">
+            Connect a Microsoft 365 mailbox for portal email sends like estimate share links and purchase orders.
+          </p>
+          <p style={{ marginTop: 10 }}>
+            Status: <strong>{outlook?.status || "NOT_CONNECTED"}</strong>
+          </p>
+          <p className="muted">Mailbox: {outlook?.providerEmail || "-"}</p>
+          <p className="muted">Account: {outlook?.providerDisplayName || outlook?.providerAccountId || "-"}</p>
+          <p className="muted">Connected at: {outlook ? formatDateTime(outlook.connectedAt) : "-"}</p>
+          <p className="muted">Last sync: {outlook?.lastSyncedAt ? formatDateTime(outlook.lastSyncedAt) : "-"}</p>
+          <p className="muted">Scopes: {outlook?.scopes.join(", ") || "-"}</p>
+          <p className="muted">Error: {outlook?.lastError || "-"}</p>
+          {!outlookConfigured ? <p className="form-status">Not configured. See status above.</p> : null}
+          <div className="quick-links" style={{ marginTop: 10 }}>
+            <IntegrationConnectAction
+              configured={outlookConfigured}
+              className="btn primary"
+              href={withOrgQuery("/api/integrations/outlook/connect", scope.orgId, scope.internalUser)}
+              label={outlook ? "Reconnect Outlook" : "Connect Outlook"}
+            />
+            {outlook ? (
+              <form action={disconnectAction}>
+                <input type="hidden" name="orgId" value={scope.orgId} />
+                <input type="hidden" name="provider" value="OUTLOOK" />
+                <button className="btn secondary" type="submit">
+                  Disconnect
+                </button>
+              </form>
+            ) : null}
+          </div>
+        </article>
+
+        <article className="card">
           <h2>Google Calendar (Per User)</h2>
           <p className="muted">
             Connect your own Google account to sync your assigned TieGui jobs and import your busy blocks.
@@ -722,7 +752,7 @@ export default async function IntegrationsSettingsPage({
                         blockAllDay: true,
                       };
                       return (
-                        <div key={calendar.id} style={{ border: "1px solid rgba(89,127,178,0.2)", borderRadius: 10, padding: 10 }}>
+                        <div key={calendar.id} className="integration-calendar-card">
                           <label className="inline-toggle">
                             <input type="checkbox" name="readCalendarIds" value={calendar.id} defaultChecked={selected} />
                             Use <strong>{calendar.summary}</strong> for availability blocking

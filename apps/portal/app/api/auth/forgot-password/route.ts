@@ -1,30 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { ensureForgotPasswordAllowed, getClientIpFromHeaders } from "@/lib/auth-rate-limit";
+import { checkSlidingWindowLimit } from "@/lib/rate-limit";
 import { createResetToken } from "@/lib/tokens";
 import { sendEmail } from "@/lib/mailer";
 import { getBaseUrlFromRequest } from "@/lib/urls";
-
-type RateLimitBucket = { count: number; resetAt: number };
-const buckets = new Map<string, RateLimitBucket>();
-
-function getClientIp(req: Request): string {
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]!.trim();
-  const realIp = req.headers.get("x-real-ip");
-  if (realIp) return realIp.trim();
-  return "unknown";
-}
-
-function isRateLimited(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const bucket = buckets.get(key);
-  if (!bucket || bucket.resetAt <= now) {
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return false;
-  }
-  bucket.count += 1;
-  return bucket.count > limit;
-}
 
 export async function POST(req: Request) {
   // Always return a generic success response (don't reveal whether the email exists).
@@ -37,8 +17,17 @@ export async function POST(req: Request) {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
-  const ip = getClientIp(req);
-  if (!normalizedEmail || isRateLimited(`forgot:${ip}`, 10, 60_000)) {
+  if (!normalizedEmail) {
+    return NextResponse.json({ ok: true });
+  }
+
+  const ip = getClientIpFromHeaders(req);
+  const rateLimit = await ensureForgotPasswordAllowed({
+    email: normalizedEmail,
+    ip,
+    checker: checkSlidingWindowLimit,
+  });
+  if (!rateLimit.ok) {
     return NextResponse.json({ ok: true });
   }
 
@@ -76,4 +65,3 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ ok: true });
 }
-

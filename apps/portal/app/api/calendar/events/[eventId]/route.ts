@@ -19,6 +19,7 @@ import {
 } from "@/lib/calendar/permissions";
 import { localDateFromUtc, parseUtcDateTime } from "@/lib/calendar/dates";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
+import { syncLeadBookingState } from "@/lib/lead-booking";
 
 export const dynamic = "force-dynamic";
 
@@ -251,40 +252,53 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       }
     }
 
-    const updated = await prisma.event.update({
-      where: { id: existing.id },
-      data: {
-        leadId: body.leadId !== undefined ? body.leadId : existing.leadId,
-        type: body.type ? normalizeEventType(body.type) : existing.type,
-        status: parseEventStatus(body.status) || existing.status,
-        busy,
-        allDay: body.allDay ?? existing.allDay,
-        title: body.title?.trim() || existing.title,
-        description: body.description !== undefined ? body.description?.trim() || null : existing.description,
-        customerName: body.customerName !== undefined ? body.customerName?.trim() || null : existing.customerName,
-        addressLine: body.addressLine !== undefined ? body.addressLine?.trim() || null : existing.addressLine,
-        startAt: nextStartAt,
-        endAt: nextEndAt,
-        assignedToUserId: nextAssignedUserId,
-        ...(reassigned
-          ? {
-              googleEventId: null,
-              googleCalendarId: null,
-            }
-          : {}),
-        syncStatus: "PENDING",
-        lastSyncedAt: null,
-        workerAssignments: {
-          deleteMany: {},
-          createMany: {
-            data: nextWorkerIds.map((workerUserId) => ({
-              orgId: existing.orgId,
-              workerUserId,
-            })),
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextEvent = await tx.event.update({
+        where: { id: existing.id },
+        data: {
+          leadId: body.leadId !== undefined ? body.leadId : existing.leadId,
+          type: body.type ? normalizeEventType(body.type) : existing.type,
+          status: parseEventStatus(body.status) || existing.status,
+          busy,
+          allDay: body.allDay ?? existing.allDay,
+          title: body.title?.trim() || existing.title,
+          description: body.description !== undefined ? body.description?.trim() || null : existing.description,
+          customerName: body.customerName !== undefined ? body.customerName?.trim() || null : existing.customerName,
+          addressLine: body.addressLine !== undefined ? body.addressLine?.trim() || null : existing.addressLine,
+          startAt: nextStartAt,
+          endAt: nextEndAt,
+          assignedToUserId: nextAssignedUserId,
+          ...(reassigned
+            ? {
+                googleEventId: null,
+                googleCalendarId: null,
+              }
+            : {}),
+          syncStatus: "PENDING",
+          lastSyncedAt: null,
+          workerAssignments: {
+            deleteMany: {},
+            createMany: {
+              data: nextWorkerIds.map((workerUserId) => ({
+                orgId: existing.orgId,
+                workerUserId,
+              })),
+            },
           },
         },
-      },
-      select: calendarEventSelect,
+        select: calendarEventSelect,
+      });
+
+      await syncLeadBookingState(tx, {
+        leadId: nextEvent.leadId,
+        eventId: nextEvent.id,
+        type: nextEvent.type,
+        status: nextEvent.status,
+        startAt: nextEvent.startAt,
+        endAt: nextEvent.endAt,
+      });
+
+      return nextEvent;
     });
 
     if (reassigned && existing.googleEventId && existing.googleCalendarId) {

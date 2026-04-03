@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { SessionProvider, signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
-export default function SetPasswordPage() {
+function SetPasswordScreen() {
   const router = useRouter();
   const { data: session, status: sessionStatus } = useSession();
 
@@ -124,5 +124,13 @@ export default function SetPasswordPage() {
         </form>
       </section>
     </main>
+  );
+}
+
+export default function SetPasswordPage() {
+  return (
+    <SessionProvider refetchOnWindowFocus={false}>
+      <SetPasswordScreen />
+    </SessionProvider>
   );
 }

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { Ratelimit } from "@upstash/ratelimit";
-import { upstashRedis } from "@/lib/upstash";
+import { upstashRedis } from "./upstash";
 
 type SlidingWindowInput = {
   identifier: string;
@@ -48,4 +48,3 @@ export async function checkSlidingWindowLimit(input: SlidingWindowInput): Promis
   const retryAfterSeconds = Math.max(1, Math.ceil((resetAtMs - Date.now()) / 1000));
   return { ok: false, remaining: result.remaining, resetAtMs, retryAfterSeconds };
 }
-

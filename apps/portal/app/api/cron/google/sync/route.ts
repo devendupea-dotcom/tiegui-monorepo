@@ -1,24 +1,9 @@
 import { NextResponse } from "next/server";
+import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
 import { runGoogleSyncCycle } from "@/lib/integrations/google-sync";
 
 export const dynamic = "force-dynamic";
-
-function getBearerToken(headerValue: string | null): string | null {
-  if (!headerValue) return null;
-  const trimmed = headerValue.trim();
-  if (!trimmed.toLowerCase().startsWith("bearer ")) {
-    return null;
-  }
-  const token = trimmed.slice(7).trim();
-  return token || null;
-}
-
-function getCronSecret(req: Request): string | null {
-  const headerSecret = req.headers.get("x-cron-secret")?.trim();
-  if (headerSecret) return headerSecret;
-  return getBearerToken(req.headers.get("authorization"));
-}
 
 function validateCronAuth(req: Request): NextResponse | null {
   const expected = normalizeEnvValue(process.env.CRON_SECRET);
@@ -26,8 +11,7 @@ function validateCronAuth(req: Request): NextResponse | null {
     return NextResponse.json({ ok: false, error: "CRON_SECRET is not configured." }, { status: 500 });
   }
 
-  const provided = getCronSecret(req);
-  if (!provided || provided !== expected) {
+  if (!isValidCronSecret(req, expected)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
@@ -41,7 +25,7 @@ function parseIntSafe(value: string | null, fallback: number, min: number, max: 
   return Math.max(min, Math.min(max, parsed));
 }
 
-export async function POST(req: Request) {
+async function handleGoogleSyncCron(req: Request) {
   const authError = validateCronAuth(req);
   if (authError) {
     return authError;
@@ -61,4 +45,12 @@ export async function POST(req: Request) {
     ok: true,
     ...result,
   });
+}
+
+export async function GET(req: Request) {
+  return handleGoogleSyncCron(req);
+}
+
+export async function POST(req: Request) {
+  return handleGoogleSyncCron(req);
 }

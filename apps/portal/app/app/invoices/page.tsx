@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Prisma, type BillingInvoiceStatus } from "@prisma/client";
+import { getRequestTranslator } from "@/lib/i18n";
 import { prisma } from "@/lib/prisma";
-import { formatDateTime, formatLabel } from "@/lib/hq";
+import { formatDateTime } from "@/lib/hq";
 import { billingInvoiceStatusOptions, formatCurrency, formatInvoiceNumber } from "@/lib/invoices";
 import { requireSessionUser } from "@/lib/session";
 import { getParam, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
@@ -19,24 +20,25 @@ export default async function InvoicesPage({
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
+  const t = await getRequestTranslator();
   const requestedOrgId = getParam(searchParams?.orgId);
   const status = getParam(searchParams?.status).toUpperCase();
-  const openOnly = getParam(searchParams?.openOnly) || "1";
+  const openOnly = getParam(searchParams?.openOnly) || "0";
 
   const scope = await resolveAppScope({ nextPath: "/app/invoices", requestedOrgId });
   if (!scope.onboardingComplete) {
     return (
       <section className="card invoice-card">
-        <h2>Invoices</h2>
+        <h2>{t("invoices.title")}</h2>
         <div className="portal-empty-state">
-          <strong>No invoices yet.</strong>
-          <p className="muted">Finish onboarding, then open a job folder and create your first invoice.</p>
+          <strong>{t("invoices.emptyTitle")}</strong>
+          <p className="muted">{t("invoices.onboardingBody")}</p>
           <div className="portal-empty-actions">
             <Link className="btn secondary" href={withOrgQuery("/app/onboarding?step=1", scope.orgId, scope.internalUser)}>
-              Finish Onboarding
+              {t("buttons.finishOnboarding")}
             </Link>
             <Link className="btn primary" href={withOrgQuery("/app/jobs", scope.orgId, scope.internalUser)}>
-              Open Jobs
+              {t("jobs.title")}
             </Link>
           </div>
         </div>
@@ -55,7 +57,7 @@ export default async function InvoicesPage({
   const workerScoped = !scope.internalUser && currentUser?.calendarAccessRole === "WORKER";
   const workerId = workerScoped ? currentUser!.id : null;
 
-  const where: Prisma.InvoiceWhereInput = {
+  const baseWhere: Prisma.InvoiceWhereInput = {
     orgId: scope.orgId,
     ...(workerScoped
       ? {
@@ -69,6 +71,10 @@ export default async function InvoicesPage({
           },
         }
       : {}),
+  };
+
+  const where: Prisma.InvoiceWhereInput = {
+    ...baseWhere,
   };
 
   if (isBillingStatus(status)) {
@@ -103,9 +109,7 @@ export default async function InvoicesPage({
     }),
     prisma.invoice.groupBy({
       by: ["status"],
-      where: {
-        orgId: scope.orgId,
-      },
+      where: baseWhere,
       _count: {
         _all: true,
       },
@@ -113,12 +117,15 @@ export default async function InvoicesPage({
   ]);
 
   const counts = Object.fromEntries(statusCounts.map((row) => [row.status, row._count._all])) as Record<string, number>;
+  const totalInvoices = Object.values(counts).reduce((sum, value) => sum + value, 0);
+  const hasFiltersApplied = Boolean(status) || openOnly === "1";
+  const statusLabel = (value: string) => t(`status.${value.toLowerCase()}` as never);
 
   return (
     <>
       <section className="card invoice-card">
-        <h2>Invoices</h2>
-        <p className="muted">Create, send, and track manual payments with client-ready PDFs.</p>
+        <h2>{t("invoices.title")}</h2>
+        <p className="muted">{t("invoices.subtitle")}</p>
 
         <div className="quick-meta" style={{ marginTop: 12 }}>
           <span className="badge status-draft">Draft: {counts.DRAFT || 0}</span>
@@ -132,30 +139,30 @@ export default async function InvoicesPage({
           {scope.internalUser ? <input type="hidden" name="orgId" value={scope.orgId} /> : null}
 
           <label>
-            Invoice status
+            {t("invoices.statusLabel")}
             <select name="status" defaultValue={status}>
               <option value="">All</option>
               {billingInvoiceStatusOptions.map((option) => (
                 <option key={option} value={option}>
-                  {formatLabel(option)}
+                  {statusLabel(option)}
                 </option>
               ))}
             </select>
           </label>
 
           <label>
-            Open only
+            {t("invoices.openOnlyLabel")}
             <select name="openOnly" defaultValue={openOnly}>
-              <option value="1">Yes</option>
-              <option value="0">No</option>
+              <option value="1">{t("invoices.yes")}</option>
+              <option value="0">{t("invoices.no")}</option>
             </select>
           </label>
 
           <button className="btn primary" type="submit">
-            Apply
+            {t("invoices.apply")}
           </button>
-          <Link className="btn secondary" href={withOrgQuery("/app/invoices?openOnly=1", scope.orgId, scope.internalUser)}>
-            Reset
+          <Link className="btn secondary" href={withOrgQuery("/app/invoices", scope.orgId, scope.internalUser)}>
+            {t("invoices.reset")}
           </Link>
         </form>
       </section>
@@ -163,11 +170,19 @@ export default async function InvoicesPage({
       <section className="card invoice-card">
         {rows.length === 0 ? (
           <div className="portal-empty-state">
-            <strong>No invoices yet.</strong>
-            <p className="muted">Open a job folder and click Create Invoice.</p>
+            <strong>{totalInvoices > 0 ? t("invoices.emptyFilteredTitle") : t("invoices.emptyTitle")}</strong>
+            <p className="muted">
+              {totalInvoices > 0
+                ? openOnly === "1"
+                  ? t("invoices.emptyOpenOnlyBody")
+                  : hasFiltersApplied
+                    ? t("invoices.emptyFilteredBody")
+                    : t("invoices.emptyHiddenBody")
+                : t("invoices.emptyCreateBody")}
+            </p>
             <div className="portal-empty-actions">
               <Link className="btn primary" href={withOrgQuery("/app/jobs", scope.orgId, scope.internalUser)}>
-                Open Jobs
+                {t("jobs.title")}
               </Link>
             </div>
           </div>
@@ -192,25 +207,25 @@ export default async function InvoicesPage({
                       <span className="muted">{row.customer.name}</span>
                     </div>
                     <div className="quick-meta">
-                      <span className={`badge status-${row.status.toLowerCase()}`}>{formatLabel(row.status)}</span>
-                      <span className="badge">Bal {formatCurrency(row.balanceDue)}</span>
+                      <span className={`badge status-${row.status.toLowerCase()}`}>{statusLabel(row.status)}</span>
+                      <span className="badge">{t("invoices.balanceShort", { amount: formatCurrency(row.balanceDue) })}</span>
                     </div>
                     <div className="stack-cell">
-                      <span className="muted">Total: {formatCurrency(row.total)}</span>
-                      <span className="muted">Paid: {formatCurrency(row.amountPaid)}</span>
-                      <span className="muted">Due: {formatDateTime(row.dueDate)}</span>
-                      <span className="muted">Updated: {formatDateTime(row.updatedAt)}</span>
+                      <span className="muted">{t("invoices.totalLabel", { amount: formatCurrency(row.total) })}</span>
+                      <span className="muted">{t("invoices.paidLabel", { amount: formatCurrency(row.amountPaid) })}</span>
+                      <span className="muted">{t("invoices.dueLabel", { value: formatDateTime(row.dueDate) })}</span>
+                      <span className="muted">{t("invoices.updatedLabel", { value: formatDateTime(row.updatedAt) })}</span>
                       {jobHref ? (
                         <Link className="table-link" href={jobHref}>
-                          Job: {jobLabel}
+                          {t("invoices.jobLabel", { value: jobLabel })}
                         </Link>
                       ) : (
-                        <span className="muted">Job: {jobLabel}</span>
+                        <span className="muted">{t("invoices.jobLabel", { value: jobLabel })}</span>
                       )}
                     </div>
                     <div className="mobile-list-card-actions">
                       <Link className="btn secondary" href={invoiceHref}>
-                        Open Invoice
+                        {t("invoices.openInvoice")}
                       </Link>
                     </div>
                   </li>
@@ -222,15 +237,15 @@ export default async function InvoicesPage({
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Invoice</th>
-                    <th>Customer</th>
-                    <th>Job</th>
-                    <th>Status</th>
-                    <th>Total</th>
-                    <th>Paid</th>
-                    <th>Balance</th>
-                    <th>Due</th>
-                    <th>Updated</th>
+                    <th>{t("invoices.table.invoice")}</th>
+                    <th>{t("invoices.table.customer")}</th>
+                    <th>{t("invoices.table.job")}</th>
+                    <th>{t("invoices.table.status")}</th>
+                    <th>{t("invoices.table.total")}</th>
+                    <th>{t("invoices.table.paid")}</th>
+                    <th>{t("invoices.table.balance")}</th>
+                    <th>{t("invoices.table.due")}</th>
+                    <th>{t("invoices.table.updated")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -261,7 +276,7 @@ export default async function InvoicesPage({
                           )}
                         </td>
                         <td>
-                          <span className={`badge status-${row.status.toLowerCase()}`}>{formatLabel(row.status)}</span>
+                          <span className={`badge status-${row.status.toLowerCase()}`}>{statusLabel(row.status)}</span>
                         </td>
                         <td>{formatCurrency(row.total)}</td>
                         <td>{formatCurrency(row.amountPaid)}</td>

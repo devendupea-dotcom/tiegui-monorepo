@@ -1,24 +1,25 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/create-next-app).
+# TieGui Portal
 
-## Getting Started
+The portal is TieGui's internal operations app for leads, jobs, estimates, purchase orders, expenses, messaging, and integrations. It is built with Next.js App Router, Prisma, NextAuth, and a mix of Twilio, calendar, and storage integrations.
 
-First, run the development server:
+## Local Development
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+From the monorepo root:
+
+```
+npm run dev --workspace=portal
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3001](http://localhost:3001).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Useful commands:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load Inter, a custom Google Font.
+```bash
+npm run lint --workspace=portal
+npm run check-types --workspace=portal
+npm run test --workspace=portal
+npm run build --workspace=portal
+```
 
 ## Release Tooling
 
@@ -26,6 +27,7 @@ Run these before staging or production deploys:
 
 ```bash
 npm run lint
+npm run test
 npm run build
 npm run db:validate
 ```
@@ -65,6 +67,172 @@ Phase 1 note:
 - `/app/settings` already exposes messaging copy, hours, quiet-hours, and template controls.
 - Those settings are safe to ship in Phase 1, but live Twilio voice/SMS automation should stay off until the Phase 2 webhook + cron checklist below is completed.
 
+## Estimates Module
+
+The contractor estimates workflow is now centered on the `Estimate` data model and the `/app/estimates` portal surface.
+
+Core models in [`prisma/schema.prisma`](./prisma/schema.prisma):
+
+- `Estimate`
+- `EstimateLineItem`
+- `EstimateActivity`
+- supporting linkage fields:
+  - `Lead.latestEstimateId`
+  - `Lead.estimateCount`
+  - `Job.sourceEstimateId`
+  - `Invoice.sourceEstimateId`
+  - `Organization.estimatePrefix`
+  - `Organization.estimateNextNumber`
+
+Main API routes:
+
+- `GET /api/estimates`
+- `POST /api/estimates`
+- `GET /api/estimates/[estimateId]`
+- `PATCH /api/estimates/[estimateId]`
+- `DELETE /api/estimates/[estimateId]`
+- `POST /api/estimates/[estimateId]/items`
+- `POST /api/estimates/[estimateId]/send`
+- `POST /api/estimates/[estimateId]/convert`
+
+Main UI entry points:
+
+- `/app/estimates`
+- `/app/estimates/[estimateId]`
+- legacy redirects:
+  - `/app/estimates/new`
+  - `/portal/estimates`
+  - `/portal/estimates/new`
+
+Conversion flow:
+
+1. Create or edit an estimate in `DRAFT`
+2. Attach a lead when customer/job lineage should be preserved
+3. Add material, custom material, and labor line items
+4. Mark as `SENT` through the internal/manual share flow
+5. Move to `APPROVED` once accepted
+6. Convert the approved estimate into:
+   - a structured job
+   - a structured job plus invoice draft
+
+Conversion guarantees:
+
+- estimate totals are recomputed server-side before persistence
+- only approved estimates can be converted
+- converted jobs keep `Job.sourceEstimateId`
+- converted invoice drafts keep `Invoice.sourceEstimateId`
+- legacy `EstimateDraft` records are backfilled into `Estimate` so older draft links can redirect forward cleanly
+
+## Customer Estimate Approval Module
+
+Customer approval stays attached to the main Estimates module. `Estimate` remains the source of truth, and public access is granted only through tokenized share links.
+
+Public customer route:
+
+- `/estimate/[token]`
+
+Internal share management routes:
+
+- `POST /api/estimates/[estimateId]/share`
+- `POST /api/estimates/[estimateId]/revoke-share`
+
+Public token routes:
+
+- `GET /api/estimate-share/[token]`
+- `POST /api/estimate-share/[token]/view`
+- `POST /api/estimate-share/[token]/approve`
+- `POST /api/estimate-share/[token]/decline`
+
+Schema additions:
+
+- `Estimate.sharedAt`
+- `Estimate.shareExpiresAt`
+- `Estimate.customerViewedAt`
+- `Estimate.customerDecisionAt`
+- `Estimate.customerDecisionName`
+- `Estimate.customerDecisionNote`
+- `EstimateShareLink`
+
+Token handling:
+
+- raw share tokens are generated once and returned only at creation time
+- storage uses `EstimateShareLink.tokenHash`, never the raw token
+- public lookups hash the presented token and resolve against the stored hash
+- revoked or expired links return public errors instead of silently exposing estimate data
+
+Approval / decline behavior:
+
+- customer views write `EstimateActivity`
+- customer approval updates the existing `Estimate` to `APPROVED`
+- customer decline updates the existing `Estimate` to `DECLINED`
+- decision metadata stays on `Estimate` and `EstimateShareLink`
+- guarded transaction updates prevent concurrent approve/decline requests from overwriting each other
+
+Known v1 limitations:
+
+- no customer login or customer account area
+- no signatures, contracts, or payment flow
+- no automatic email or SMS delivery; staff manually shares the generated link
+- no auto-convert on approval
+- internal staging smoke should still verify authenticated generate/revoke actions in `/app/estimates/[estimateId]`
+
+## Job Costing Module
+
+Job Costing is attached to structured jobs and does not create a second job system.
+
+Main UI routes:
+
+- `/app/jobs/records/costing`
+- `/app/jobs/records/[jobId]/costing`
+
+Main API routes:
+
+- `GET /api/jobs/costing`
+- `GET /api/jobs/[jobId]/costing`
+- `PATCH /api/jobs/[jobId]/costing`
+- `POST /api/jobs/[jobId]/costing/materials`
+- `PATCH /api/jobs/[jobId]/costing/materials/[itemId]`
+- `DELETE /api/jobs/[jobId]/costing/materials/[itemId]`
+- `POST /api/jobs/[jobId]/costing/labor`
+- `PATCH /api/jobs/[jobId]/costing/labor/[itemId]`
+- `DELETE /api/jobs/[jobId]/costing/labor/[itemId]`
+
+Schema additions:
+
+- `Job.costingNotes`
+- `JobMaterial.actualQuantity`
+- `JobMaterial.actualUnitCost`
+- `JobMaterial.actualTotal`
+- `JobMaterial.varianceNotes`
+- `JobLabor.actualHours`
+- `JobLabor.actualHourlyCost`
+- `JobLabor.actualTotal`
+- `JobLabor.varianceNotes`
+- `Invoice.sourceJobId`
+
+Profitability calculation sources:
+
+- quoted revenue comes from the job's linked source estimate when present
+- invoiced revenue comes from invoices linked by `Invoice.sourceJobId`
+- planned material cost comes from `JobMaterial.quantity * JobMaterial.cost`
+- actual material cost comes from `JobMaterial.actualQuantity * JobMaterial.actualUnitCost`
+- planned labor cost comes from `JobLabor.quantity * JobLabor.cost`
+- actual labor cost comes from `JobLabor.actualHours * JobLabor.actualHourlyCost`
+- gross profit and gross margin are computed server-side from those revenue and cost inputs
+
+`Invoice.sourceJobId` usage:
+
+- new invoice drafts created from approved estimates now store both `Invoice.sourceEstimateId` and `Invoice.sourceJobId`
+- Job Costing uses `sourceJobId` to show invoiced revenue and linked invoice records without reinterpreting the older lead-oriented `Invoice.jobId`
+- the migration backfills `sourceJobId` from existing `sourceEstimateId -> Estimate.jobId` links where possible
+
+Current limitations / risk notes:
+
+- Job Costing is job-level profitability only; it does not include payroll, scheduling, purchase orders, accounting sync, or full reporting
+- profitability quality depends on users entering actual quantities, hours, and unit costs
+- older invoices only appear automatically if they are linked through `sourceJobId` or can be backfilled from `sourceEstimateId`
+- normal structured job edits now preserve actual costing data for retained rows, but deleting and recreating rows still loses that row-level actual history
+
 ## Phase 1 Staging Runbook
 
 ### Required env vars
@@ -89,6 +257,7 @@ Phase 1 integrations readiness UI, only if those providers should connect in sta
 
 - `INTEGRATIONS_ENCRYPTION_KEY`
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+- `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT_ID`, `MICROSOFT_REDIRECT_URI`
 - `JOBBER_CLIENT_ID`, `JOBBER_CLIENT_SECRET`, `JOBBER_REDIRECT_URI`
 - `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REDIRECT_URI`
 
@@ -142,6 +311,14 @@ For Phase 2 staging and later production activation, install a secured job that 
 - Header: `Authorization: Bearer <CRON_SECRET>`
 
 Do not rely on cron-driven missed-call intros or follow-ups until Twilio staging tests pass.
+
+If the portal is deployed on a Vercel Hobby plan, Vercel's built-in cron limits are not sufficient for these frequent workers. Use an external scheduler instead. A production-safe default is Google Apps Script with Script Properties for `TIEGUI_CRON_SECRET` and these trigger cadences:
+
+- every 5 minutes: `/api/cron/intake`, `/api/cron/integrations/refresh`, `/api/cron/google/sync`
+- every 30 minutes: `/api/cron/ghost-buster`
+- daily at 06:00: `/api/cron/invoice-assist`
+
+A ready-to-paste Apps Script template lives at `apps/portal/ops/google-apps-script/production-cron-scheduler.gs`.
 
 ### Manual staging checklist
 
@@ -334,6 +511,13 @@ QBO_SCOPES=com.intuit.quickbooks.accounting
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 GOOGLE_REDIRECT_URI=http://localhost:3001/api/integrations/google/callback
+
+# Microsoft Outlook OAuth
+MICROSOFT_CLIENT_ID=...
+MICROSOFT_CLIENT_SECRET=...
+MICROSOFT_TENANT_ID=...
+MICROSOFT_REDIRECT_URI=http://localhost:3001/api/integrations/outlook/callback
+MICROSOFT_SCOPES=offline_access openid profile email User.Read Mail.Send
 ```
 
 OAuth + integration routes:
@@ -344,6 +528,8 @@ OAuth + integration routes:
 - `GET /api/integrations/qbo/callback`
 - `GET /api/integrations/google/connect` (per-user connect; use `?mode=read` or `?mode=write`)
 - `GET /api/integrations/google/callback`
+- `GET /api/integrations/outlook/connect`
+- `GET /api/integrations/outlook/callback`
 - `POST /api/integrations/google/sync` (sync current user's Google -> TieGui busy blocks now)
 - `POST /api/integrations/google/disconnect`
 - `POST /api/integrations/import` (bulk import trigger)

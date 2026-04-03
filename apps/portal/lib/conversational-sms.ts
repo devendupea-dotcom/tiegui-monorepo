@@ -2,10 +2,20 @@ import { addDays, addMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { Prisma } from "@prisma/client";
 import type { ConversationStage, ConversationTimeframe, LeadIntakeStage, MessageStatus } from "@prisma/client";
+import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
+import { buildMissedCallOpeningMessages } from "@/lib/missed-call-opening";
 import { prisma } from "@/lib/prisma";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
+import { containsLikelyWorkSummaryText } from "@/lib/lead-display";
+import { normalizeLeadCity } from "@/lib/lead-location";
 import { resolveMessageLocale } from "@/lib/message-language";
+import {
+  ACTIVE_CONVERSATION_FOLLOW_UP_STAGES,
+  shouldSkipQueuedFollowUp,
+  shouldSuppressMissedCallKickoff,
+} from "@/lib/sms-automation-guards";
+import { ensureSmsOptOutHint } from "@/lib/sms-compliance";
 import { sendOutboundSms } from "@/lib/sms";
 import { queueSmsDispatch } from "@/lib/sms-dispatch-queue";
 import {
@@ -69,6 +79,9 @@ const OFFERED_SLOT_LOOKAHEAD_DAYS = 10;
 const OFFER_HOLD_MINUTES = 10;
 const TAKEOVER_PAUSE_HOURS = 24;
 const HUMANIZED_REPLY_DELAY_MINUTES = 2;
+const MAX_HUMANIZED_REPLY_DELAY_MINUTES = 3;
+const MISSED_CALL_FOLLOW_UP_DELAY_MINUTES = 2;
+const FOLLOW_UP_CLAIM_HOLD_MINUTES = 5;
 
 type ConversationOrgConfig = {
   id: string;
@@ -113,6 +126,7 @@ type ConversationOrgConfig = {
 type ConversationLead = {
   id: string;
   orgId: string;
+  customerId: string | null;
   phoneE164: string;
   status: "NEW" | "CALLED_NO_ANSWER" | "VOICEMAIL" | "INTERESTED" | "FOLLOW_UP" | "BOOKED" | "NOT_INTERESTED" | "DNC";
   preferredLanguage: "EN" | "ES" | null;
@@ -222,10 +236,6 @@ function formatMissingField(stage: ConversationStage, locale: "EN" | "ES"): stri
   return "the missing details";
 }
 
-function optOutHint(locale: "EN" | "ES"): string {
-  return locale === "ES" ? "Responde STOP para dejar de recibir mensajes." : "Reply STOP to opt out.";
-}
-
 function sanitizeMessageBody(body: string): string {
   return body.replace(/\s+/g, " ").trim();
 }
@@ -257,8 +267,15 @@ function parseAddress(value: string): { kind: "ADDRESS" | "CITY" | "UNKNOWN"; ad
   }
 
   const words = trimmed.split(/\s+/);
-  if (!/\d/.test(trimmed) && words.length <= 5 && CITY_PATTERN.test(trimmed)) {
-    return { kind: "CITY", city: trimmed };
+  const normalizedCity = normalizeLeadCity(trimmed);
+  if (
+    !/\d/.test(trimmed) &&
+    normalizedCity &&
+    !containsLikelyWorkSummaryText(normalizedCity) &&
+    normalizedCity.split(/\s+/).length <= 5 &&
+    CITY_PATTERN.test(normalizedCity)
+  ) {
+    return { kind: "CITY", city: normalizedCity };
   }
 
   if (/\d/.test(trimmed) && words.length >= 3) {
@@ -285,6 +302,9 @@ function looksLikeLocationPhrase(value: string): boolean {
     .split(/\s+/)
     .filter(Boolean);
   if (words.some((word) => COMMON_WORK_LOCATION_COLLISION_TERMS.has(word))) {
+    return false;
+  }
+  if (containsLikelyWorkSummaryText(normalized)) {
     return false;
   }
   const parsed = parseAddress(normalized);
@@ -477,6 +497,7 @@ async function getConversationLead(leadId: string): Promise<ConversationLead | n
     select: {
       id: true,
       orgId: true,
+      customerId: true,
       phoneE164: true,
       status: true,
       preferredLanguage: true,
@@ -625,11 +646,11 @@ function buildTemplateBundle(input: {
   return {
     locale,
     ...base,
-    initial: resolved.initial || customInitial?.trim() || base.initial,
-    askAddress: resolved.askAddress || customAskAddress?.trim() || base.askAddress,
-    askTimeframe: resolved.askTimeframe || customAskTimeframe?.trim() || base.askTimeframe,
-    offerBooking: resolved.offerBooking || customOffer?.trim() || base.offerBooking,
-    bookingConfirmation: resolved.bookingConfirmation || customBooked?.trim() || base.bookingConfirmation,
+    initial: customInitial?.trim() || resolved.initial || base.initial,
+    askAddress: customAskAddress?.trim() || resolved.askAddress || base.askAddress,
+    askTimeframe: customAskTimeframe?.trim() || resolved.askTimeframe || base.askTimeframe,
+    offerBooking: customOffer?.trim() || resolved.offerBooking || base.offerBooking,
+    bookingConfirmation: customBooked?.trim() || resolved.bookingConfirmation || base.bookingConfirmation,
     followUp1: resolved.followUp1 || base.followUp1,
     followUp2: resolved.followUp2 || base.followUp2,
     followUp3: resolved.followUp3 || base.followUp3,
@@ -662,6 +683,14 @@ async function sendConversationMessage(input: {
     allowPendingA2P: input.allowPendingA2P,
   });
 
+  if (outbound.suppressed) {
+    return {
+      ok: false as const,
+      status: outbound.status,
+      notice: outbound.notice || "Suppressed outbound SMS because the contact is opted out.",
+    };
+  }
+
   if (outbound.status === "FAILED") {
     console.warn(
       `[sms:auto] outbound send failed orgId=${input.organization.id} leadId=${input.lead.id} type=${input.messageType} reason=${outbound.notice || "unknown"}`,
@@ -679,7 +708,7 @@ async function sendConversationMessage(input: {
 
   const now = new Date();
   await prisma.$transaction(async (tx) => {
-    await tx.message.create({
+    const message = await tx.message.create({
       data: {
         orgId: input.organization.id,
         leadId: input.lead.id,
@@ -692,6 +721,24 @@ async function sendConversationMessage(input: {
         providerMessageSid: outbound.providerMessageSid,
         status: outbound.status,
       },
+      select: {
+        id: true,
+        createdAt: true,
+      },
+    });
+
+    await recordOutboundSmsCommunicationEvent(tx, {
+      orgId: input.organization.id,
+      leadId: input.lead.id,
+      contactId: input.lead.customerId,
+      conversationId: input.stateId,
+      messageId: message.id,
+      body: text,
+      fromNumberE164: resolvedFrom,
+      toNumberE164: input.lead.phoneE164,
+      providerMessageSid: outbound.providerMessageSid,
+      status: outbound.status,
+      occurredAt: message.createdAt,
     });
 
     await tx.lead.update({
@@ -732,6 +779,7 @@ async function queueConversationReply(input: {
   messageType: "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
   fallbackFromNumberE164?: string | null;
   delayMinutes?: number;
+  sendAfterAt?: Date;
 }) {
   if (input.lead.status === "DNC") {
     return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Lead is opted out." };
@@ -751,8 +799,12 @@ async function queueConversationReply(input: {
     };
   }
 
-  const delayMinutes = Math.max(1, Math.min(5, input.delayMinutes ?? HUMANIZED_REPLY_DELAY_MINUTES));
-  const sendAfterAt = addMinutes(new Date(), delayMinutes);
+  const sendAfterAt =
+    input.sendAfterAt ||
+    addMinutes(
+      new Date(),
+      Math.max(1, Math.min(MAX_HUMANIZED_REPLY_DELAY_MINUTES, input.delayMinutes ?? HUMANIZED_REPLY_DELAY_MINUTES)),
+    );
   await queueSmsDispatch({
     orgId: input.organization.id,
     leadId: input.lead.id,
@@ -811,6 +863,7 @@ async function setNextFollowUp(input: {
   stateId: string;
   stage: ConversationStage;
   sentFollowUpCount: number;
+  fromAt?: Date;
 }) {
   const cadence = getFollowUpCadenceMinutes(input.stage);
   const nextMinutes = cadence[input.sentFollowUpCount];
@@ -831,7 +884,7 @@ async function setNextFollowUp(input: {
     return;
   }
 
-  const nextFollowUpAt = addMinutes(new Date(), nextMinutes);
+  const nextFollowUpAt = addMinutes(input.fromAt || new Date(), nextMinutes);
   await prisma.$transaction([
     prisma.leadConversationState.update({
       where: { id: input.stateId },
@@ -1018,6 +1071,16 @@ async function createBookingOptions(input: {
 
 function buildSlotList(options: SlotOption[]): string {
   return options.map((option) => `${option.id}) ${option.label}`).join("  ");
+}
+
+function buildSlotTemplateContext(options: SlotOption[]) {
+  const [slot1 = "", slot2 = "", slot3 = ""] = options.map((option) => `${option.id}) ${option.label}`);
+  return {
+    slotList: buildSlotList(options),
+    slot1,
+    slot2,
+    slot3,
+  };
 }
 
 async function bookFromSelectedOption(input: {
@@ -1216,6 +1279,7 @@ export async function startConversationalSmsFromMissedCall(input: {
   leadId: string;
   toNumberE164: string;
 }) {
+  const now = new Date();
   const [organization, lead] = await Promise.all([
     getConversationOrgConfig(input.orgId),
     getConversationLead(input.leadId),
@@ -1223,21 +1287,34 @@ export async function startConversationalSmsFromMissedCall(input: {
   if (!organization || !lead || lead.status === "DNC" || !organization.autoReplyEnabled) return;
 
   const state = await getOrCreateConversationState(lead);
-  if (state.stoppedAt || state.stage === "BOOKED" || state.stage === "CLOSED") return;
+  if (shouldSuppressMissedCallKickoff({ state, now })) return;
 
   const templates = buildTemplateBundle({ organization, lead });
-  const baseInitial = organization.smsGreetingLine
-    ? `${organization.smsGreetingLine}\n\n${templates.initial}`
-    : templates.initial;
-  const initial = `${renderSmsTemplate(baseInitial, { bizName: organization.name })}\n\n${optOutHint(templates.locale)}`;
-  await sendConversationMessage({
+  const kickoff = buildMissedCallOpeningMessages({
+    organization,
+    locale: templates.locale,
+    openerTemplate: templates.initial,
+  });
+  const initialSend = await sendConversationMessage({
     organization,
     lead,
     stateId: state.id,
-    body: withSignature({ body: initial, websiteSignature: organization.smsWebsiteSignature }),
+    body: kickoff.immediateBody,
     messageType: "AUTOMATION",
     allowPendingA2P: true,
   });
+
+  if (initialSend.status !== "FAILED" && kickoff.delayedPromptBody) {
+    await queueConversationReply({
+      organization,
+      lead,
+      stateId: state.id,
+      body: kickoff.delayedPromptBody,
+      messageType: "AUTOMATION",
+      fallbackFromNumberE164: input.toNumberE164,
+      delayMinutes: MISSED_CALL_FOLLOW_UP_DELAY_MINUTES,
+    });
+  }
 
   await setConversationStage({
     orgId: organization.id,
@@ -1259,6 +1336,7 @@ export async function startConversationalSmsFromMissedCall(input: {
     stateId: state.id,
     stage: "ASKED_WORK",
     sentFollowUpCount: 0,
+    fromAt: initialSend.status === "FAILED" ? undefined : new Date(),
   });
 }
 
@@ -1268,6 +1346,7 @@ export async function queueConversationalIntroForQuietHours(input: {
   toNumberE164: string;
   sendAfterAt: Date;
 }) {
+  const now = new Date();
   const [organization, lead] = await Promise.all([
     getConversationOrgConfig(input.orgId),
     getConversationLead(input.leadId),
@@ -1277,12 +1356,15 @@ export async function queueConversationalIntroForQuietHours(input: {
   }
 
   const state = await getOrCreateConversationState(lead);
+  if (shouldSuppressMissedCallKickoff({ state, now })) {
+    return { queued: false as const };
+  }
   const templates = buildTemplateBundle({ organization, lead });
-  const baseInitial = organization.smsGreetingLine
-    ? `${organization.smsGreetingLine}\n\n${templates.initial}`
-    : templates.initial;
-  const initial = `${renderSmsTemplate(baseInitial, { bizName: organization.name })}\n\n${optOutHint(templates.locale)}`;
-  const body = withSignature({ body: initial, websiteSignature: organization.smsWebsiteSignature });
+  const kickoff = buildMissedCallOpeningMessages({
+    organization,
+    locale: templates.locale,
+    openerTemplate: templates.initial,
+  });
   const fromNumber = organization.smsFromNumberE164 || input.toNumberE164;
   const queued = await queueSmsDispatch({
     orgId: organization.id,
@@ -1291,9 +1373,21 @@ export async function queueConversationalIntroForQuietHours(input: {
     messageType: "AUTOMATION",
     fromNumberE164: fromNumber,
     toNumberE164: input.toNumberE164,
-    body,
+    body: kickoff.immediateBody,
     sendAfterAt: input.sendAfterAt,
   });
+
+  if (kickoff.delayedPromptBody) {
+    await queueConversationReply({
+      organization,
+      lead,
+      stateId: state.id,
+      body: kickoff.delayedPromptBody,
+      messageType: "AUTOMATION",
+      fallbackFromNumberE164: input.toNumberE164,
+      sendAfterAt: addMinutes(input.sendAfterAt, MISSED_CALL_FOLLOW_UP_DELAY_MINUTES),
+    });
+  }
 
   await setConversationStage({
     orgId: organization.id,
@@ -1310,8 +1404,12 @@ export async function queueConversationalIntroForQuietHours(input: {
     },
   });
 
-  // Schedule relative to queue target time so there is still a reminder ladder.
-  const firstFollowUp = addMinutes(input.sendAfterAt, getFollowUpCadenceMinutes("ASKED_WORK")[0] || 10);
+  // Schedule relative to the delayed ask-work prompt so there is still a reminder ladder.
+  const firstFollowUp = addMinutes(
+    input.sendAfterAt,
+    (kickoff.delayedPromptBody ? MISSED_CALL_FOLLOW_UP_DELAY_MINUTES : 0) +
+      (getFollowUpCadenceMinutes("ASKED_WORK")[0] || 10),
+  );
   await prisma.$transaction([
     prisma.leadConversationState.update({
       where: { id: state.id },
@@ -1440,9 +1538,10 @@ export async function handleConversationalSmsInbound(input: {
       });
     });
 
-    const restartPrompt = `${renderSmsTemplate(templates.initial, { bizName: organization.name })}\n\n${optOutHint(
+    const restartPrompt = ensureSmsOptOutHint(
+      renderSmsTemplate(templates.initial, { bizName: organization.name }),
       templates.locale,
-    )}`;
+    );
     await sendConversationMessage({
       organization,
       lead: { ...lead, status: "FOLLOW_UP" },
@@ -1702,12 +1801,12 @@ export async function handleConversationalSmsInbound(input: {
       return { stage: "ASKED_TIMEFRAME", action: "ADVANCED" };
     }
 
-    const prompt = addressCity
+    const prompt = addressText || addressCity
       ? renderSmsTemplate(templates.clarification, {
           bizName: organization.name,
           missingField: formatMissingField("ASKED_ADDRESS", templates.locale),
         })
-      : renderSmsTemplate(templates.askCity, { bizName: organization.name });
+      : renderSmsTemplate(templates.askAddress, { bizName: organization.name });
     await queueConversationReply({
       organization,
       lead,
@@ -1810,10 +1909,9 @@ export async function handleConversationalSmsInbound(input: {
         fallbackFromNumberE164: input.toNumberE164,
       });
     } else {
-      const slotList = buildSlotList(options);
       const offer = renderSmsTemplate(templates.offerBooking, {
         bizName: organization.name,
-        slotList,
+        ...buildSlotTemplateContext(options),
         workingHours: organization.smsWorkingHoursText || "",
       });
       await queueConversationReply({
@@ -1913,18 +2011,31 @@ export async function handleConversationalSmsInbound(input: {
   return { stage: currentStage, action: "IGNORED" };
 }
 
-export async function processDueConversationalFollowUps(input?: { maxLeads?: number }) {
-  const now = new Date();
-  const limit = Math.max(1, Math.min(500, input?.maxLeads ?? 150));
-  const dueStates = await prisma.leadConversationState.findMany({
+async function claimDueConversationFollowUp(input: {
+  stateId: string;
+  stage: ConversationStage;
+  followUpStep: number;
+  nextFollowUpAt: Date;
+}) {
+  const holdUntil = addMinutes(new Date(), FOLLOW_UP_CLAIM_HOLD_MINUTES);
+  const claim = await prisma.leadConversationState.updateMany({
     where: {
-      nextFollowUpAt: { lte: now },
-      stage: { in: ["ASKED_WORK", "ASKED_ADDRESS", "ASKED_TIMEFRAME", "OFFERED_BOOKING"] },
-      stoppedAt: null,
-      OR: [{ pausedUntil: null }, { pausedUntil: { lte: now } }],
+      id: input.stateId,
+      stage: input.stage,
+      followUpStep: input.followUpStep,
+      nextFollowUpAt: input.nextFollowUpAt,
     },
-    orderBy: [{ nextFollowUpAt: "asc" }, { updatedAt: "asc" }],
-    take: limit,
+    data: {
+      nextFollowUpAt: holdUntil,
+    },
+  });
+
+  return claim.count > 0;
+}
+
+async function getLiveConversationFollowUpState(stateId: string) {
+  return prisma.leadConversationState.findUnique({
+    where: { id: stateId },
     select: {
       id: true,
       orgId: true,
@@ -1936,6 +2047,10 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       addressCity: true,
       timeframe: true,
       bookingOptions: true,
+      lastInboundAt: true,
+      nextFollowUpAt: true,
+      pausedUntil: true,
+      stoppedAt: true,
       lead: {
         select: {
           id: true,
@@ -1950,6 +2065,30 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       },
     },
   });
+}
+
+export async function processDueConversationalFollowUps(input?: { maxLeads?: number }) {
+  const now = new Date();
+  const limit = Math.max(1, Math.min(500, input?.maxLeads ?? 150));
+  const dueStates = await prisma.leadConversationState.findMany({
+    where: {
+      nextFollowUpAt: { lte: now },
+      stage: { in: [...ACTIVE_CONVERSATION_FOLLOW_UP_STAGES] },
+      stoppedAt: null,
+      OR: [{ pausedUntil: null }, { pausedUntil: { lte: now } }],
+    },
+    orderBy: [{ nextFollowUpAt: "asc" }, { updatedAt: "asc" }],
+    take: limit,
+    select: {
+      id: true,
+      orgId: true,
+      leadId: true,
+      stage: true,
+      followUpStep: true,
+      lastInboundAt: true,
+      nextFollowUpAt: true,
+    },
+  });
 
   let scanned = dueStates.length;
   let sent = 0;
@@ -1958,7 +2097,59 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
   const orgCache = new Map<string, ConversationOrgConfig | null>();
 
   for (const item of dueStates) {
-    const lead = item.lead as ConversationLead;
+    if (!item.nextFollowUpAt) {
+      skipped += 1;
+      continue;
+    }
+
+    const claimed = await claimDueConversationFollowUp({
+      stateId: item.id,
+      stage: item.stage,
+      followUpStep: item.followUpStep,
+      nextFollowUpAt: item.nextFollowUpAt,
+    });
+    if (!claimed) {
+      continue;
+    }
+
+    const liveState = await getLiveConversationFollowUpState(item.id);
+    if (!liveState || !liveState.lead) {
+      skipped += 1;
+      continue;
+    }
+
+    if (
+      shouldSkipQueuedFollowUp({
+        loaded: {
+          stage: item.stage,
+          followUpStep: item.followUpStep,
+          lastInboundAt: item.lastInboundAt,
+        },
+        current: {
+          stage: liveState.stage,
+          followUpStep: liveState.followUpStep,
+          lastInboundAt: liveState.lastInboundAt,
+          pausedUntil: liveState.pausedUntil,
+          stoppedAt: liveState.stoppedAt,
+        },
+        now,
+      })
+    ) {
+      skipped += 1;
+      await prisma.$transaction([
+        prisma.leadConversationState.update({
+          where: { id: liveState.id },
+          data: { nextFollowUpAt: null },
+        }),
+        prisma.lead.update({
+          where: { id: liveState.lead.id },
+          data: { nextFollowUpAt: null },
+        }),
+      ]);
+      continue;
+    }
+
+    const lead = liveState.lead as ConversationLead;
     let org = orgCache.get(item.orgId) ?? null;
     if (!orgCache.has(item.orgId)) {
       org = await getConversationOrgConfig(item.orgId);
@@ -1968,7 +2159,7 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       skipped += 1;
       await prisma.$transaction([
         prisma.leadConversationState.update({
-          where: { id: item.id },
+          where: { id: liveState.id },
           data: { nextFollowUpAt: null },
         }),
         prisma.lead.update({
@@ -1983,7 +2174,7 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       skipped += 1;
       await prisma.$transaction([
         prisma.leadConversationState.update({
-          where: { id: item.id },
+          where: { id: liveState.id },
           data: { nextFollowUpAt: null },
         }),
         prisma.lead.update({
@@ -2010,7 +2201,7 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       });
       await prisma.$transaction([
         prisma.leadConversationState.update({
-          where: { id: item.id },
+          where: { id: liveState.id },
           data: { nextFollowUpAt: nextWindowAt },
         }),
         prisma.lead.update({
@@ -2026,11 +2217,11 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       organization: org,
       lead,
     });
-    const missingField = formatMissingField(item.stage, templates.locale);
+    const missingField = formatMissingField(liveState.stage, templates.locale);
     const template =
-      item.followUpStep >= 2
+      liveState.followUpStep >= 2
         ? templates.followUp3
-        : item.followUpStep >= 1
+        : liveState.followUpStep >= 1
           ? templates.followUp2
           : templates.followUp1;
 
@@ -2040,26 +2231,26 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       websiteSignature: org.smsWebsiteSignature || "",
     });
 
-    if (item.stage === "ASKED_WORK") {
+    if (liveState.stage === "ASKED_WORK") {
       body = `${body}\n\n${renderSmsTemplate(templates.initial, { bizName: org.name })}`;
-    } else if (item.stage === "ASKED_ADDRESS") {
+    } else if (liveState.stage === "ASKED_ADDRESS") {
       body = `${body}\n\n${renderSmsTemplate(templates.askAddress, { bizName: org.name })}`;
-    } else if (item.stage === "ASKED_TIMEFRAME") {
+    } else if (liveState.stage === "ASKED_TIMEFRAME") {
       body = `${body}\n\n${renderSmsTemplate(templates.askTimeframe, { bizName: org.name })}`;
-    } else if (item.stage === "OFFERED_BOOKING") {
+    } else if (liveState.stage === "OFFERED_BOOKING") {
       const options = await createBookingOptions({
         organization: org,
         lead,
         locale: templates.locale,
       });
       await prisma.leadConversationState.update({
-        where: { id: item.id },
+        where: { id: liveState.id },
         data: { bookingOptions: options as unknown as Prisma.InputJsonValue },
       });
       if (options.length > 0) {
         body = renderSmsTemplate(templates.offerBooking, {
           bizName: org.name,
-          slotList: buildSlotList(options),
+          ...buildSlotTemplateContext(options),
         });
       } else {
         body =
@@ -2072,7 +2263,7 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
     const result = await sendConversationMessage({
       organization: org,
       lead,
-      stateId: item.id,
+      stateId: liveState.id,
       body: withSignature({ body, websiteSignature: org.smsWebsiteSignature }),
       messageType: "SYSTEM_NUDGE",
     });
@@ -2081,7 +2272,7 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       const retryAt = addMinutes(now, 20);
       await prisma.$transaction([
         prisma.leadConversationState.update({
-          where: { id: item.id },
+          where: { id: liveState.id },
           data: { nextFollowUpAt: retryAt },
         }),
         prisma.lead.update({
@@ -2093,13 +2284,36 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
     }
 
     sent += 1;
-    await setNextFollowUp({
-      organization: org,
-      leadId: lead.id,
-      stateId: item.id,
-      stage: item.stage,
-      sentFollowUpCount: item.followUpStep + 1,
+    const postSendState = await prisma.leadConversationState.findUnique({
+      where: { id: liveState.id },
+      select: {
+        stage: true,
+        followUpStep: true,
+        lastInboundAt: true,
+        pausedUntil: true,
+        stoppedAt: true,
+      },
     });
+    if (
+      postSendState &&
+      !shouldSkipQueuedFollowUp({
+        loaded: {
+          stage: liveState.stage,
+          followUpStep: liveState.followUpStep,
+          lastInboundAt: liveState.lastInboundAt,
+        },
+        current: postSendState,
+        now: new Date(),
+      })
+    ) {
+      await setNextFollowUp({
+        organization: org,
+        leadId: lead.id,
+        stateId: liveState.id,
+        stage: liveState.stage,
+        sentFollowUpCount: liveState.followUpStep + 1,
+      });
+    }
   }
 
   return {

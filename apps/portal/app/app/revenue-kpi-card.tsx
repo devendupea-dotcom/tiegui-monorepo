@@ -102,7 +102,7 @@ export default function RevenueKpiCard({
 
   return (
     <article className={`dashboard-kpi-card ${href ? "dashboard-kpi-card-linkable" : ""}`.trim()}>
-      {href ? <Link aria-label="Open invoices" className="dashboard-kpi-overlay-link" href={href} /> : null}
+      {href ? <Link aria-label="Open invoices" className="dashboard-kpi-overlay-link" href={href} prefetch={false} /> : null}
       <div className="dashboard-kpi-content">
         <div className="dashboard-kpi-head">
           <span className="dashboard-kpi-label">Revenue</span>

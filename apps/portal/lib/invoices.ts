@@ -78,7 +78,12 @@ export function deriveInvoiceStatus(input: {
   const paid = roundMoney(input.amountPaid);
   const total = roundMoney(input.total);
 
-  if (total.lte(0) || paid.gte(total)) {
+  // Zero-dollar invoices should stay editable instead of auto-flipping to PAID.
+  if (total.lte(0)) {
+    return input.currentStatus === "DRAFT" ? "DRAFT" : "SENT";
+  }
+
+  if (paid.gte(total)) {
     return "PAID";
   }
 

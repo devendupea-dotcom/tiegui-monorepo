@@ -1,18 +1,26 @@
 import type { CallDirection, CallStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { buildCommunicationIdempotencyKey, upsertCommunicationEvent, upsertVoicemailArtifact } from "@/lib/communication-events";
 import { normalizeEnvValue } from "@/lib/env";
+import { ensureLeadAndContactForInboundPhone } from "@/lib/lead-contact-resolution";
+import { processMissedCallRecovery } from "@/lib/missed-call-recovery";
 import { normalizeE164 } from "@/lib/phone";
-import {
-  queueConversationalIntroForQuietHours,
-  startConversationalSmsFromMissedCall,
-} from "@/lib/conversational-sms";
-import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 import { validateTwilioWebhook } from "@/lib/twilio";
+import {
+  buildTwilioVoiceEvent,
+  mapCommunicationEventToLegacyCallStatus,
+  mapTwilioTranscriptionStatus,
+  normalizeTwilioVoiceOutcomeEvents,
+  parseTwilioVoiceSnapshot,
+  type NormalizedTwilioVoiceEvent,
+  type TwilioVoiceSnapshot,
+} from "@/lib/twilio-communication-events";
 import { decryptTwilioAuthToken, maskSid } from "@/lib/twilio-config-crypto";
 import { resolveTwilioVoiceForwardingNumber } from "@/lib/twilio-org";
 
 type VoiceOrganization = {
   id: string;
+  name: string;
   smsFromNumberE164: string | null;
   smsQuietHoursStartMinute: number;
   smsQuietHoursEndMinute: number;
@@ -47,6 +55,11 @@ export type TwilioVoiceWebhookContext = {
   authToken: string | null;
 };
 
+type VoiceCallRecord = {
+  id: string;
+  leadId: string | null;
+};
+
 const voiceConfigSelect = {
   id: true,
   organizationId: true,
@@ -58,6 +71,7 @@ const voiceConfigSelect = {
   organization: {
     select: {
       id: true,
+      name: true,
       smsFromNumberE164: true,
       smsQuietHoursStartMinute: true,
       smsQuietHoursEndMinute: true,
@@ -161,39 +175,164 @@ export function mapVoiceCallDirection(value: string, fallback: CallDirection = "
   return normalized.includes("inbound") ? "INBOUND" : "OUTBOUND";
 }
 
-export function mapVoiceCallStatus(value: string): CallStatus {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "completed" || normalized === "in-progress") {
-    return "ANSWERED";
-  }
-  if (
-    normalized === "no-answer" ||
-    normalized === "busy" ||
-    normalized === "failed" ||
-    normalized === "canceled"
-  ) {
-    return "MISSED";
-  }
-  return "RINGING";
+function voiceEventKey(snapshot: TwilioVoiceSnapshot, type: string, ...parts: Array<string | number | null | undefined>) {
+  return buildCommunicationIdempotencyKey(
+    "voice-event",
+    snapshot.callSid || snapshot.parentCallSid || "unknown",
+    type,
+    ...parts,
+  );
 }
 
-export function mapDialCallStatus(value: string): CallStatus | null {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) {
-    return null;
+async function upsertVoiceCallRecord(
+  tx: Prisma.TransactionClient,
+  input: {
+    context: TwilioVoiceWebhookContext;
+    callSid: string | null;
+    leadId: string | null;
+    fromNumber: string | null;
+    toNumber: string;
+    direction: CallDirection;
+    status: CallStatus;
+    startedAt: Date;
+    endedAt: Date | null;
+  },
+): Promise<VoiceCallRecord> {
+  const baseData = {
+    orgId: input.context.organization.id,
+    leadId: input.leadId,
+    fromNumberE164: input.fromNumber || "",
+    toNumberE164: input.toNumber,
+    trackingNumberE164: input.toNumber,
+    direction: input.direction,
+    status: input.status,
+    startedAt: Number.isNaN(input.startedAt.getTime()) ? new Date() : input.startedAt,
+    endedAt: input.endedAt,
+  };
+
+  if (input.callSid) {
+    return tx.call.upsert({
+      where: { twilioCallSid: input.callSid },
+      update: baseData,
+      create: {
+        ...baseData,
+        twilioCallSid: input.callSid,
+      },
+      select: {
+        id: true,
+        leadId: true,
+      },
+    });
   }
-  if (normalized === "answered" || normalized === "completed") {
-    return "ANSWERED";
+
+  return tx.call.create({
+    data: baseData,
+    select: {
+      id: true,
+      leadId: true,
+    },
+  });
+}
+
+async function persistVoiceCommunicationEvent(
+  tx: Prisma.TransactionClient,
+  input: {
+    context: TwilioVoiceWebhookContext;
+    leadId?: string | null;
+    contactId?: string | null;
+    callId?: string | null;
+    event: NormalizedTwilioVoiceEvent;
+    snapshot: TwilioVoiceSnapshot;
+    occurredAt: Date;
+    idempotencyKey: string;
+  },
+) {
+  return upsertCommunicationEvent(tx, {
+    orgId: input.context.organization.id,
+    leadId: input.leadId || null,
+    contactId: input.contactId || null,
+    callId: input.callId || null,
+    type: input.event.type,
+    channel: "VOICE",
+    occurredAt: input.occurredAt,
+    summary: input.event.summary,
+    metadataJson: input.event.metadata,
+    provider: "TWILIO",
+    providerCallSid: input.snapshot.callSid,
+    providerParentCallSid: input.snapshot.parentCallSid,
+    providerStatus: input.event.providerStatus,
+    idempotencyKey: input.idempotencyKey,
+  });
+}
+
+export async function trackVoiceCallStart(input: {
+  context: TwilioVoiceWebhookContext;
+  form: FormData;
+}) {
+  const { context, form } = input;
+  const callSid = asTwilioString(form.get("CallSid")) || null;
+  const fromNumber = normalizeE164(asTwilioString(form.get("From")));
+  const toNumber =
+    normalizeE164(asTwilioString(form.get("To"))) ||
+    normalizeE164(asTwilioString(form.get("Called"))) ||
+    normalizeE164(context.twilioConfig.phoneNumber);
+  const direction = mapVoiceCallDirection(asTwilioString(form.get("Direction")), "INBOUND");
+  const snapshot = parseTwilioVoiceSnapshot({ form });
+
+  if (!toNumber) {
+    return {
+      leadId: null as string | null,
+      contactId: null as string | null,
+      callId: null as string | null,
+      status: "RINGING" as CallStatus,
+    };
   }
-  if (
-    normalized === "no-answer" ||
-    normalized === "busy" ||
-    normalized === "failed" ||
-    normalized === "canceled"
-  ) {
-    return "MISSED";
-  }
-  return null;
+
+  return prisma.$transaction(async (tx) => {
+    const resolved =
+      direction === "INBOUND"
+        ? await ensureLeadAndContactForInboundPhone(tx, {
+            orgId: context.organization.id,
+            phoneE164: fromNumber,
+            at: snapshot.timestamp,
+            preferredLanguage: context.organization.messageLanguage === "ES" ? "ES" : null,
+            leadSource: "CALL",
+          })
+        : { leadId: null, contactId: null };
+
+    const call = await upsertVoiceCallRecord(tx, {
+      context,
+      callSid,
+      leadId: resolved.leadId,
+      fromNumber,
+      toNumber,
+      direction,
+      status: "RINGING",
+      startedAt: snapshot.timestamp,
+      endedAt: null,
+    });
+
+    await persistVoiceCommunicationEvent(tx, {
+      context,
+      leadId: resolved.leadId,
+      contactId: resolved.contactId,
+      callId: call.id,
+      snapshot,
+      event: buildTwilioVoiceEvent({
+        type: "INBOUND_CALL_RECEIVED",
+        snapshot,
+      }),
+      occurredAt: snapshot.timestamp,
+      idempotencyKey: voiceEventKey(snapshot, "INBOUND_CALL_RECEIVED"),
+    });
+
+    return {
+      leadId: resolved.leadId,
+      contactId: resolved.contactId,
+      callId: call.id,
+      status: "RINGING" as CallStatus,
+    };
+  });
 }
 
 export function getVoiceCalendarTimezone(context: TwilioVoiceWebhookContext): string {
@@ -207,9 +346,76 @@ export async function resolveForwardTarget(context: TwilioVoiceWebhookContext): 
   });
 }
 
+export async function recordVoiceForwarding(input: {
+  context: TwilioVoiceWebhookContext;
+  form: FormData;
+  leadId?: string | null;
+  contactId?: string | null;
+  callId?: string | null;
+  forwardedTo: string;
+}) {
+  const snapshot = parseTwilioVoiceSnapshot({
+    form: input.form,
+    forwardedTo: input.forwardedTo,
+  });
+
+  return prisma.$transaction(async (tx) =>
+    persistVoiceCommunicationEvent(tx, {
+      context: input.context,
+      leadId: input.leadId || null,
+      contactId: input.contactId || null,
+      callId: input.callId || null,
+      snapshot,
+      event: buildTwilioVoiceEvent({
+        type: "FORWARDED_TO_OWNER",
+        snapshot,
+      }),
+      occurredAt: new Date(),
+      idempotencyKey: voiceEventKey(snapshot, "FORWARDED_TO_OWNER", input.forwardedTo),
+    }),
+  );
+}
+
+export async function recordVoiceVoicemailReached(input: {
+  context: TwilioVoiceWebhookContext;
+  form: FormData;
+  leadId?: string | null;
+  contactId?: string | null;
+  callId?: string | null;
+  reason: string;
+  forwardedTo?: string | null;
+}) {
+  const snapshot = parseTwilioVoiceSnapshot({
+    form: input.form,
+    forwardedTo: input.forwardedTo || null,
+    voicemailFallbackStage: true,
+  });
+
+  return prisma.$transaction(async (tx) =>
+    persistVoiceCommunicationEvent(tx, {
+      context: input.context,
+      leadId: input.leadId || null,
+      contactId: input.contactId || null,
+      callId: input.callId || null,
+      snapshot,
+      event: buildTwilioVoiceEvent({
+        type: "VOICEMAIL_REACHED",
+        snapshot,
+        extraMetadata: {
+          reason: input.reason,
+        },
+      }),
+      occurredAt: new Date(),
+      idempotencyKey: voiceEventKey(snapshot, "VOICEMAIL_REACHED", input.reason),
+    }),
+  );
+}
+
 export async function recordVoiceDialOutcome(input: {
   context: TwilioVoiceWebhookContext;
   form: FormData;
+  voicemailFallbackStage?: boolean;
+  skipMissedCallRecovery?: boolean;
 }) {
   const { context, form } = input;
   const callSid = asTwilioString(form.get("CallSid")) || null;
@@ -219,151 +425,154 @@ export async function recordVoiceDialOutcome(input: {
     normalizeE164(asTwilioString(form.get("Called"))) ||
     normalizeE164(context.twilioConfig.phoneNumber);
   const direction = mapVoiceCallDirection(asTwilioString(form.get("Direction")), "INBOUND");
-  const mappedStatus =
-    mapDialCallStatus(asTwilioString(form.get("DialCallStatus"))) ||
-    mapVoiceCallStatus(asTwilioString(form.get("CallStatus")));
-  const startedAtRaw = asTwilioString(form.get("Timestamp"));
-  const startedAt = startedAtRaw ? new Date(startedAtRaw) : new Date();
+  const snapshot = parseTwilioVoiceSnapshot({
+    form,
+    voicemailFallbackStage: input.voicemailFallbackStage,
+  });
+  const normalizedEvents = normalizeTwilioVoiceOutcomeEvents(snapshot);
+  const finalEvent =
+    normalizedEvents[normalizedEvents.length - 1] ||
+    buildTwilioVoiceEvent({
+      type: "FAILED",
+      snapshot,
+      extraMetadata: {
+        normalizationFallback: "empty",
+      },
+    });
+  const mappedStatus = mapCommunicationEventToLegacyCallStatus(finalEvent.type);
   const now = new Date();
 
   if (!toNumber) {
-    return { status: mappedStatus, leadId: null as string | null };
+    return {
+      status: mappedStatus,
+      leadId: null as string | null,
+      contactId: null as string | null,
+      callId: null as string | null,
+      eventTypes: normalizedEvents.map((event) => event.type),
+    };
   }
 
-  const senderNumber = normalizeE164(context.twilioConfig.phoneNumber) || context.organization.smsFromNumberE164;
-  const calendarTimezone = getVoiceCalendarTimezone(context);
+  const persisted = await prisma.$transaction(async (tx) => {
+    const existingCall = callSid
+      ? await tx.call.findUnique({
+          where: { twilioCallSid: callSid },
+          select: {
+            id: true,
+            leadId: true,
+          },
+        })
+      : null;
 
-  let leadId: string | null = null;
-  if (fromNumber && direction === "INBOUND") {
-    const lead = await prisma.lead.findFirst({
-      where: {
-        orgId: context.organization.id,
-        phoneE164: fromNumber,
-      },
-      select: {
-        id: true,
-        firstContactedAt: true,
-      },
+    const resolved =
+      direction === "INBOUND"
+        ? await ensureLeadAndContactForInboundPhone(tx, {
+            orgId: context.organization.id,
+            phoneE164: fromNumber,
+            at: now,
+            preferredLanguage: context.organization.messageLanguage === "ES" ? "ES" : null,
+            leadSource: "CALL",
+            existingLeadId: existingCall?.leadId || null,
+          })
+        : { leadId: existingCall?.leadId || null, contactId: null };
+
+    const call = await upsertVoiceCallRecord(tx, {
+      context,
+      callSid,
+      leadId: resolved.leadId,
+      fromNumber,
+      toNumber,
+      direction,
+      status: mappedStatus,
+      startedAt: snapshot.timestamp,
+      endedAt: mappedStatus === "RINGING" ? null : now,
     });
 
-    if (!lead) {
-      const createdLead = await prisma.lead.create({
-        data: {
+    const persistedEvents = [];
+    for (const event of normalizedEvents) {
+      const persistedEvent = await persistVoiceCommunicationEvent(tx, {
+        context,
+        leadId: resolved.leadId,
+        contactId: resolved.contactId,
+        callId: call.id,
+        snapshot,
+        event,
+        occurredAt: now,
+        idempotencyKey: voiceEventKey(
+          snapshot,
+          event.type,
+          snapshot.recordingSid,
+          snapshot.rawDialCallStatus,
+          snapshot.rawCallStatus,
+        ),
+      });
+      persistedEvents.push(persistedEvent);
+    }
+
+    const voicemailEvent = normalizedEvents.find((event) => event.type === "VOICEMAIL_LEFT");
+    if (voicemailEvent) {
+      const persistedVoicemailEvent = persistedEvents.find((event) => event.type === "VOICEMAIL_LEFT");
+      if (persistedVoicemailEvent) {
+        await upsertVoicemailArtifact(tx, {
           orgId: context.organization.id,
-          phoneE164: fromNumber,
-          preferredLanguage: context.organization.messageLanguage === "ES" ? "ES" : null,
-          status: "NEW",
-          leadSource: "CALL",
-          firstContactedAt: now,
-          lastContactedAt: now,
-        },
-        select: { id: true },
-      });
-      leadId = createdLead.id;
-    } else {
-      leadId = lead.id;
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: {
-          firstContactedAt: lead.firstContactedAt || now,
-          lastContactedAt: now,
-        },
-      });
+          leadId: resolved.leadId,
+          contactId: resolved.contactId,
+          callId: call.id,
+          communicationEventId: persistedVoicemailEvent.id,
+          providerCallSid: snapshot.callSid,
+          recordingSid: snapshot.recordingSid,
+          recordingUrl: snapshot.recordingUrl,
+          recordingDurationSeconds: snapshot.recordingDurationSeconds,
+          transcriptionStatus: mapTwilioTranscriptionStatus(snapshot.transcriptionStatus),
+          transcriptionText: snapshot.transcriptionText,
+          voicemailAt: now,
+          metadataJson: {
+            eventSummary: voicemailEvent.summary,
+            payload: snapshot.payload,
+          },
+        });
+      }
     }
-  }
 
-  let existingCallStatus: CallStatus | null = null;
-  if (callSid) {
-    const existingCall = await prisma.call.findUnique({
-      where: { twilioCallSid: callSid },
-      select: { status: true },
-    });
-    existingCallStatus = existingCall?.status || null;
+    return {
+      leadId: resolved.leadId,
+      contactId: resolved.contactId,
+      callId: call.id,
+      eventTypes: normalizedEvents.map((event) => event.type),
+    };
+  });
 
-    await prisma.call.upsert({
-      where: { twilioCallSid: callSid },
-      update: {
-        orgId: context.organization.id,
-        leadId,
-        fromNumberE164: fromNumber || "",
-        toNumberE164: toNumber,
-        trackingNumberE164: toNumber,
-        direction,
-        status: mappedStatus,
-        endedAt: mappedStatus === "RINGING" ? null : now,
-      },
-      create: {
-        orgId: context.organization.id,
-        leadId,
-        fromNumberE164: fromNumber || "",
-        toNumberE164: toNumber,
-        trackingNumberE164: toNumber,
-        direction,
-        status: mappedStatus,
-        twilioCallSid: callSid,
-        startedAt: Number.isNaN(startedAt.getTime()) ? now : startedAt,
-        endedAt: mappedStatus === "RINGING" ? null : now,
-      },
-    });
-  } else {
-    await prisma.call.create({
-      data: {
-        orgId: context.organization.id,
-        leadId,
-        fromNumberE164: fromNumber || "",
-        toNumberE164: toNumber,
-        trackingNumberE164: toNumber,
-        direction,
-        status: mappedStatus,
-        startedAt: Number.isNaN(startedAt.getTime()) ? now : startedAt,
-        endedAt: mappedStatus === "RINGING" ? null : now,
-      },
-    });
-  }
-
-  const isMissedInboundCall =
+  const shouldProcessMissedCallRecovery =
+    !input.skipMissedCallRecovery &&
     direction === "INBOUND" &&
-    mappedStatus === "MISSED" &&
-    existingCallStatus !== "MISSED";
-
-  const eligibleForReply =
-    isMissedInboundCall &&
-    Boolean(context.organization.missedCallAutoReplyOn) &&
-    Boolean(senderNumber) &&
+    Boolean(persisted.leadId) &&
     Boolean(fromNumber) &&
-    Boolean(leadId);
+    persisted.eventTypes.some((type) => ["NO_ANSWER", "BUSY", "FAILED", "CANCELED", "ABANDONED"].includes(type));
 
-  if (eligibleForReply) {
-    const inAllowedWindow = isWithinSmsSendWindow({
-      at: now,
-      timeZone: calendarTimezone,
-      startMinute: context.organization.smsQuietHoursStartMinute,
-      endMinute: context.organization.smsQuietHoursEndMinute,
+  console.info(
+    `[twilio:voice] dial completed callSid=${callSid || "unknown"} orgId=${context.organization.id} status=${mappedStatus} dialStatus=${snapshot.rawDialCallStatus || "unknown"} callStatus=${snapshot.rawCallStatus || "unknown"} events=${persisted.eventTypes.join(",") || "none"} triggerSms=${shouldProcessMissedCallRecovery ? "candidate" : "no"}`,
+  );
+
+  if (shouldProcessMissedCallRecovery) {
+    await processMissedCallRecovery({
+      orgId: context.organization.id,
+      leadId: persisted.leadId as string,
+      contactId: persisted.contactId,
+      callId: persisted.callId,
+      callSid,
+      fromNumberE164: fromNumber,
+      toNumberE164: toNumber,
+      occurredAt: now,
+      source: "realtime",
     });
-
-    if (inAllowedWindow) {
-      await startConversationalSmsFromMissedCall({
-        orgId: context.organization.id,
-        leadId: leadId as string,
-        toNumberE164: fromNumber as string,
-      });
-    } else {
-      const sendAfterAt = nextSmsSendWindowStartUtc({
-        at: now,
-        timeZone: calendarTimezone,
-        startMinute: context.organization.smsQuietHoursStartMinute,
-        endMinute: context.organization.smsQuietHoursEndMinute,
-      });
-      await queueConversationalIntroForQuietHours({
-        orgId: context.organization.id,
-        leadId: leadId as string,
-        toNumberE164: fromNumber as string,
-        sendAfterAt,
-      });
-    }
   }
 
-  return { status: mappedStatus, leadId };
+  return {
+    status: mappedStatus,
+    leadId: persisted.leadId,
+    contactId: persisted.contactId,
+    callId: persisted.callId,
+    eventTypes: persisted.eventTypes,
+  };
 }
 
 export function maskTwilioAccountSid(value: string | null | undefined): string {

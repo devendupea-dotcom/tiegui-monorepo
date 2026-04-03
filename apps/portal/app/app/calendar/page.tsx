@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { getRequestTranslator } from "@/lib/i18n";
+import { resolveLeadLocationLabel } from "@/lib/lead-location";
 import { requireSessionUser } from "@/lib/session";
 import { DEFAULT_CALENDAR_TIMEZONE, DEFAULT_SLOT_MINUTES } from "@/lib/calendar/dates";
 import { getOrgCalendarSettings, type OrgCalendarSettings } from "@/lib/calendar/availability";
@@ -13,7 +15,9 @@ export default async function ClientCalendarPage({
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   try {
+    const t = await getRequestTranslator();
     const requestedOrgId = getParam(searchParams?.orgId);
+    const quickLeadId = getParam(searchParams?.leadId);
     const scope = await resolveAppScope({
       nextPath: "/app/calendar",
       requestedOrgId,
@@ -22,19 +26,19 @@ export default async function ClientCalendarPage({
     if (!scope.onboardingComplete) {
       return (
         <section className="card">
-          <h2>Calendar</h2>
+          <h2>{t("calendar.title")}</h2>
           <div className="portal-empty-state">
-            <strong>No events yet in your schedule.</strong>
-            <p className="muted">Add a job or set working hours to populate your calendar.</p>
+            <strong>{t("calendar.emptyTitle")}</strong>
+            <p className="muted">{t("calendar.emptyBody")}</p>
             <div className="portal-empty-actions">
               <a className="btn primary" href={scope.internalUser ? `/app?quickAdd=1&orgId=${encodeURIComponent(scope.orgId)}` : "/app?quickAdd=1"}>
-                Add Lead
+                {t("buttons.addLead")}
               </a>
               <a
                 className="btn secondary"
                 href={scope.internalUser ? `/app/onboarding?step=1&orgId=${encodeURIComponent(scope.orgId)}` : "/app/onboarding?step=1"}
               >
-                Set Working Hours
+                {t("buttons.setWorkingHours")}
               </a>
             </div>
           </div>
@@ -123,6 +127,28 @@ export default async function ClientCalendarPage({
       }
     }
 
+    const quickScheduleLead = quickLeadId
+      ? await prisma.lead.findFirst({
+          where: {
+            id: quickLeadId,
+            orgId: scope.orgId,
+          },
+          select: {
+            id: true,
+            contactName: true,
+            businessName: true,
+            phoneE164: true,
+            city: true,
+            intakeLocationText: true,
+            customer: {
+              select: {
+                addressLine: true,
+              },
+            },
+          },
+        })
+      : null;
+
     return (
       <PremiumJobCalendar
         orgId={scope.orgId}
@@ -131,6 +157,27 @@ export default async function ClientCalendarPage({
         currentUserId={user.id || ""}
         currentUserCalendarRole={currentUserCalendarRole}
         defaultSettings={settings}
+        quickScheduleLead={
+          quickScheduleLead
+            ? {
+                id: quickScheduleLead.id,
+                title:
+                  quickScheduleLead.contactName ||
+                  quickScheduleLead.businessName ||
+                  quickScheduleLead.phoneE164,
+                customerName:
+                  quickScheduleLead.contactName ||
+                  quickScheduleLead.businessName ||
+                  quickScheduleLead.phoneE164,
+                addressLine:
+                  resolveLeadLocationLabel({
+                    customerAddressLine: quickScheduleLead.customer?.addressLine,
+                    intakeLocationText: quickScheduleLead.intakeLocationText,
+                    city: quickScheduleLead.city,
+                  }) || "",
+              }
+            : null
+        }
         workers={workers.map((worker) => ({
           id: worker.id,
           name: worker.name || worker.email || "Worker",
@@ -142,12 +189,11 @@ export default async function ClientCalendarPage({
     );
   } catch (error) {
     console.error("ClientCalendarPage hard failure.", error);
+    const t = await getRequestTranslator();
     return (
       <section className="card">
-        <h2>Calendar is temporarily unavailable</h2>
-        <p className="muted">
-          We hit a server issue loading this workspace calendar. Please refresh in a moment.
-        </p>
+        <h2>{t("calendar.unavailableTitle")}</h2>
+        <p className="muted">{t("calendar.unavailableBody")}</p>
       </section>
     );
   }

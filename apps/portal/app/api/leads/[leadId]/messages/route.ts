@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { sendOutboundSms } from "@/lib/sms";
@@ -48,6 +49,12 @@ async function getScopedLeadOrResponse(leadId: string) {
         orgId: true,
         phoneE164: true,
         status: true,
+        customerId: true,
+        conversationState: {
+          select: {
+            id: true,
+          },
+        },
       },
     });
 
@@ -216,6 +223,21 @@ export async function POST(req: Request, { params }: RouteContext) {
       },
     });
 
+    await recordOutboundSmsCommunicationEvent(tx, {
+      orgId: scoped.lead.orgId,
+      leadId: scoped.lead.id,
+      contactId: scoped.lead.customerId,
+      conversationId: scoped.lead.conversationState?.id || null,
+      messageId: message.id,
+      actorUserId: scoped.actor.id || null,
+      body: cleanedBody,
+      fromNumberE164: finalFromNumber,
+      toNumberE164: scoped.lead.phoneE164,
+      providerMessageSid: providerResult.providerMessageSid,
+      status: providerResult.status,
+      occurredAt: message.createdAt,
+    });
+
     await tx.lead.update({
       where: { id: scoped.lead.id },
       data: {
@@ -270,4 +292,3 @@ export async function POST(req: Request, { params }: RouteContext) {
 
   return NextResponse.json({ ok: true, message: created, notice: providerResult.notice });
 }
-

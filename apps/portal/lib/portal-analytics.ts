@@ -10,7 +10,6 @@ import {
   getUtcRangeForDate,
 } from "@/lib/calendar/dates";
 import { getOrgCalendarSettings } from "@/lib/calendar/availability";
-import { getIntegrationProviderConfiguration } from "@/lib/integrations/provider-config";
 import { prisma } from "@/lib/prisma";
 
 export type AnalyticsRange = "7d" | "30d" | "month";
@@ -835,7 +834,7 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
 }
 
 async function getSummarySystemHealth(orgId: string) {
-  const [twilioConfig, googleCount] = await Promise.all([
+  const [twilioConfig, googleCount, connectedIntegrationCount] = await Promise.all([
     prisma.organizationTwilioConfig.findUnique({
       where: { organizationId: orgId },
       select: {
@@ -849,16 +848,19 @@ async function getSummarySystemHealth(orgId: string) {
         isEnabled: true,
       },
     }),
+    prisma.integrationAccount.count({
+      where: {
+        orgId,
+        status: "CONNECTED",
+      },
+    }),
   ]);
-
-  const providers = getIntegrationProviderConfiguration();
-  const integrationsConfigured = providers.jobberConfigured || providers.qboConfigured || providers.googleConfigured;
 
   return {
     messaging:
       twilioConfig?.phoneNumber && twilioConfig.status === "ACTIVE" ? ("ACTIVE" as const) : ("NEEDS_SETUP" as const),
     calendar: googleCount > 0 ? ("CONNECTED" as const) : ("NEEDS_SETUP" as const),
-    integrations: integrationsConfigured ? ("CONFIGURED" as const) : ("NOT_CONFIGURED" as const),
+    integrations: connectedIntegrationCount > 0 ? ("CONFIGURED" as const) : ("NOT_CONFIGURED" as const),
     integrationsHref: "/app/settings/integrations#integrations-health",
   };
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { LeadSource, LeadSourceType, LeadStatus, LeadPriority, CallStatus, MessageStatus } from "@prisma/client";
+import { sanitizeConversationSnippet } from "@/lib/inbox-message-display";
 import { prisma } from "@/lib/prisma";
 import { AppApiError, requireAppApiActor, resolveActorOrgId } from "@/lib/app-api-permissions";
 
@@ -28,16 +29,11 @@ type ConversationRow = {
   atRisk: boolean;
 };
 
+const ACTIVE_BOOKED_EVENT_STATUSES = ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] as const;
+
 function clampInt(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, Math.floor(value)));
-}
-
-function snippet(value: string, max = 90): string {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return "";
-  if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, Math.max(0, max - 3))}...`;
 }
 
 function callSnippet(status: CallStatus): string {
@@ -48,10 +44,10 @@ function callSnippet(status: CallStatus): string {
 }
 
 function messageSnippet(input: { body: string; status: MessageStatus | null | undefined }): string {
-  const base = snippet(input.body, 100);
-  if (!base) return "";
-  if (input.status === "FAILED") return `Failed: ${base}`;
-  return base;
+  return sanitizeConversationSnippet({
+    body: input.body,
+    status: input.status,
+  });
 }
 
 function isAtRisk(input: { lastInboundAt: Date | null; lastOutboundAt: Date | null; now: Date }): boolean {
@@ -75,17 +71,23 @@ export async function GET(req: Request) {
 
     const leadWhere = {
       orgId,
-      OR: [{ messages: { some: {} } }, { calls: { some: {} } }],
-      ...(workerScoped
-        ? {
-            OR: [
-              { assignedToUserId: actor.id },
-              { createdByUserId: actor.id },
-              { events: { some: { assignedToUserId: actor.id } } },
-              { events: { some: { workerAssignments: { some: { workerUserId: actor.id } } } } },
-            ],
-          }
-        : {}),
+      AND: [
+        {
+          OR: [{ messages: { some: {} } }, { calls: { some: {} } }],
+        },
+        ...(workerScoped
+          ? [
+              {
+                OR: [
+                  { assignedToUserId: actor.id },
+                  { createdByUserId: actor.id },
+                  { events: { some: { assignedToUserId: actor.id } } },
+                  { events: { some: { workerAssignments: { some: { workerUserId: actor.id } } } } },
+                ],
+              },
+            ]
+          : []),
+      ],
     };
 
     const leads = await prisma.lead.findMany({
@@ -102,7 +104,20 @@ export async function GET(req: Request) {
         nextFollowUpAt: true,
         lastInboundAt: true,
         lastOutboundAt: true,
-        updatedAt: true,
+        events: {
+          where: {
+            type: {
+              in: ["JOB", "ESTIMATE"],
+            },
+            status: {
+              in: [...ACTIVE_BOOKED_EVENT_STATUSES],
+            },
+          },
+          select: {
+            id: true,
+          },
+          take: 1,
+        },
         messages: {
           select: {
             direction: true,
@@ -133,13 +148,7 @@ export async function GET(req: Request) {
 
         const lastMessageAt = lastMessage?.createdAt ? new Date(lastMessage.createdAt) : null;
         const lastCallAt = lastCall?.startedAt ? new Date(lastCall.startedAt) : null;
-        const lastEventAt = new Date(
-          Math.max(
-            lead.updatedAt.getTime(),
-            lastMessageAt ? lastMessageAt.getTime() : 0,
-            lastCallAt ? lastCallAt.getTime() : 0,
-          ),
-        );
+        const lastEventAt = new Date(Math.max(lastMessageAt ? lastMessageAt.getTime() : 0, lastCallAt ? lastCallAt.getTime() : 0));
 
         let lastSnippet = "";
         let lastChannel: ConversationRow["lastChannel"] = "system";
@@ -154,17 +163,19 @@ export async function GET(req: Request) {
         const contactName = (lead.contactName || lead.businessName || lead.phoneE164 || "").trim();
         const unreadCount =
           lead.lastInboundAt && (!lead.lastOutboundAt || lead.lastOutboundAt < lead.lastInboundAt) ? 1 : 0;
+        const hasActiveBookedJob = lead.events.length > 0;
+        const effectiveStatus = lead.status === "DNC" ? lead.status : hasActiveBookedJob ? "BOOKED" : lead.status;
 
         return {
           id: lead.id,
           leadId: lead.id,
           contactName: contactName || lead.phoneE164,
           phoneE164: lead.phoneE164,
-          status: lead.status,
+          status: effectiveStatus,
           priority: lead.priority,
           sourceType: lead.sourceType,
           leadSource: lead.leadSource,
-          nextFollowUpAt: lead.nextFollowUpAt ? lead.nextFollowUpAt.toISOString() : null,
+          nextFollowUpAt: hasActiveBookedJob ? null : lead.nextFollowUpAt ? lead.nextFollowUpAt.toISOString() : null,
           lastEventAt: lastEventAt.toISOString(),
           lastSnippet,
           lastChannel,
@@ -174,7 +185,7 @@ export async function GET(req: Request) {
             meta: false,
           },
           unreadCount,
-          atRisk: isAtRisk({ lastInboundAt: lead.lastInboundAt, lastOutboundAt: lead.lastOutboundAt, now }),
+          atRisk: hasActiveBookedJob ? false : isAtRisk({ lastInboundAt: lead.lastInboundAt, lastOutboundAt: lead.lastOutboundAt, now }),
         };
       })
       .sort((a, b) => b.lastEventAt.localeCompare(a.lastEventAt))
@@ -189,4 +200,3 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
-

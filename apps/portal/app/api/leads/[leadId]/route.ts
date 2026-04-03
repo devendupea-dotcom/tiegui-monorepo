@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import type { LeadPriority, LeadSourceType, LeadStatus } from "@prisma/client";
+import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { prisma } from "@/lib/prisma";
+import { normalizeLeadCity } from "@/lib/lead-location";
 import { normalizeE164 } from "@/lib/phone";
 import {
   AppApiError,
@@ -21,6 +23,7 @@ type PatchLeadPayload = {
   city?: string | null;
   businessType?: string | null;
   notes?: string | null;
+  estimatedRevenueCents?: number | null;
   status?: string;
   priority?: string;
   nextFollowUpAt?: string | null;
@@ -113,11 +116,15 @@ export async function PATCH(req: Request, { params }: RouteContext) {
     }
 
     if (payload.city !== undefined) {
-      updateData.city = payload.city?.trim() || null;
+      updateData.city = normalizeLeadCity(payload.city);
     }
 
     if (payload.businessType !== undefined) {
-      updateData.businessType = payload.businessType?.trim() || null;
+      const nextBusinessType = sanitizeLeadBusinessTypeLabel(payload.businessType);
+      if (payload.businessType?.trim() && !nextBusinessType) {
+        throw new AppApiError("Business type looks invalid or polluted.", 400);
+      }
+      updateData.businessType = nextBusinessType;
     }
 
     if (payload.notes !== undefined) {
@@ -125,6 +132,20 @@ export async function PATCH(req: Request, { params }: RouteContext) {
         throw new AppApiError("Notes must be 4000 characters or less.", 400);
       }
       updateData.notes = payload.notes?.trim() || null;
+    }
+
+    if (payload.estimatedRevenueCents !== undefined) {
+      if (payload.estimatedRevenueCents == null) {
+        updateData.estimatedRevenueCents = null;
+      } else if (
+        typeof payload.estimatedRevenueCents !== "number" ||
+        !Number.isFinite(payload.estimatedRevenueCents) ||
+        payload.estimatedRevenueCents < 0
+      ) {
+        throw new AppApiError("estimatedRevenueCents must be a non-negative number.", 400);
+      } else {
+        updateData.estimatedRevenueCents = Math.round(payload.estimatedRevenueCents);
+      }
     }
 
     if (payload.status !== undefined) {
@@ -242,9 +263,12 @@ export async function PATCH(req: Request, { params }: RouteContext) {
         contactName: true,
         businessName: true,
         phoneE164: true,
+        city: true,
+        businessType: true,
         status: true,
         priority: true,
         notes: true,
+        estimatedRevenueCents: true,
         sourceType: true,
         sourceDetail: true,
         attributionLocked: true,

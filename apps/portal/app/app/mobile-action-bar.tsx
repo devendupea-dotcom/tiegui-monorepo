@@ -46,10 +46,10 @@ export default function MobileActionBar() {
       <button type="button" className="mobile-action-btn primary" onClick={openQuickAdd}>
         +Lead
       </button>
-      <Link className="mobile-action-btn" href={scheduleHref}>
+      <Link className="mobile-action-btn" href={scheduleHref} prefetch={false}>
         +Schedule
       </Link>
-      <Link className="mobile-action-btn" href={blockHref}>
+      <Link className="mobile-action-btn" href={blockHref} prefetch={false}>
         +Block Time
       </Link>
     </nav>

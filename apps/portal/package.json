@@ -11,8 +11,12 @@
     "lint": "eslint . --quiet",
     "lint:warnings": "eslint .",
     "check-types": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.mjs",
+    "backfill:communication-events": "ts-node scripts/backfill-communication-events.ts",
+    "repair:zero-paid-invoices": "node --import tsx scripts/repair-zero-paid-invoices.ts",
+    "sanitize:legacy-leads": "node --import tsx scripts/sanitize-legacy-leads.ts",
     "smoke:portal": "tsx scripts/smoke-portal.ts",
-    "test:timezone": "node --experimental-strip-types --experimental-specifier-resolution=node --test tests/timezone-dst.test.mjs",
+    "test:timezone": "node --import tsx --test tests/timezone-dst.test.mjs",
     "db:validate": "node scripts/validate-prisma.mjs",
     "db:migrate:deploy": "node scripts/migrate-deploy.mjs",
     "db:seed": "node scripts/seed-direct.mjs"
@@ -53,7 +57,12 @@
     "@types/react-dom": "18.2.24",
     "eslint": "^9.39.1",
     "prisma": "^5.22.0",
+    "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "5.9.2"
+  },
+  "ts-node": {
+    "esm": true,
+    "experimentalSpecifierResolution": "node"
   }
 }

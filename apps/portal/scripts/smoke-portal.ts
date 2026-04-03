@@ -601,6 +601,7 @@ async function main() {
   const smokeTwilioForwardTarget = createRunPhone(4);
   const smokeTwilioAuthToken = `smoke-auth-${uniqueSuffix}`;
   const smokeTwilioCallSid = `CA${`${Date.now()}${uniqueSuffix}`.replace(/\D/g, "").padEnd(32, "0").slice(0, 32)}`;
+  const smokeTwilioCallerPhone = createRunPhone(5);
   const smokeTwilioAccountSid = createSmokeSid("AC", `${uniqueSuffix}1`);
   const smokeTwilioMessagingSid = createSmokeSid("MG", `${uniqueSuffix}2`);
   const smokeTwilioStoredAuthToken = createStoredTwilioAuthToken(smokeTwilioAuthToken);
@@ -1062,7 +1063,7 @@ async function main() {
       const formBody = new URLSearchParams({
         AccountSid: createSmokeSid("AC", `${uniqueSuffix}9`),
         CallSid: smokeTwilioCallSid,
-        From: createRunPhone(5),
+        From: smokeTwilioCallerPhone,
         To: smokeTwilioPhone,
         Direction: "inbound",
         CallStatus: "ringing",
@@ -1081,6 +1082,7 @@ async function main() {
       const xml = await response.text();
       assert(response.status === 200, `POST /api/webhooks/twilio/voice returned ${response.status}`);
       assert(xml.includes("<Dial"), "Expected <Dial> in TwiML response");
+      assert(xml.includes('timeout="45"'), "Expected 45 second dial timeout to allow carrier voicemail pickup");
       assert(xml.includes(smokeTwilioForwardTarget), `Expected forward target ${smokeTwilioForwardTarget}`);
       assert(
         xml.includes('action="https://app.tieguisolutions.com/api/webhooks/twilio/after-call"'),
@@ -1095,11 +1097,10 @@ async function main() {
     name: "api twilio after-call no-answer logs missed call and starts sms flow",
     category: "api",
     run: async () => {
-      const callerPhone = createRunPhone(6);
       const formBody = new URLSearchParams({
         AccountSid: createSmokeSid("AC", `${uniqueSuffix}8`),
         CallSid: smokeTwilioCallSid,
-        From: callerPhone,
+        From: smokeTwilioCallerPhone,
         To: smokeTwilioPhone,
         Direction: "inbound",
         DialCallStatus: "no-answer",
@@ -1141,7 +1142,7 @@ async function main() {
         where: { id: call.leadId! },
         select: { phoneE164: true },
       });
-      assert(lead?.phoneE164 === callerPhone, `Expected missed-call lead phone ${callerPhone}`);
+      assert(lead?.phoneE164 === smokeTwilioCallerPhone, `Expected missed-call lead phone ${smokeTwilioCallerPhone}`);
 
       const [messageCount, queueCount] = await Promise.all([
         prisma.message.count({

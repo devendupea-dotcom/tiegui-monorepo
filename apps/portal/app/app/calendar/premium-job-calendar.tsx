@@ -16,6 +16,7 @@ import {
 } from "date-fns";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import type { CalendarAccessRole, Role } from "@prisma/client";
+import { useTranslations } from "next-intl";
 import {
   clampSlotMinutes,
   clampWeekStartsOn,
@@ -77,6 +78,7 @@ type CalendarView = "day" | "week" | "month";
 type EventFormState = {
   mode: "create" | "edit";
   eventId: string | null;
+  leadId: string | null;
   title: string;
   customerName: string;
   addressLine: string;
@@ -124,6 +126,13 @@ type HoverSlotState = {
   workerUserId?: string;
   minute: number;
 } | null;
+
+type QuickScheduleLead = {
+  id: string;
+  title: string;
+  customerName: string;
+  addressLine: string;
+};
 
 type NextOpenDuration = 30 | 60 | 90;
 type NextOpenFallbackStrategy = "OWNER" | "ROUND_ROBIN";
@@ -215,11 +224,13 @@ function toInitialForm(input: {
   durationMinutes: number;
   workerIds: string[];
   timeZone: string;
+  quickScheduleLead?: QuickScheduleLead | null;
 }): EventFormState {
   if (input.event) {
     return {
       mode: input.mode,
       eventId: input.event.id,
+      leadId: input.event.leadId,
       title: input.event.title,
       customerName: input.event.customerName || "",
       addressLine: input.event.addressLine || "",
@@ -242,9 +253,10 @@ function toInitialForm(input: {
   return {
     mode: input.mode,
     eventId: null,
-    title: "",
-    customerName: "",
-    addressLine: "",
+    leadId: input.quickScheduleLead?.id || null,
+    title: input.quickScheduleLead?.title || "",
+    customerName: input.quickScheduleLead?.customerName || "",
+    addressLine: input.quickScheduleLead?.addressLine || "",
     description: "",
     type: "JOB",
     status: "SCHEDULED",
@@ -263,6 +275,7 @@ export default function PremiumJobCalendar({
   currentUserId,
   currentUserCalendarRole,
   defaultSettings,
+  quickScheduleLead = null,
   workers,
 }: {
   orgId: string;
@@ -271,8 +284,11 @@ export default function PremiumJobCalendar({
   currentUserId: string;
   currentUserCalendarRole: CalendarAccessRole;
   defaultSettings: CalendarSettings;
+  quickScheduleLead?: QuickScheduleLead | null;
   workers: Worker[];
 }) {
+  const t = useTranslations("calendar");
+  const buttonT = useTranslations("buttons");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -543,13 +559,14 @@ export default function PremiumJobCalendar({
 
   useEffect(() => {
     const quickAction = searchParams.get("quickAction")?.trim().toLowerCase() || "";
+    const quickLeadId = searchParams.get("leadId")?.trim() || "";
     if (!quickAction || !canWrite) {
       quickActionHandledRef.current = null;
       return;
     }
 
     const quickDate = searchParams.get("quickDate")?.trim() || "";
-    const actionKey = `${quickAction}|${quickDate}|${slotMinutes}`;
+    const actionKey = `${quickAction}|${quickDate}|${quickLeadId}|${slotMinutes}`;
     if (quickActionHandledRef.current === actionKey) {
       return;
     }
@@ -571,6 +588,7 @@ export default function PremiumJobCalendar({
       durationMinutes: slotMinutes,
       workerIds: getDefaultWorkerIds(),
       timeZone: defaultSettings.calendarTimezone,
+      quickScheduleLead: quickScheduleLead && quickScheduleLead.id === quickLeadId ? quickScheduleLead : null,
     });
 
     if (quickAction === "block") {
@@ -602,6 +620,7 @@ export default function PremiumJobCalendar({
     const params = new URLSearchParams(searchParams.toString());
     params.delete("quickAction");
     params.delete("quickDate");
+    params.delete("leadId");
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [
@@ -610,6 +629,7 @@ export default function PremiumJobCalendar({
     defaultSettings.defaultUntimedStartHour,
     getDefaultWorkerIds,
     pathname,
+    quickScheduleLead,
     router,
     searchParams,
     slotMinutes,
@@ -817,6 +837,7 @@ export default function PremiumJobCalendar({
     const payload = {
       orgId,
       title: eventForm.title.trim(),
+      leadId: eventForm.leadId,
       customerName: eventForm.customerName.trim() || null,
       addressLine: eventForm.addressLine.trim() || null,
       description: eventForm.description.trim() || null,
@@ -1171,13 +1192,13 @@ export default function PremiumJobCalendar({
     <section className="jobcal-shell card">
       <header className="jobcal-toolbar">
         <div className="jobcal-toolbar-primary">
-          <p className="jobcal-kicker">Job Calendar</p>
+          <p className="jobcal-kicker">{t("jobCalendar")}</p>
           <h2>{orgName}</h2>
-          <p className="muted">Time zone: {defaultSettings.calendarTimezone}</p>
+          <p className="muted">{t("timeZone", { value: defaultSettings.calendarTimezone })}</p>
         </div>
 
         <div className="jobcal-toolbar-controls">
-          <div className="jobcal-segment" aria-label="Calendar view">
+          <div className="jobcal-segment" aria-label={t("viewLabel")}>
             {(["day", "week", "month"] as const).map((item) => (
               <button
                 key={item}
@@ -1185,14 +1206,14 @@ export default function PremiumJobCalendar({
                 className={`jobcal-segment-btn ${view === item ? "active" : ""}`}
                 onClick={() => setView(item)}
               >
-                {item.toUpperCase()}
+                {t(item)}
               </button>
             ))}
           </div>
 
           <div className="jobcal-nav">
             <button type="button" className="btn secondary" onClick={() => navigate(-1)}>
-              Prev
+              {t("prev")}
             </button>
             <button
               type="button"
@@ -1202,18 +1223,18 @@ export default function PremiumJobCalendar({
                 setMonthPickerValue(format(new Date(), "yyyy-MM"));
               }}
             >
-              Today
+              {t("today")}
             </button>
             <button type="button" className="btn secondary" onClick={() => navigate(1)}>
-              Next
+              {t("next")}
             </button>
           </div>
 
           {isMobile ? (
             <label className="jobcal-toolbar-field">
-              <span>Spacing</span>
+              <span>{t("spacing")}</span>
               <select
-                aria-label="Calendar spacing"
+                aria-label={t("spacing")}
                 value={slotMinutes}
                 onChange={(event) => setSlotMinutes(clampSlotMinutes(Number.parseInt(event.target.value, 10)))}
               >
@@ -1240,7 +1261,7 @@ export default function PremiumJobCalendar({
           )}
 
           <label className="jobcal-toolbar-field">
-            <span>Jump to month</span>
+            <span>{t("jumpToMonth")}</span>
             <input
               type="month"
               value={monthPickerValue}
@@ -1250,7 +1271,7 @@ export default function PremiumJobCalendar({
           </label>
 
           <details className="jobcal-worker-filter">
-            <summary>Workers ({selectedWorkerIds.length})</summary>
+            <summary>{t("workers", { count: selectedWorkerIds.length })}</summary>
             <div className="jobcal-worker-list">
               {workers.map((worker) => (
                 <label key={worker.id}>
@@ -1268,7 +1289,7 @@ export default function PremiumJobCalendar({
           {view !== "month" && selectedWorkerIds.length > 1 ? (
             <label className="jobcal-split-toggle">
               <input type="checkbox" checked={splitByWorker} onChange={(event) => setSplitByWorker(event.target.checked)} />
-              <span>Split by worker</span>
+              <span>{t("splitByWorker")}</span>
             </label>
           ) : null}
         </div>
@@ -1281,7 +1302,7 @@ export default function PremiumJobCalendar({
             : `${format(visibleRange.rangeStart, "MMM d")} - ${format(addDays(visibleRange.rangeEnd, -1), "MMM d, yyyy")}`}
         </strong>
         <span className="muted">
-          {loading ? "Loading events..." : `${visibleEvents.length} events`}
+          {loading ? t("loadingEvents") : t("eventsCount", { count: visibleEvents.length })}
         </span>
       </div>
 
@@ -1290,7 +1311,7 @@ export default function PremiumJobCalendar({
           <p className="form-status">{error}</p>
           {failedMutation ? (
             <button type="button" className="btn secondary" onClick={() => void retryFailedMutation()}>
-              Retry save
+              {t("retrySave")}
             </button>
           ) : null}
         </div>
@@ -1298,8 +1319,8 @@ export default function PremiumJobCalendar({
 
       {!loading && visibleEvents.length === 0 ? (
         <div className="portal-empty-state">
-          <strong>No events yet in your schedule.</strong>
-          <p className="muted">Add a job or set working hours to populate your calendar.</p>
+          <strong>{t("emptyTitle")}</strong>
+          <p className="muted">{t("emptyBody")}</p>
           <div className="portal-empty-actions">
             <button
               type="button"
@@ -1312,13 +1333,13 @@ export default function PremiumJobCalendar({
                 })
               }
             >
-              Add Lead
+              {buttonT("addLead")}
             </button>
             <a
               className="btn secondary"
               href={internalUser ? `/app/onboarding?step=1&orgId=${encodeURIComponent(orgId)}` : "/app/onboarding?step=1"}
             >
-              Set Working Hours
+              {buttonT("setWorkingHours")}
             </a>
           </div>
         </div>
@@ -1437,7 +1458,7 @@ export default function PremiumJobCalendar({
                       <span className="muted">{format(day, "MMM d")}</span>
                     </span>
                     <span className="jobcal-mobile-day-meta">
-                      <span className="muted">{eventsForDay.length} jobs</span>
+                      <span className="muted">{t("eventsCount", { count: eventsForDay.length })}</span>
                       <span aria-hidden>{expanded ? "▾" : "▸"}</span>
                     </span>
                   </button>
@@ -1479,7 +1500,7 @@ export default function PremiumJobCalendar({
                                       Edit
                                     </button>
                                   ) : (
-                                    <span className="muted">Read-only</span>
+                                    <span className="muted">{t("readOnly")}</span>
                                   )}
                                 </div>
                               </li>
@@ -1487,7 +1508,7 @@ export default function PremiumJobCalendar({
                           })}
                         </ul>
                       ) : (
-                        <p className="muted jobcal-mobile-empty">No jobs scheduled.</p>
+                        <p className="muted jobcal-mobile-empty">{t("noJobsScheduled")}</p>
                       )}
                       {canWrite ? (
                         <div className="jobcal-mobile-day-cta">
@@ -1498,10 +1519,10 @@ export default function PremiumJobCalendar({
                               onClick={() => void scheduleNextOpenFromDay(dayKey)}
                               disabled={Boolean(resolvingNextOpenDayKey)}
                             >
-                              {resolvingNextOpenDayKey === dayKey ? "Finding open time..." : "Schedule next open time"}
+                              {resolvingNextOpenDayKey === dayKey ? t("findingOpenTime") : t("scheduleNextOpenTime")}
                             </button>
                             <label className="jobcal-mobile-next-open-duration">
-                              <span>Duration</span>
+                              <span>{t("duration")}</span>
                               <select
                                 value={nextOpenDurationMinutes}
                                 onChange={(event) =>
@@ -1521,7 +1542,7 @@ export default function PremiumJobCalendar({
                           </div>
                           <div className="jobcal-mobile-next-open-options">
                             <label>
-                              <span>Fallback</span>
+                              <span>{t("fallback")}</span>
                               <select
                                 value={nextOpenFallbackStrategy}
                                 onChange={(event) =>
@@ -1531,12 +1552,12 @@ export default function PremiumJobCalendar({
                                 }
                                 disabled={Boolean(resolvingNextOpenDayKey)}
                               >
-                                <option value="OWNER">Owner</option>
-                                <option value="ROUND_ROBIN">Round-robin</option>
+                                <option value="OWNER">{t("owner")}</option>
+                                <option value="ROUND_ROBIN">{t("roundRobin")}</option>
                               </select>
                             </label>
                             <label>
-                              <span>Window</span>
+                              <span>{t("window")}</span>
                               <select
                                 value={nextOpenLookaheadDays}
                                 onChange={(event) => {
@@ -1551,7 +1572,7 @@ export default function PremiumJobCalendar({
                               >
                                 {NEXT_OPEN_LOOKAHEAD_OPTIONS.map((days) => (
                                   <option key={days} value={days}>
-                                    {days} days
+                                    {t("daysCount", { count: days })}
                                   </option>
                                 ))}
                               </select>
@@ -1930,7 +1951,7 @@ export default function PremiumJobCalendar({
                       Edit
                     </button>
                   ) : (
-                    <span className="muted">Read-only</span>
+                    <span className="muted">{t("readOnly")}</span>
                   )}
                   {canEditEvent({
                     internalUser,
@@ -1960,7 +1981,7 @@ export default function PremiumJobCalendar({
                   })
                 }
               >
-                Add Event
+                {t("addEvent")}
               </button>
               <button
                 type="button"
@@ -1973,7 +1994,7 @@ export default function PremiumJobCalendar({
                   })
                 }
               >
-                Add Lead
+                {buttonT("addLead")}
               </button>
             </div>
           ) : null}
@@ -2009,7 +2030,7 @@ export default function PremiumJobCalendar({
                 className="btn primary"
                 onClick={() => openQuickLeadFromSlot(slotAction)}
               >
-                Add Lead + Schedule
+                {t("addLeadAndSchedule")}
               </button>
               <button type="button" className="btn secondary" onClick={() => setSlotAction(null)}>
                 Cancel
@@ -2026,6 +2047,9 @@ export default function PremiumJobCalendar({
               <strong>{eventForm.mode === "create" ? "Create Event" : "Edit Event"}</strong>
             </header>
             <form className="auth-form" onSubmit={submitEventForm}>
+              {eventForm.leadId && eventForm.mode === "create" ? (
+                <p className="muted">This booking is linked to the selected lead.</p>
+              ) : null}
               <label>
                 Customer / Title
                 <input

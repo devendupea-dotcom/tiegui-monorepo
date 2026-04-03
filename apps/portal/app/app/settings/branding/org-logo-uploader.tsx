@@ -88,17 +88,7 @@ export default function OrgLogoUploader({ orgId, disabled }: OrgLogoUploaderProp
   return (
     <div className="auth-form" style={{ marginTop: 12 }}>
       {logoUrl ? (
-        <div
-          style={{
-            border: "1px solid rgba(0,0,0,0.08)",
-            borderRadius: 14,
-            background: "#fff",
-            padding: 12,
-            display: "grid",
-            placeItems: "start",
-            gap: 10,
-          }}
-        >
+        <div className="surface-preview-card">
           <strong>Current logo preview</strong>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

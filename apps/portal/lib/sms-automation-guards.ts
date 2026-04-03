@@ -1,0 +1,153 @@
+import type { ConversationStage, ConversationTimeframe } from "@prisma/client";
+
+const MISSED_CALL_RESTART_COOLDOWN_MINUTES = 30;
+
+export const ACTIVE_CONVERSATION_FOLLOW_UP_STAGES = [
+  "ASKED_WORK",
+  "ASKED_ADDRESS",
+  "ASKED_TIMEFRAME",
+  "OFFERED_BOOKING",
+] as const;
+
+export type DispatchConversationSnapshot = {
+  stage: ConversationStage;
+  pausedUntil: Date | null;
+  stoppedAt: Date | null;
+};
+
+export type MissedCallKickoffStateSnapshot = {
+  stage: ConversationStage;
+  workSummary?: string | null;
+  addressText?: string | null;
+  addressCity?: string | null;
+  timeframe?: ConversationTimeframe | null;
+  lastInboundAt?: Date | null;
+  lastOutboundAt?: Date | null;
+  nextFollowUpAt?: Date | null;
+  pausedUntil?: Date | null;
+  stoppedAt?: Date | null;
+};
+
+export type FollowUpStateSnapshot = {
+  stage: ConversationStage;
+  followUpStep: number;
+  lastInboundAt: Date | null;
+};
+
+export type FollowUpStateCurrent = FollowUpStateSnapshot & {
+  pausedUntil: Date | null;
+  stoppedAt: Date | null;
+};
+
+function isActiveFollowUpStage(stage: ConversationStage): boolean {
+  return (ACTIVE_CONVERSATION_FOLLOW_UP_STAGES as readonly ConversationStage[]).includes(stage);
+}
+
+export function shouldSuppressMissedCallKickoff(input: {
+  state: MissedCallKickoffStateSnapshot;
+  now: Date;
+}): boolean {
+  const { state, now } = input;
+
+  if (state.stoppedAt) {
+    return true;
+  }
+
+  if (state.pausedUntil && state.pausedUntil.getTime() > now.getTime()) {
+    return true;
+  }
+
+  if (["BOOKED", "CLOSED", "HUMAN_TAKEOVER"].includes(state.stage)) {
+    return true;
+  }
+
+  if (state.nextFollowUpAt) {
+    return true;
+  }
+
+  const hasCapturedContext = Boolean(state.workSummary || state.addressText || state.addressCity || state.timeframe);
+  if (state.stage !== "NEW" && hasCapturedContext) {
+    return true;
+  }
+
+  if (state.stage !== "NEW") {
+    const latestActivityAt = [state.lastInboundAt, state.lastOutboundAt]
+      .filter((value): value is Date => Boolean(value))
+      .sort((a, b) => b.getTime() - a.getTime())[0];
+    if (
+      latestActivityAt &&
+      now.getTime() - latestActivityAt.getTime() < MISSED_CALL_RESTART_COOLDOWN_MINUTES * 60 * 1000
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function shouldSkipQueuedFollowUp(input: {
+  loaded: FollowUpStateSnapshot;
+  current: FollowUpStateCurrent;
+  now: Date;
+}): boolean {
+  if (input.current.stoppedAt) {
+    return true;
+  }
+
+  if (input.current.pausedUntil && input.current.pausedUntil.getTime() > input.now.getTime()) {
+    return true;
+  }
+
+  if (!isActiveFollowUpStage(input.current.stage)) {
+    return true;
+  }
+
+  if (input.current.stage !== input.loaded.stage) {
+    return true;
+  }
+
+  if (input.current.followUpStep !== input.loaded.followUpStep) {
+    return true;
+  }
+
+  return (input.current.lastInboundAt?.getTime() ?? 0) > (input.loaded.lastInboundAt?.getTime() ?? 0);
+}
+
+export function getQueuedSmsSkipReason(input: {
+  jobCreatedAt: Date;
+  leadStatus: string;
+  leadLastInboundAt: Date | null;
+  messageType: "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
+  conversationState: DispatchConversationSnapshot | null;
+  now: Date;
+}): string | null {
+  if (input.leadStatus === "DNC") {
+    return "Lead is opted out (DNC/STOP).";
+  }
+
+  if (input.messageType === "MANUAL") {
+    return null;
+  }
+
+  if (input.leadLastInboundAt && input.leadLastInboundAt.getTime() > input.jobCreatedAt.getTime()) {
+    return "Skipped stale automation after a newer inbound reply.";
+  }
+
+  if (!input.conversationState) {
+    return null;
+  }
+
+  if (input.conversationState.stoppedAt) {
+    return "Skipped automation because the conversation is stopped.";
+  }
+
+  if (input.conversationState.pausedUntil && input.conversationState.pausedUntil.getTime() > input.now.getTime()) {
+    return "Skipped automation because the conversation is paused for human follow-up.";
+  }
+
+  if (["HUMAN_TAKEOVER", "BOOKED", "CLOSED"].includes(input.conversationState.stage)) {
+    return `Skipped automation because the conversation is in ${input.conversationState.stage}.`;
+  }
+
+  return null;
+}

@@ -32,6 +32,28 @@ async function ensureOrganization(name) {
   return prisma.organization.create({ data: { name } });
 }
 
+async function ensureDispatchCrews(orgId) {
+  const existing = await prisma.crew.findMany({
+    where: { orgId },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (existing.length > 0) {
+    return;
+  }
+
+  for (const name of ["Crew 1", "Crew 2", "Crew 3"]) {
+    await prisma.crew.create({
+      data: {
+        orgId,
+        name,
+        active: true,
+      },
+    });
+  }
+}
+
 async function main() {
   const [orgLandscaping, orgRoofing] = await Promise.all([
     ensureOrganization("TieGui Demo Landscaping"),
@@ -138,6 +160,11 @@ async function main() {
       emailVerified: new Date(),
     },
   });
+
+  await Promise.all([
+    ensureDispatchCrews(orgLandscaping.id),
+    ensureDispatchCrews(orgRoofing.id),
+  ]);
 
   const orgIds = [orgLandscaping.id, orgRoofing.id];
 

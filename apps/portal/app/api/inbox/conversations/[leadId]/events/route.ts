@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import type { CallDirection, CallStatus, MessageDirection, MessageStatus, MessageType, MessageProvider } from "@prisma/client";
+import { mapMessageStatusToTimelineStatus, sortTimelineEventsStable } from "@/lib/communication-events";
+import { sanitizeConversationMessageBody } from "@/lib/inbox-message-display";
+import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
+import { normalizeLeadCity } from "@/lib/lead-location";
 import { prisma } from "@/lib/prisma";
 import {
   AppApiError,
@@ -28,6 +32,8 @@ export type TimelineEvent = {
   meta?: Record<string, unknown>;
 };
 
+const ACTIVE_BOOKED_EVENT_STATUSES = ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] as const;
+
 function mapMessageDirection(direction: MessageDirection): "inbound" | "outbound" {
   return direction === "INBOUND" ? "inbound" : "outbound";
 }
@@ -36,26 +42,118 @@ function mapCallDirection(direction: CallDirection): "inbound" | "outbound" {
   return direction === "INBOUND" ? "inbound" : "outbound";
 }
 
-function mapMessageStatus(status: MessageStatus | null | undefined): TimelineEvent["status"] {
-  switch ((status || "").toString()) {
-    case "QUEUED":
-      return "queued";
-    case "SENT":
-      return "sent";
-    case "DELIVERED":
-      return "delivered";
-    case "FAILED":
-      return "failed";
-    default:
-      return undefined;
-  }
-}
-
 function mapCallStatus(status: CallStatus): string {
   if (status === "MISSED") return "Missed";
   if (status === "VOICEMAIL") return "Voicemail";
   if (status === "ANSWERED") return "Answered";
   return "Call";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function recordString(record: Record<string, unknown> | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function recordNumber(record: Record<string, unknown> | null, key: string): number | undefined {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function communicationCallLabel(type: string): string {
+  if (type === "VOICEMAIL_REACHED" || type === "VOICEMAIL_LEFT" || type === "ABANDONED") {
+    return "Voicemail";
+  }
+  if (type === "FORWARDED_TO_OWNER") {
+    return "Forwarded";
+  }
+  return "Call";
+}
+
+function mapCommunicationEventToTimelineEvent(event: {
+  id: string;
+  type: string;
+  channel: string;
+  summary: string;
+  occurredAt: Date;
+  metadataJson: unknown;
+  providerMessageSid: string | null;
+  providerCallSid: string | null;
+  providerStatus: string | null;
+  voicemailArtifact: {
+    recordingSid: string | null;
+    recordingUrl: string | null;
+    recordingDurationSeconds: number | null;
+    transcriptionStatus: string | null;
+    transcriptionText: string | null;
+  } | null;
+}): TimelineEvent {
+  const metadata = asRecord(event.metadataJson);
+
+  if (event.channel === "SMS") {
+    const direction = event.type === "INBOUND_SMS_RECEIVED" ? "inbound" : "outbound";
+    const rawStatus = recordString(metadata, "status") || event.providerStatus || undefined;
+    return {
+      id: event.id,
+      type: "message",
+      channel: "sms",
+      direction,
+      body: sanitizeConversationMessageBody({
+        body: recordString(metadata, "body") || event.summary,
+        direction,
+        status: rawStatus,
+      }),
+      status: mapMessageStatusToTimelineStatus((rawStatus || "").toUpperCase() as MessageStatus),
+      createdAt: event.occurredAt.toISOString(),
+      meta: {
+        providerMessageSid: event.providerMessageSid,
+        providerStatus: rawStatus,
+      },
+    };
+  }
+
+  if (event.channel === "VOICE") {
+    const recordingDurationSeconds =
+      event.voicemailArtifact?.recordingDurationSeconds ?? recordNumber(metadata, "recordingDurationSeconds");
+    const durationSeconds = recordNumber(metadata, "durationSeconds") ?? recordingDurationSeconds;
+    return {
+      id: event.id,
+      type: "call",
+      channel: "call",
+      direction: "inbound",
+      createdAt: event.occurredAt.toISOString(),
+      meta: {
+        label: communicationCallLabel(event.type),
+        status: event.summary,
+        fromNumberE164: recordString(metadata, "from"),
+        toNumberE164: recordString(metadata, "to"),
+        forwardedTo: recordString(metadata, "forwardedTo"),
+        durationSeconds,
+        twilioCallSid: event.providerCallSid,
+        recordingSid: event.voicemailArtifact?.recordingSid || recordString(metadata, "recordingSid"),
+        recordingUrl: event.voicemailArtifact?.recordingUrl || recordString(metadata, "recordingUrl"),
+        transcriptionStatus:
+          event.voicemailArtifact?.transcriptionStatus || recordString(metadata, "transcriptionStatus"),
+        transcriptionText:
+          event.voicemailArtifact?.transcriptionText || recordString(metadata, "transcriptionText"),
+      },
+    };
+  }
+
+  return {
+    id: event.id,
+    type: "system",
+    channel: "system",
+    createdAt: event.occurredAt.toISOString(),
+    body: event.summary,
+    meta: metadata || undefined,
+  };
 }
 
 async function assertWorkerCanViewLead(input: { actorId: string; orgId: string; leadId: string }) {
@@ -92,10 +190,12 @@ export async function GET(req: Request, { params }: RouteContext) {
         businessName: true,
         phoneE164: true,
         city: true,
+        businessType: true,
         status: true,
         priority: true,
         nextFollowUpAt: true,
         estimatedRevenueCents: true,
+        notes: true,
         customer: {
           select: {
             id: true,
@@ -103,6 +203,20 @@ export async function GET(req: Request, { params }: RouteContext) {
             email: true,
             addressLine: true,
           },
+        },
+        events: {
+          where: {
+            type: {
+              in: ["JOB", "ESTIMATE"],
+            },
+            status: {
+              in: [...ACTIVE_BOOKED_EVENT_STATUSES],
+            },
+          },
+          select: {
+            id: true,
+          },
+          take: 1,
         },
       },
     });
@@ -117,12 +231,59 @@ export async function GET(req: Request, { params }: RouteContext) {
       await assertWorkerCanViewLead({ actorId: actor.id, orgId: lead.orgId, leadId: lead.id });
     }
 
+    const hasActiveBookedJob = lead.events.length > 0;
+    const effectiveStatus = lead.status === "DNC" ? lead.status : hasActiveBookedJob ? "BOOKED" : lead.status;
+
     const url = new URL(req.url);
     const limit = Math.max(20, Math.min(240, Number(url.searchParams.get("limit") || 180)));
 
+    const communicationEventsDesc = await prisma.communicationEvent.findMany({
+      where: { leadId: lead.id },
+      select: {
+        id: true,
+        type: true,
+        channel: true,
+        summary: true,
+        occurredAt: true,
+        metadataJson: true,
+        providerMessageSid: true,
+        providerCallSid: true,
+        providerStatus: true,
+        messageId: true,
+        callId: true,
+        voicemailArtifact: {
+          select: {
+            recordingSid: true,
+            recordingUrl: true,
+            recordingDurationSeconds: true,
+            transcriptionStatus: true,
+            transcriptionText: true,
+          },
+        },
+      },
+      orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+      take: limit,
+    });
+
+    const communicationMessageIds = communicationEventsDesc
+      .map((event) => event.messageId)
+      .filter((value): value is string => Boolean(value));
+    const communicationCallIds = communicationEventsDesc
+      .map((event) => event.callId)
+      .filter((value): value is string => Boolean(value));
+
     const [messagesDesc, callsDesc] = await Promise.all([
       prisma.message.findMany({
-        where: { leadId: lead.id },
+        where: {
+          leadId: lead.id,
+          ...(communicationMessageIds.length > 0
+            ? {
+                id: {
+                  notIn: communicationMessageIds,
+                },
+              }
+            : {}),
+        },
         select: {
           id: true,
           direction: true,
@@ -137,7 +298,16 @@ export async function GET(req: Request, { params }: RouteContext) {
         take: limit,
       }),
       prisma.call.findMany({
-        where: { leadId: lead.id },
+        where: {
+          leadId: lead.id,
+          ...(communicationCallIds.length > 0
+            ? {
+                id: {
+                  notIn: communicationCallIds,
+                },
+              }
+            : {}),
+        },
         select: {
           id: true,
           direction: true,
@@ -162,8 +332,12 @@ export async function GET(req: Request, { params }: RouteContext) {
         channel: msg.provider === ("TWILIO" as MessageProvider) ? "sms" : "system",
         direction: mapMessageDirection(msg.direction),
         leadId: lead.id,
-        body: msg.body,
-        status: mapMessageStatus(msg.status),
+        body: sanitizeConversationMessageBody({
+          body: msg.body,
+          direction: mapMessageDirection(msg.direction),
+          status: msg.status,
+        }),
+        status: mapMessageStatusToTimelineStatus(msg.status),
         createdAt: msg.createdAt.toISOString(),
         meta: {
           provider: msg.provider,
@@ -201,7 +375,16 @@ export async function GET(req: Request, { params }: RouteContext) {
         };
       });
 
-    const events = [...messageEvents, ...callEvents].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const communicationTimelineEvents = communicationEventsDesc
+      .slice()
+      .reverse()
+      .map((event) => mapCommunicationEventToTimelineEvent(event));
+
+    const events = sortTimelineEventsStable([
+      ...communicationTimelineEvents,
+      ...messageEvents,
+      ...callEvents,
+    ]);
 
     return NextResponse.json({
       ok: true,
@@ -211,11 +394,13 @@ export async function GET(req: Request, { params }: RouteContext) {
         contactName: lead.contactName,
         businessName: lead.businessName,
         phoneE164: lead.phoneE164,
-        city: lead.city,
-        status: lead.status,
+        city: normalizeLeadCity(lead.city),
+        businessType: sanitizeLeadBusinessTypeLabel(lead.businessType),
+        status: effectiveStatus,
         priority: lead.priority,
-        nextFollowUpAt: lead.nextFollowUpAt ? lead.nextFollowUpAt.toISOString() : null,
+        nextFollowUpAt: hasActiveBookedJob ? null : lead.nextFollowUpAt ? lead.nextFollowUpAt.toISOString() : null,
         estimatedRevenueCents: lead.estimatedRevenueCents,
+        notes: lead.notes,
         customer: lead.customer,
       },
       events,
@@ -263,4 +448,3 @@ export async function POST(req: Request, { params }: RouteContext) {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
-

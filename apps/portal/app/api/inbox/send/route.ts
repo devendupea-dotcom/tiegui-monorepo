@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { sendOutboundSms } from "@/lib/sms";
@@ -38,6 +39,12 @@ export async function POST(req: Request) {
         orgId: true,
         phoneE164: true,
         status: true,
+        customerId: true,
+        conversationState: {
+          select: {
+            id: true,
+          },
+        },
       },
     });
 
@@ -134,6 +141,21 @@ export async function POST(req: Request) {
           status: true,
           createdAt: true,
         },
+      });
+
+      await recordOutboundSmsCommunicationEvent(tx, {
+        orgId: lead.orgId,
+        leadId: lead.id,
+        contactId: lead.customerId,
+        conversationId: lead.conversationState?.id || null,
+        messageId: message.id,
+        actorUserId: actor.id || null,
+        body,
+        fromNumberE164: finalFromNumber,
+        toNumberE164: lead.phoneE164,
+        providerMessageSid: providerResult.providerMessageSid,
+        status: providerResult.status,
+        occurredAt: message.createdAt,
       });
 
       await tx.lead.update({

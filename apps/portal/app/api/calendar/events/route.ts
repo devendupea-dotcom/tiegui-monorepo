@@ -19,6 +19,7 @@ import {
 } from "@/lib/calendar/permissions";
 import { clampWeekStartsOn, formatDateOnly, getVisibleRange, localDateFromUtc, parseUtcDateTime } from "@/lib/calendar/dates";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
+import { syncLeadBookingState } from "@/lib/lead-booking";
 import { capturePortalError, trackPortalEvent } from "@/lib/telemetry";
 
 export const dynamic = "force-dynamic";
@@ -297,32 +298,45 @@ export async function POST(req: Request) {
       }
     }
 
-    const created = await prisma.event.create({
-      data: {
-        orgId,
-        leadId: body.leadId || null,
-        type: eventType,
-        status,
-        busy,
-        allDay: body.allDay === true,
-        title,
-        description: body.description?.trim() || null,
-        customerName: body.customerName?.trim() || null,
-        addressLine: body.addressLine?.trim() || null,
-        startAt,
-        endAt,
-        assignedToUserId: workerIds[0] || null,
-        createdByUserId: actor.id,
-        workerAssignments: {
-          createMany: {
-            data: workerIds.map((workerUserId) => ({
-              orgId,
-              workerUserId,
-            })),
+    const created = await prisma.$transaction(async (tx) => {
+      const nextEvent = await tx.event.create({
+        data: {
+          orgId,
+          leadId: body.leadId || null,
+          type: eventType,
+          status,
+          busy,
+          allDay: body.allDay === true,
+          title,
+          description: body.description?.trim() || null,
+          customerName: body.customerName?.trim() || null,
+          addressLine: body.addressLine?.trim() || null,
+          startAt,
+          endAt,
+          assignedToUserId: workerIds[0] || null,
+          createdByUserId: actor.id,
+          workerAssignments: {
+            createMany: {
+              data: workerIds.map((workerUserId) => ({
+                orgId,
+                workerUserId,
+              })),
+            },
           },
         },
-      },
-      select: calendarEventSelect,
+        select: calendarEventSelect,
+      });
+
+      await syncLeadBookingState(tx, {
+        leadId: nextEvent.leadId,
+        eventId: nextEvent.id,
+        type: nextEvent.type,
+        status: nextEvent.status,
+        startAt: nextEvent.startAt,
+        endAt: nextEvent.endAt,
+      });
+
+      return nextEvent;
     });
 
     if (created.provider === "LOCAL" && created.assignedToUserId) {

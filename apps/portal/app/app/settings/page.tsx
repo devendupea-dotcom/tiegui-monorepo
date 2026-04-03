@@ -9,11 +9,12 @@ import { isR2Configured } from "@/lib/r2";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { DEFAULT_CALENDAR_TIMEZONE, ensureTimeZone, isValidTimeZone } from "@/lib/calendar/dates";
 import { containsAutomationRevealLanguage, normalizeCustomTemplates } from "@/lib/conversational-sms-templates";
-import { getRequestTranslator } from "@/lib/i18n";
+import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
 import type { ResolvedMessageLocale } from "@/lib/message-language";
 import { normalizeE164 } from "@/lib/phone";
 import { isInternalRole, requireSessionUser } from "@/lib/session";
 import { getParam, requireAppOrgAccess, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
+import CommunicationDiagnosticsCard from "./communication-diagnostics-card";
 import OrgLogoUploader from "./branding/org-logo-uploader";
 import { SmsVoiceSection, type SmsVoiceCustomTemplates } from "./sms-voice-section";
 
@@ -269,6 +270,11 @@ async function updateSettingsAction(formData: FormData) {
   const legacyAskTimeframe = customModeEnabled ? customTemplateAskTimeframe || null : undefined;
   const legacyOfferBooking = customModeEnabled ? customTemplateOfferBooking || null : undefined;
   const legacyBookingConfirmation = customModeEnabled ? customTemplateBookingConfirmation || null : undefined;
+  const missedCallLegacy = missedCallMessageEn || missedCallMessageEs || legacyInitial || null;
+  const intakeAskLocationLegacy = intakeAskLocationBodyEn || intakeAskLocationBodyEs || legacyAskAddress || null;
+  const intakeAskWorkTypeLegacy = intakeAskWorkTypeBodyEn || intakeAskWorkTypeBodyEs || legacyAskTimeframe || null;
+  const intakeAskCallbackLegacy = intakeAskCallbackBodyEn || intakeAskCallbackBodyEs || legacyOfferBooking || null;
+  const intakeCompletionLegacy = intakeCompletionBodyEn || intakeCompletionBodyEs || legacyBookingConfirmation || null;
 
   if (!organizationName || organizationName.length > 120) {
     redirect(withOrgQuery("/app/settings?error=invalid-business-name", orgId, internalUser));
@@ -355,16 +361,21 @@ async function updateSettingsAction(formData: FormData) {
       smsWorkingHoursText: canManageAutomationSettings ? (smsWorkingHoursText || null) : undefined,
       smsWebsiteSignature: canManageAutomationSettings ? (smsWebsiteSignature || null) : undefined,
       missedCallAutoReplyOn,
-      missedCallAutoReplyBody: legacyInitial,
-      missedCallAutoReplyBodyEn: legacyInitial,
-      intakeAskLocationBody: legacyAskAddress,
-      intakeAskLocationBodyEn: legacyAskAddress,
-      intakeAskWorkTypeBody: legacyAskTimeframe,
-      intakeAskWorkTypeBodyEn: legacyAskTimeframe,
-      intakeAskCallbackBody: legacyOfferBooking,
-      intakeAskCallbackBodyEn: legacyOfferBooking,
-      intakeCompletionBody: legacyBookingConfirmation,
-      intakeCompletionBodyEn: legacyBookingConfirmation,
+      missedCallAutoReplyBody: canManageAutomationSettings ? missedCallLegacy : undefined,
+      missedCallAutoReplyBodyEn: canManageAutomationSettings ? (missedCallMessageEn || null) : undefined,
+      missedCallAutoReplyBodyEs: canManageAutomationSettings ? (missedCallMessageEs || null) : undefined,
+      intakeAskLocationBody: canManageAutomationSettings ? intakeAskLocationLegacy : undefined,
+      intakeAskLocationBodyEn: canManageAutomationSettings ? (intakeAskLocationBodyEn || null) : undefined,
+      intakeAskLocationBodyEs: canManageAutomationSettings ? (intakeAskLocationBodyEs || null) : undefined,
+      intakeAskWorkTypeBody: canManageAutomationSettings ? intakeAskWorkTypeLegacy : undefined,
+      intakeAskWorkTypeBodyEn: canManageAutomationSettings ? (intakeAskWorkTypeBodyEn || null) : undefined,
+      intakeAskWorkTypeBodyEs: canManageAutomationSettings ? (intakeAskWorkTypeBodyEs || null) : undefined,
+      intakeAskCallbackBody: canManageAutomationSettings ? intakeAskCallbackLegacy : undefined,
+      intakeAskCallbackBodyEn: canManageAutomationSettings ? (intakeAskCallbackBodyEn || null) : undefined,
+      intakeAskCallbackBodyEs: canManageAutomationSettings ? (intakeAskCallbackBodyEs || null) : undefined,
+      intakeCompletionBody: canManageAutomationSettings ? intakeCompletionLegacy : undefined,
+      intakeCompletionBodyEn: canManageAutomationSettings ? (intakeCompletionBodyEn || null) : undefined,
+      intakeCompletionBodyEs: canManageAutomationSettings ? (intakeCompletionBodyEs || null) : undefined,
       allowWorkerLeadCreate: canManageLeadEntrySetting ? allowWorkerLeadCreate : undefined,
       ghostBustingEnabled: canManageAutomationSettings ? ghostBustingEnabled : undefined,
       voiceNotesEnabled: canManageAutomationSettings ? voiceNotesEnabled : undefined,
@@ -450,6 +461,8 @@ export default async function ClientSettingsPage({
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
+  const locale = getRequestLocale();
+  const isSpanish = locale === "es";
   const t = await getRequestTranslator();
   const requestedOrgId = getParam(searchParams?.orgId);
   const scope = await resolveAppScope({ nextPath: "/app/settings", requestedOrgId });
@@ -603,66 +616,119 @@ export default async function ClientSettingsPage({
 
   const saved = getParam(searchParams?.saved) === "1";
   const error = getParam(searchParams?.error);
+  const canViewCommunicationDiagnostics = canManageLeadEntrySetting;
+  const settingsCopy = isSpanish
+    ? {
+        reviewMessagingSetup: "Revisar mensajeria",
+        configureIntakeTemplates: "Configurar plantillas de intake",
+        brandingTitle: "Marca e facturas",
+        brandingBody: "Logo y datos del negocio para PDFs de facturas.",
+        openBranding: "Abrir marca",
+        businessLogo: "Logo del negocio",
+        openFullBranding: "Abrir marca completa",
+        businessLogoBody: "Sube aqui el logo de tu empresa para que facturas y PDFs se vean oficiales.",
+        objectStorageFallback: "El almacenamiento de objetos no esta disponible. Las subidas de logo usaran almacenamiento en linea.",
+        templateOverridesBody: "Usa estas plantillas a nivel cuenta cuando un negocio necesite texto distinto para llamadas perdidas o intake.",
+        missedCallIntroEn: "Introduccion de llamada perdida (ingles)",
+        missedCallIntroEs: "Introduccion de llamada perdida (espanol)",
+        askAddressEn: "Pedir direccion o ciudad (ingles)",
+        askAddressEs: "Pedir direccion o ciudad (espanol)",
+        askProjectDetailsEn: "Pedir detalles del proyecto (ingles)",
+        askProjectDetailsEs: "Pedir detalles del proyecto (espanol)",
+        offerCallbackEn: "Ofrecer horario de llamada o estimado (ingles)",
+        offerCallbackEs: "Ofrecer horario de llamada o estimado (espanol)",
+        completionEn: "Confirmacion de cierre (ingles)",
+        completionEs: "Confirmacion de cierre (espanol)",
+        fallbackBody: "Deja cualquier campo vacio para usar el pack SMS Voice seleccionado. La logica STOP, la cadencia de seguimiento y el estado de conversacion siguen bloqueados por confiabilidad.",
+        stopNotice: "La primera respuesta automatica a llamada perdida siempre incluye la linea STOP requerida.",
+        invalidSmsTone: "Selecciona una voz SMS valida.",
+      }
+    : {
+        reviewMessagingSetup: "Review Messaging Setup",
+        configureIntakeTemplates: "Configure Intake Templates",
+        brandingTitle: "Branding & Invoices",
+        brandingBody: "Logo and business details for invoice PDFs.",
+        openBranding: "Open Branding",
+        businessLogo: "Business Logo",
+        openFullBranding: "Open Full Branding",
+        businessLogoBody: "Upload your company logo here so invoices and PDF exports look official for your business.",
+        objectStorageFallback: "Object storage is unavailable. Logo uploads will fall back to inline storage.",
+        templateOverridesBody: "Use these account-level overrides when a business needs different missed-call or intake copy than the default SMS Voice pack.",
+        missedCallIntroEn: "Missed-call intro (English)",
+        missedCallIntroEs: "Missed-call intro (Spanish)",
+        askAddressEn: "Ask address or city (English)",
+        askAddressEs: "Ask address or city (Spanish)",
+        askProjectDetailsEn: "Ask project details (English)",
+        askProjectDetailsEs: "Ask project details (Spanish)",
+        offerCallbackEn: "Offer callback or estimate slot (English)",
+        offerCallbackEs: "Offer callback or estimate slot (Spanish)",
+        completionEn: "Completion confirmation (English)",
+        completionEs: "Completion confirmation (Spanish)",
+        fallbackBody: "Leave any field blank to fall back to the selected SMS Voice template pack. STOP handling, follow-up cadence, and conversation state logic remain locked for reliability.",
+        stopNotice: "The first automated missed-call reply always includes the required STOP opt-out line.",
+        invalidSmsTone: "Invalid SMS voice selection.",
+      };
 
   return (
-    <section className="card">
-      <h2>{t("settings.title")}</h2>
-      <p className="muted">{t("settings.subtitle", { organizationName: organization.name })}</p>
-      <div className="settings-integrations-grid" style={{ marginTop: 12 }}>
-        <article className="settings-integration-card">
-          <strong>{t("settings.integrationGoogle")}</strong>
-          <p className={`settings-integration-status ${googleConfigured ? "connected" : "warning"}`}>
-            {t(googleConfigured ? "settings.statusConnected" : "settings.statusNotConnected")}
-          </p>
-          <Link className="btn secondary" href={withOrgQuery("/app/settings/integrations", scope.orgId, scope.internalUser)}>
-            {t("buttons.openIntegrations")}
-          </Link>
-        </article>
+    <>
+      <section className="card">
+        <h2>{t("settings.title")}</h2>
+        <p className="muted">{t("settings.subtitle", { organizationName: organization.name })}</p>
+        <div className="settings-integrations-grid" style={{ marginTop: 12 }}>
+          <article className="settings-integration-card">
+            <strong>{t("settings.integrationGoogle")}</strong>
+            <p className={`settings-integration-status ${googleConfigured ? "connected" : "warning"}`}>
+              {t(googleConfigured ? "settings.statusConnected" : "settings.statusNotConnected")}
+            </p>
+            <Link className="btn secondary" href={withOrgQuery("/app/settings/integrations", scope.orgId, scope.internalUser)}>
+              {t("buttons.openIntegrations")}
+            </Link>
+          </article>
 
-        <article className="settings-integration-card">
-          <strong>{t("settings.integrationTwilio")}</strong>
-          <p className={`settings-integration-status ${twilioConfigured ? "connected" : "warning"}`}>
-            {twilioConfigured ? t("settings.statusConnected") : t("settings.statusNotConnected")}
-          </p>
-          <a className="btn secondary" href="#settings-messaging">
-            Review Messaging Setup
-          </a>
-        </article>
+          <article className="settings-integration-card">
+            <strong>{t("settings.integrationTwilio")}</strong>
+            <p className={`settings-integration-status ${twilioConfigured ? "connected" : "warning"}`}>
+              {twilioConfigured ? t("settings.statusConnected") : t("settings.statusNotConnected")}
+            </p>
+            <a className="btn secondary" href="#settings-messaging">
+              {settingsCopy.reviewMessagingSetup}
+            </a>
+          </article>
 
-        <article className="settings-integration-card">
-          <strong>{t("settings.integrationIntake")}</strong>
-          <p className={`settings-integration-status ${intakeConfigured ? "connected" : "warning"}`}>
-            {intakeConfigured ? t("settings.statusConfigured") : t("settings.statusNotConnected")}
-          </p>
-          <a className="btn secondary" href="#settings-templates">
-            Configure Intake Templates
-          </a>
-        </article>
+          <article className="settings-integration-card">
+            <strong>{t("settings.integrationIntake")}</strong>
+            <p className={`settings-integration-status ${intakeConfigured ? "connected" : "warning"}`}>
+              {intakeConfigured ? t("settings.statusConfigured") : t("settings.statusNotConnected")}
+            </p>
+            <a className="btn secondary" href="#settings-templates">
+              {settingsCopy.configureIntakeTemplates}
+            </a>
+          </article>
 
-        <article className="settings-integration-card">
-          <strong>Branding & Invoices</strong>
-          <p className="settings-integration-status">Logo and business details for invoice PDFs.</p>
-          <Link className="btn secondary" href={withOrgQuery("/app/settings/branding", scope.orgId, scope.internalUser)}>
-            Open Branding
-          </Link>
-        </article>
-      </div>
-
-      <article className="settings-integration-card" style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <strong>Business Logo</strong>
-          <Link className="btn secondary" href={withOrgQuery("/app/settings/branding", scope.orgId, scope.internalUser)}>
-            Open Full Branding
-          </Link>
+          <article className="settings-integration-card">
+            <strong>{settingsCopy.brandingTitle}</strong>
+            <p className="settings-integration-status">{settingsCopy.brandingBody}</p>
+            <Link className="btn secondary" href={withOrgQuery("/app/settings/branding", scope.orgId, scope.internalUser)}>
+              {settingsCopy.openBranding}
+            </Link>
+          </article>
         </div>
-        <p className="muted" style={{ marginTop: 8 }}>
-          Upload your company logo here so invoices and PDF exports look official for your business.
-        </p>
-        {!logoUploadsReady ? <p className="form-status">Object storage is unavailable. Logo uploads will fall back to inline storage.</p> : null}
-        <OrgLogoUploader orgId={organization.id} />
-      </article>
 
-      <form action={updateSettingsAction} className="auth-form" style={{ marginTop: 12 }}>
+        <article className="settings-integration-card" style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <strong>{settingsCopy.businessLogo}</strong>
+            <Link className="btn secondary" href={withOrgQuery("/app/settings/branding", scope.orgId, scope.internalUser)}>
+              {settingsCopy.openFullBranding}
+            </Link>
+          </div>
+          <p className="muted" style={{ marginTop: 8 }}>
+            {settingsCopy.businessLogoBody}
+          </p>
+          {!logoUploadsReady ? <p className="form-status">{settingsCopy.objectStorageFallback}</p> : null}
+          <OrgLogoUploader orgId={organization.id} />
+        </article>
+
+        <form action={updateSettingsAction} className="auth-form" style={{ marginTop: 12 }}>
         <input type="hidden" name="orgId" value={organization.id} />
 
         <div className="settings-accordion">
@@ -882,13 +948,123 @@ export default async function ClientSettingsPage({
           <details id="settings-templates">
             <summary>{t("settings.sectionTemplates")}</summary>
             <div className="settings-accordion-body">
-              <p className="muted">
-                SMS template packs and custom copy are now managed in <strong>Messaging → SMS Voice</strong> above.
-              </p>
-              <p className="muted">
-                Logic for STOP handling, stage transitions, follow-up cadence, and silent human takeover stays locked for
-                compliance and reliability.
-              </p>
+              <p className="muted">{settingsCopy.templateOverridesBody}</p>
+              <div className="sms-voice-grid-two">
+                <label>
+                  {settingsCopy.missedCallIntroEn}
+                  <textarea
+                    name="missedCallAutoReplyBodyEn"
+                    rows={4}
+                    maxLength={1600}
+                    defaultValue={organization.missedCallAutoReplyBodyEn || organization.missedCallAutoReplyBody || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="Hey, this is [Business Name]. Sorry we missed your call..."
+                  />
+                </label>
+                <label>
+                  {settingsCopy.missedCallIntroEs}
+                  <textarea
+                    name="missedCallAutoReplyBodyEs"
+                    rows={4}
+                    maxLength={1600}
+                    defaultValue={organization.missedCallAutoReplyBodyEs || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="Hola, habla [Business Name]. Perdón que perdimos tu llamada..."
+                  />
+                </label>
+                <label>
+                  {settingsCopy.askAddressEn}
+                  <textarea
+                    name="intakeAskLocationBodyEn"
+                    rows={3}
+                    maxLength={1600}
+                    defaultValue={organization.intakeAskLocationBodyEn || organization.intakeAskLocationBody || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="What is the address or city for the project?"
+                  />
+                </label>
+                <label>
+                  {settingsCopy.askAddressEs}
+                  <textarea
+                    name="intakeAskLocationBodyEs"
+                    rows={3}
+                    maxLength={1600}
+                    defaultValue={organization.intakeAskLocationBodyEs || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="¿Cuál es la dirección o ciudad del proyecto?"
+                  />
+                </label>
+                <label>
+                  {settingsCopy.askProjectDetailsEn}
+                  <textarea
+                    name="intakeAskWorkTypeBodyEn"
+                    rows={3}
+                    maxLength={1600}
+                    defaultValue={organization.intakeAskWorkTypeBodyEn || organization.intakeAskWorkTypeBody || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="What kind of project do you need help with?"
+                  />
+                </label>
+                <label>
+                  {settingsCopy.askProjectDetailsEs}
+                  <textarea
+                    name="intakeAskWorkTypeBodyEs"
+                    rows={3}
+                    maxLength={1600}
+                    defaultValue={organization.intakeAskWorkTypeBodyEs || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="¿Qué tipo de proyecto necesitas?"
+                  />
+                </label>
+                <label>
+                  {settingsCopy.offerCallbackEn}
+                  <textarea
+                    name="intakeAskCallbackBodyEn"
+                    rows={3}
+                    maxLength={1600}
+                    defaultValue={organization.intakeAskCallbackBodyEn || organization.intakeAskCallbackBody || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="Pick one of these callback times:"
+                  />
+                </label>
+                <label>
+                  {settingsCopy.offerCallbackEs}
+                  <textarea
+                    name="intakeAskCallbackBodyEs"
+                    rows={3}
+                    maxLength={1600}
+                    defaultValue={organization.intakeAskCallbackBodyEs || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="Elige uno de estos horarios de llamada:"
+                  />
+                </label>
+                <label>
+                  {settingsCopy.completionEn}
+                  <textarea
+                    name="intakeCompletionBodyEn"
+                    rows={3}
+                    maxLength={1600}
+                    defaultValue={organization.intakeCompletionBodyEn || organization.intakeCompletionBody || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="Perfect, you're set for {{time}}. We'll follow up then."
+                  />
+                </label>
+                <label>
+                  {settingsCopy.completionEs}
+                  <textarea
+                    name="intakeCompletionBodyEs"
+                    rows={3}
+                    maxLength={1600}
+                    defaultValue={organization.intakeCompletionBodyEs || ""}
+                    disabled={!canManageAutomationSettings}
+                    placeholder="Perfecto, quedas agendado para {{time}}."
+                  />
+                </label>
+              </div>
+              <p className="muted">{settingsCopy.fallbackBody} {settingsCopy.stopNotice}</p>
+              {!canManageAutomationSettings ? (
+                <p className="muted">{t("settings.automationFlagsNote")}</p>
+              ) : null}
             </div>
           </details>
 
@@ -922,7 +1098,7 @@ export default async function ClientSettingsPage({
         {error === "invalid-message-language" ? (
           <p className="form-status">{t("settings.errors.invalidMessageLanguage")}</p>
         ) : null}
-        {error === "invalid-sms-tone" ? <p className="form-status">Invalid SMS voice selection.</p> : null}
+        {error === "invalid-sms-tone" ? <p className="form-status">{settingsCopy.invalidSmsTone}</p> : null}
         {error === "invalid-message" ? <p className="form-status">{t("settings.errors.invalidMessage")}</p> : null}
         {error === "invalid-reminder" ? (
           <p className="form-status">{t("settings.errors.invalidReminder")}</p>
@@ -949,7 +1125,12 @@ export default async function ClientSettingsPage({
         {error === "invalid-sms-quiet-hours" ? (
           <p className="form-status">{t("settings.errors.invalidSmsQuietHours")}</p>
         ) : null}
-      </form>
-    </section>
+        </form>
+      </section>
+
+      {canViewCommunicationDiagnostics ? (
+        <CommunicationDiagnosticsCard orgId={organization.id} internalUser={scope.internalUser} />
+      ) : null}
+    </>
   );
 }

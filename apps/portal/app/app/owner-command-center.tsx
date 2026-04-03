@@ -28,8 +28,8 @@ const SOURCE_LABELS: Record<LeadSourceChannel, string> = {
   OTHER: "Other",
 };
 
-function formatUsdCents(value: number | null): string {
-  if (value === null) return "—";
+function formatUsdCents(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -155,6 +155,14 @@ export default async function OwnerCommandCenter({ scope, viewer, range }: Owner
   const settingsHref = withOrgQuery("/app/settings", scope.orgId, scope.internalUser);
   const invoiceHref = withOrgQuery("/app/invoices", scope.orgId, scope.internalUser);
   const paidChannels = ads.channels.filter((channel) => channel.key === "GOOGLE_ADS" || channel.key === "META_ADS");
+  const allSystemsReady =
+    summaryMonth.systemHealth.messaging === "ACTIVE" &&
+    summaryMonth.systemHealth.calendar === "CONNECTED" &&
+    summaryMonth.systemHealth.integrations === "CONFIGURED";
+  const systemStatusTitle = allSystemsReady ? "Everything connected" : "System status";
+  const systemStatusSubtitle = allSystemsReady
+    ? "A clean read on the tools the team depends on every day."
+    : "See what still needs setup across messaging, calendar, and connected integrations.";
 
   const marketingKpiValue = ads.totals.spendCents > 0 && ads.totals.roas !== null ? `${ads.totals.roas.toFixed(1)}x` : "Setup required";
   const marketingKpiHint =
@@ -165,20 +173,45 @@ export default async function OwnerCommandCenter({ scope, viewer, range }: Owner
   return (
     <div className="dashboard-shell">
       <section className="card dashboard-header">
-        <div className="dashboard-header-copy">
-          <h1>Command Center</h1>
-          <p className="muted">Live overview for {scope.orgName}</p>
+        <div className="dashboard-header-main">
+          <div className="dashboard-header-copy">
+            <span className="dashboard-header-eyebrow">Owner view</span>
+            <h1>Command Center</h1>
+            <p className="muted">Cash flow, lead response, jobs on deck, and marketing performance for {scope.orgName}.</p>
+          </div>
+          <div className="dashboard-actions">
+            <Link className="btn primary" href={quickLeadHref} prefetch={false}>
+              + New Lead
+            </Link>
+            <Link className="btn secondary" href={addJobHref} prefetch={false}>
+              + Add Job
+            </Link>
+            <Link className="btn secondary" href={inboxHref} prefetch={false}>
+              Inbox
+            </Link>
+          </div>
         </div>
-        <div className="dashboard-actions">
-          <Link className="btn primary" href={quickLeadHref}>
-            + New Lead
-          </Link>
-          <Link className="btn secondary" href={addJobHref}>
-            + Add Job
-          </Link>
-          <Link className="btn secondary" href={inboxHref}>
-            Inbox
-          </Link>
+        <div className="dashboard-header-band">
+          <article className="dashboard-header-stat">
+            <span>Collected this month</span>
+            <strong>{formatUsdCents(summaryMonth.collectedRevenueThisMonthCents)}</strong>
+            <small>Cash already recorded</small>
+          </article>
+          <article className="dashboard-header-stat">
+            <span>New leads</span>
+            <strong>{summaryWeek.newLeadsCount.toLocaleString("en-US")}</strong>
+            <small>Last 7 days</small>
+          </article>
+          <article className="dashboard-header-stat">
+            <span>Avg first reply</span>
+            <strong>{formatResponseTime(summaryWeek.avgResponseTimeMinutes)}</strong>
+            <small>Response speed this week</small>
+          </article>
+          <article className="dashboard-header-stat">
+            <span>Jobs on deck</span>
+            <strong>{summaryMonth.jobsThisWeekCount.toLocaleString("en-US")}</strong>
+            <small>Scheduled in the next 7 days</small>
+          </article>
         </div>
       </section>
 
@@ -387,8 +420,8 @@ export default async function OwnerCommandCenter({ scope, viewer, range }: Owner
 
           <PanelCard
             eyebrow="System Status"
-            title="Everything connected"
-            subtitle="A clean read on the tools the team depends on every day."
+            title={systemStatusTitle}
+            subtitle={systemStatusSubtitle}
             actionHref={settingsHref}
             actionLabel="Open Settings"
           >

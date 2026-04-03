@@ -176,20 +176,45 @@ export default async function WorkerOpsDashboard({ scope, viewer }: WorkerOpsDas
   return (
     <div className="dashboard-shell">
       <section className="card dashboard-header">
-        <div className="dashboard-header-copy">
-          <h1>Ops Dashboard</h1>
-          <p className="muted">Live overview for {scope.orgName}</p>
+        <div className="dashboard-header-main">
+          <div className="dashboard-header-copy">
+            <span className="dashboard-header-eyebrow">Crew view</span>
+            <h1>Ops Dashboard</h1>
+            <p className="muted">Your jobs, reply queue, and open capacity for {scope.orgName} in one clean workspace.</p>
+          </div>
+          <div className="dashboard-actions">
+            <Link className="btn primary" href={quickLeadHref}>
+              + New Lead
+            </Link>
+            <Link className="btn secondary" href={addJobHref}>
+              + Add Job
+            </Link>
+            <Link className="btn secondary" href={inboxHref}>
+              Inbox
+            </Link>
+          </div>
         </div>
-        <div className="dashboard-actions">
-          <Link className="btn primary" href={quickLeadHref}>
-            + New Lead
-          </Link>
-          <Link className="btn secondary" href={addJobHref}>
-            + Add Job
-          </Link>
-          <Link className="btn secondary" href={inboxHref}>
-            Inbox
-          </Link>
+        <div className="dashboard-header-band">
+          <article className="dashboard-header-stat">
+            <span>Today</span>
+            <strong>{todayScheduleCount.toLocaleString("en-US")}</strong>
+            <small>Jobs on your calendar today</small>
+          </article>
+          <article className="dashboard-header-stat">
+            <span>Next stop</span>
+            <strong>{nextJob ? formatTimeLabel(nextJob.startAt) : "—"}</strong>
+            <small>{nextJob ? nextJobLabel : "Nothing assigned yet"}</small>
+          </article>
+          <article className="dashboard-header-stat">
+            <span>Reply queue</span>
+            <strong>{repliesNeeded.length.toLocaleString("en-US")}</strong>
+            <small>{repliesNeeded.length > 0 ? "Customers waiting on you" : "Inbox is clear"}</small>
+          </article>
+          <article className="dashboard-header-stat">
+            <span>Open slots</span>
+            <strong>{workerSummary.openSlotsNext7Days.toLocaleString("en-US")}</strong>
+            <small>Available over the next 7 days</small>
+          </article>
         </div>
       </section>
 

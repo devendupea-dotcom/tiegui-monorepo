@@ -102,6 +102,7 @@ export default function QuickAddLeadButton({
   const [advancedForceCreateOpen, setAdvancedForceCreateOpen] = useState(false);
   const [forceCreateDuplicate, setForceCreateDuplicate] = useState(false);
   const [confirmDuplicateCreate, setConfirmDuplicateCreate] = useState(false);
+  const [suppressQuickAddAutoOpen, setSuppressQuickAddAutoOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; href: string } | null>(null);
 
   const quickAddRequested = searchParams.get("quickAdd") === "1";
@@ -141,16 +142,32 @@ export default function QuickAddLeadButton({
     setQuickWorkerId(queryWorkerId);
   }
 
-  function openModal() {
+  function resetDraft() {
+    setSubmitting(false);
     setError(null);
+    setName("");
+    setPhone("");
+    setEmail("");
+    setAddress("");
+    setNote("");
+    setSourceType("ORGANIC");
+    setSourceDetail("");
+    setShowMoreFields(false);
+    setScheduleNow(false);
+    setStartLocal("");
+    setDurationMinutes(30);
+    setQuickWorkerId("");
     setPossibleMatches([]);
     setSelectedMatchId("");
     setLookingUpMatches(false);
-    setShowMoreFields(false);
     setAdvancedForceCreateOpen(false);
     setForceCreateDuplicate(false);
     setConfirmDuplicateCreate(false);
-    setQuickWorkerId("");
+  }
+
+  function openModal() {
+    setSuppressQuickAddAutoOpen(false);
+    resetDraft();
     setOpen(true);
     if (quickAddRequested) {
       primeFromQuery();
@@ -159,28 +176,26 @@ export default function QuickAddLeadButton({
 
   function closeModal() {
     setOpen(false);
-    setSubmitting(false);
-    setError(null);
-    setPossibleMatches([]);
-    setSelectedMatchId("");
-    setLookingUpMatches(false);
-    setShowMoreFields(false);
-    setAdvancedForceCreateOpen(false);
-    setForceCreateDuplicate(false);
-    setConfirmDuplicateCreate(false);
-    setQuickWorkerId("");
+    resetDraft();
     if (quickAddRequested) {
+      setSuppressQuickAddAutoOpen(true);
       clearQuickAddParams();
     }
   }
 
   useEffect(() => {
+    if (!quickAddRequested) {
+      setSuppressQuickAddAutoOpen(false);
+    }
+  }, [quickAddRequested]);
+
+  useEffect(() => {
     if (!canOpen) return;
-    if (!quickAddRequested || open) return;
+    if (!quickAddRequested || open || suppressQuickAddAutoOpen) return;
     openModal();
     // We intentionally react only to query transitions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canOpen, quickAddRequested, open]);
+  }, [canOpen, quickAddRequested, open, suppressQuickAddAutoOpen]);
 
   useEffect(() => {
     if (!toast) return;

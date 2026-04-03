@@ -2,6 +2,7 @@ import { addMinutes } from "date-fns";
 import { NextResponse } from "next/server";
 import type { CalendarEventStatus, EventType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { syncLeadBookingState } from "@/lib/lead-booking";
 import {
   AppApiError,
   assertCanMutateLeadJob,
@@ -129,60 +130,73 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
     const now = new Date();
 
-    const event = existingEvent
-      ? await prisma.event.update({
-          where: { id: existingEvent.id },
-          data: {
-            status,
-          },
-          select: {
-            id: true,
-            leadId: true,
-            type: true,
-            status: true,
-            startAt: true,
-            endAt: true,
-            assignedToUserId: true,
-            updatedAt: true,
-          },
-        })
-      : await prisma.event.create({
-          data: {
-            orgId: lead.orgId,
-            leadId: lead.id,
-            type: "JOB",
-            status,
-            title: `${lead.contactName || lead.businessName || "Job"} status update`,
-            startAt: now,
-            endAt: addMinutes(now, 30),
-            assignedToUserId: actor.id,
-            createdByUserId: actor.id,
-            workerAssignments: {
-              create: {
-                orgId: lead.orgId,
-                workerUserId: actor.id,
+    const event = await prisma.$transaction(async (tx) => {
+      const nextEvent = existingEvent
+        ? await tx.event.update({
+            where: { id: existingEvent.id },
+            data: {
+              status,
+            },
+            select: {
+              id: true,
+              leadId: true,
+              type: true,
+              status: true,
+              startAt: true,
+              endAt: true,
+              assignedToUserId: true,
+              updatedAt: true,
+            },
+          })
+        : await tx.event.create({
+            data: {
+              orgId: lead.orgId,
+              leadId: lead.id,
+              type: "JOB",
+              status,
+              title: `${lead.contactName || lead.businessName || "Job"} status update`,
+              startAt: now,
+              endAt: addMinutes(now, 30),
+              assignedToUserId: actor.id,
+              createdByUserId: actor.id,
+              workerAssignments: {
+                create: {
+                  orgId: lead.orgId,
+                  workerUserId: actor.id,
+                },
               },
             },
-          },
-          select: {
-            id: true,
-            leadId: true,
-            type: true,
-            status: true,
-            startAt: true,
-            endAt: true,
-            assignedToUserId: true,
-            updatedAt: true,
-          },
-        });
+            select: {
+              id: true,
+              leadId: true,
+              type: true,
+              status: true,
+              startAt: true,
+              endAt: true,
+              assignedToUserId: true,
+              updatedAt: true,
+            },
+          });
 
-    await prisma.leadNote.create({
-      data: {
-        orgId: lead.orgId,
-        leadId: lead.id,
-        createdByUserId: actor.id,
-        body: `Job status updated to ${status.replaceAll("_", " ")}.`,
-      },
+      await tx.leadNote.create({
+        data: {
+          orgId: lead.orgId,
+          leadId: lead.id,
+          createdByUserId: actor.id,
+          body: `Job status updated to ${status.replaceAll("_", " ")}.`,
+        },
+      });
+
+      await syncLeadBookingState(tx, {
+        leadId: nextEvent.leadId,
+        eventId: nextEvent.id,
+        type: nextEvent.type,
+        status: nextEvent.status,
+        startAt: nextEvent.startAt,
+        endAt: nextEvent.endAt,
+      });
+
+      return nextEvent;
     });
 
     const responsePayload = { ok: true, event };

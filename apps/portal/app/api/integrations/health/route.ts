@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
+import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
 import { getGoogleSyncAlertState } from "@/lib/integrations/google-sync";
 import { prisma } from "@/lib/prisma";
@@ -9,20 +10,6 @@ import { isInternalRole } from "@/lib/session";
 import { maskSid } from "@/lib/twilio-config-crypto";
 
 export const dynamic = "force-dynamic";
-
-function getBearerToken(headerValue: string | null): string | null {
-  if (!headerValue) return null;
-  const trimmed = headerValue.trim();
-  if (!trimmed.toLowerCase().startsWith("bearer ")) return null;
-  const token = trimmed.slice(7).trim();
-  return token || null;
-}
-
-function getCronSecret(req: Request): string | null {
-  const headerSecret = req.headers.get("x-cron-secret")?.trim();
-  if (headerSecret) return headerSecret;
-  return getBearerToken(req.headers.get("authorization"));
-}
 
 async function isAuthorized(req: Request): Promise<boolean> {
   const session = await getServerSession(authOptions);
@@ -32,9 +19,7 @@ async function isAuthorized(req: Request): Promise<boolean> {
   }
 
   // Fallback: allow the cron bearer secret to fetch health without needing a browser session.
-  const expectedCronSecret = normalizeEnvValue(process.env.CRON_SECRET);
-  const provided = getCronSecret(req);
-  if (expectedCronSecret && provided && provided === expectedCronSecret) {
+  if (isValidCronSecret(req, normalizeEnvValue(process.env.CRON_SECRET))) {
     return true;
   }
 
@@ -68,6 +53,10 @@ export async function GET(req: Request) {
     GOOGLE_CLIENT_ID: boolEnv("GOOGLE_CLIENT_ID"),
     GOOGLE_CLIENT_SECRET: boolEnv("GOOGLE_CLIENT_SECRET"),
     GOOGLE_REDIRECT_URI: boolEnv("GOOGLE_REDIRECT_URI"),
+    MICROSOFT_CLIENT_ID: boolEnv("MICROSOFT_CLIENT_ID"),
+    MICROSOFT_CLIENT_SECRET: boolEnv("MICROSOFT_CLIENT_SECRET"),
+    MICROSOFT_TENANT_ID: boolEnv("MICROSOFT_TENANT_ID"),
+    MICROSOFT_REDIRECT_URI: boolEnv("MICROSOFT_REDIRECT_URI"),
     CRON_SECRET: boolEnv("CRON_SECRET"),
     INTEGRATIONS_ENCRYPTION_KEY: boolEnv("INTEGRATIONS_ENCRYPTION_KEY") || boolEnv("NEXTAUTH_SECRET"),
     NEXTAUTH_SECRET: boolEnv("NEXTAUTH_SECRET"),
@@ -241,4 +230,3 @@ export async function GET(req: Request) {
     },
   });
 }
-

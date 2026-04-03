@@ -3,9 +3,11 @@ import type { Adapter } from "next-auth/adapters";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import EmailProvider from "next-auth/providers/email";
 import CredentialsProvider from "next-auth/providers/credentials";
+import { ensureCredentialLoginAllowed, getClientIpFromHeaders } from "./auth-rate-limit";
 import { prisma } from "./prisma";
 import { normalizeEnvValue } from "./env";
 import { verifyPassword } from "./passwords";
+import { checkSlidingWindowLimit } from "./rate-limit";
 
 // Prefer SMTP_URL (our canonical name) but allow EMAIL_SERVER for compatibility.
 // Also strip accidental wrapping quotes from Vercel env vars.
@@ -104,34 +106,6 @@ const adapter: Adapter = {
   },
 };
 
-type RateLimitBucket = { count: number; resetAt: number };
-const loginBuckets = new Map<string, RateLimitBucket>();
-
-function getClientIp(req: any): string {
-  const headers = req?.headers;
-  const xff =
-    typeof headers?.get === "function"
-      ? headers.get("x-forwarded-for")
-      : headers?.["x-forwarded-for"];
-  if (typeof xff === "string" && xff.length) return xff.split(",")[0]!.trim();
-  const realIp =
-    typeof headers?.get === "function" ? headers.get("x-real-ip") : headers?.["x-real-ip"];
-  if (typeof realIp === "string" && realIp.length) return realIp.trim();
-  return "unknown";
-}
-
-function isRateLimited(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const bucket = loginBuckets.get(key);
-  if (!bucket || bucket.resetAt <= now) {
-    loginBuckets.set(key, { count: 1, resetAt: now + windowMs });
-    return false;
-  }
-
-  bucket.count += 1;
-  return bucket.count > limit;
-}
-
 export const authOptions: NextAuthOptions = {
   secret: nextAuthSecret,
   adapter,
@@ -154,9 +128,13 @@ export const authOptions: NextAuthOptions = {
 
         if (!email || typeof password !== "string" || password.length === 0) return null;
 
-        const ip = getClientIp(req);
-        const bucketKey = `credentials:${ip}:${email}`;
-        if (isRateLimited(bucketKey, 10, 60_000)) {
+        const ip = getClientIpFromHeaders(req);
+        const rateLimit = await ensureCredentialLoginAllowed({
+          email,
+          ip,
+          checker: checkSlidingWindowLimit,
+        });
+        if (!rateLimit.ok) {
           return null;
         }
 

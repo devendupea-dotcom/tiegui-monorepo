@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
+import { isValidCronSecret } from "@/lib/cron-auth";
 import {
   ensureIntakeCallbackEvent,
 } from "@/lib/intake-automation";
+import { processMissedCallRecovery } from "@/lib/missed-call-recovery";
 import {
   processDueConversationalFollowUps,
-  queueConversationalIntroForQuietHours,
-  startConversationalSmsFromMissedCall,
 } from "@/lib/conversational-sms";
 import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { processDueSmsDispatchQueue } from "@/lib/sms-dispatch-queue";
-import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 
 export const dynamic = "force-dynamic";
 
@@ -41,26 +40,6 @@ function clampInt(
   return Math.min(max, Math.max(min, parsed));
 }
 
-function getBearerToken(headerValue: string | null): string | null {
-  if (!headerValue) {
-    return null;
-  }
-  const trimmed = headerValue.trim();
-  if (!trimmed.toLowerCase().startsWith("bearer ")) {
-    return null;
-  }
-  const token = trimmed.slice(7).trim();
-  return token || null;
-}
-
-function getCronSecret(req: Request): string | null {
-  const headerSecret = req.headers.get("x-cron-secret")?.trim();
-  if (headerSecret) {
-    return headerSecret;
-  }
-  return getBearerToken(req.headers.get("authorization"));
-}
-
 function validateCronAuth(req: Request): NextResponse | null {
   const expected = normalizeEnvValue(process.env.CRON_SECRET);
   if (!expected) {
@@ -73,8 +52,7 @@ function validateCronAuth(req: Request): NextResponse | null {
     );
   }
 
-  const provided = getCronSecret(req);
-  if (!provided || provided !== expected) {
+  if (!isValidCronSecret(req, expected)) {
     return NextResponse.json(
       {
         ok: false,
@@ -87,7 +65,7 @@ function validateCronAuth(req: Request): NextResponse | null {
   return null;
 }
 
-export async function POST(req: Request) {
+async function handleCronIntake(req: Request) {
   const authError = validateCronAuth(req);
   if (authError) {
     return authError;
@@ -125,42 +103,8 @@ export async function POST(req: Request) {
       id: true,
       orgId: true,
       leadId: true,
+      twilioCallSid: true,
       startedAt: true,
-      org: {
-        select: {
-          id: true,
-          smsFromNumberE164: true,
-          twilioConfig: {
-            select: {
-              phoneNumber: true,
-            },
-          },
-          smsQuietHoursStartMinute: true,
-          smsQuietHoursEndMinute: true,
-          messageLanguage: true,
-          missedCallAutoReplyBody: true,
-          missedCallAutoReplyBodyEn: true,
-          missedCallAutoReplyBodyEs: true,
-          intakeAutomationEnabled: true,
-          intakeAskLocationBody: true,
-          intakeAskLocationBodyEn: true,
-          intakeAskLocationBodyEs: true,
-          intakeAskWorkTypeBody: true,
-          intakeAskWorkTypeBodyEn: true,
-          intakeAskWorkTypeBodyEs: true,
-          intakeAskCallbackBody: true,
-          intakeAskCallbackBodyEn: true,
-          intakeAskCallbackBodyEs: true,
-          intakeCompletionBody: true,
-          intakeCompletionBodyEn: true,
-          intakeCompletionBodyEs: true,
-          dashboardConfig: {
-            select: {
-              calendarTimezone: true,
-            },
-          },
-        },
-      },
       lead: {
         select: {
           id: true,
@@ -181,51 +125,21 @@ export async function POST(req: Request) {
       continue;
     }
 
-    const duplicateWindowStart = new Date(call.startedAt.getTime() - 2 * 60 * 1000);
-    const existingOutbound = await prisma.message.findFirst({
-      where: {
-        orgId: call.orgId,
-        leadId: call.leadId,
-        direction: "OUTBOUND",
-        createdAt: { gte: duplicateWindowStart },
-      },
-      select: { id: true },
+    const decision = await processMissedCallRecovery({
+      orgId: call.orgId,
+      leadId: call.lead.id,
+      callId: call.id,
+      callSid: call.twilioCallSid,
+      fromNumberE164: call.lead.phoneE164,
+      occurredAt: call.startedAt,
+      source: "cron",
     });
 
-    if (existingOutbound) {
-      introsSkipped += 1;
-      continue;
-    }
-
-    const calendarTimezone = call.org.dashboardConfig?.calendarTimezone || "America/Los_Angeles";
-    const inAllowedWindow = isWithinSmsSendWindow({
-      at: now,
-      timeZone: calendarTimezone,
-      startMinute: call.org.smsQuietHoursStartMinute,
-      endMinute: call.org.smsQuietHoursEndMinute,
-    });
-
-    if (inAllowedWindow) {
-      await startConversationalSmsFromMissedCall({
-        orgId: call.org.id,
-        leadId: call.lead.id,
-        toNumberE164: call.lead.phoneE164,
-      });
+    if (decision.action === "send" || decision.action === "queue") {
+      introsSent += 1;
     } else {
-      const sendAfterAt = nextSmsSendWindowStartUtc({
-        at: now,
-        timeZone: calendarTimezone,
-        startMinute: call.org.smsQuietHoursStartMinute,
-        endMinute: call.org.smsQuietHoursEndMinute,
-      });
-      await queueConversationalIntroForQuietHours({
-        orgId: call.org.id,
-        leadId: call.lead.id,
-        toNumberE164: call.lead.phoneE164,
-        sendAfterAt,
-      });
+      introsSkipped += 1;
     }
-    introsSent += 1;
   }
 
   const completedLeads = await prisma.lead.findMany({
@@ -279,4 +193,12 @@ export async function POST(req: Request) {
     queuedSmsDispatch: queueDispatchResult,
     conversationalFollowUps,
   });
+}
+
+export async function GET(req: Request) {
+  return handleCronIntake(req);
+}
+
+export async function POST(req: Request) {
+  return handleCronIntake(req);
 }

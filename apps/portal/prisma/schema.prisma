@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {
@@ -9,77 +10,84 @@ datasource db {
 }
 
 model Organization {
-  id                      String   @id @default(uuid())
-  name                    String
-  legalName               String?
-  addressLine1            String?
-  addressLine2            String?
-  city                    String?
-  state                   String?
-  zip                     String?
-  phone                   String?
-  email                   String?
-  website                 String?
-  licenseNumber           String?
-  ein                     String?
-  invoicePrefix           String   @default("INV")
-  invoiceNextNumber       Int      @default(1)
-  invoicePaymentInstructions String?
-  logoPhotoId             String?  @unique
-  invoiceSequence         Int      @default(0)
-  ghostBustingEnabled     Boolean  @default(false)
-  voiceNotesEnabled       Boolean  @default(false)
-  metaCapiEnabled         Boolean  @default(false)
-  offlineModeEnabled      Boolean  @default(false)
-  ghostBustingQuietHoursStart Int  @default(1260)
-  ghostBustingQuietHoursEnd Int    @default(480)
-  ghostBustingMaxNudges   Int      @default(2)
-  ghostBustingTemplateText String?
-  allowWorkerLeadCreate   Boolean  @default(true)
-  onboardingStep          Int      @default(0)
-  onboardingCompletedAt   DateTime?
-  onboardingSkippedAt     DateTime?
-  smsFromNumberE164       String?
-  smsMonthlyLimit         Int      @default(3000)
-  smsHardStop             Boolean  @default(true)
-  aiMonthlyBudgetCents    Int      @default(1000)
-  aiHardStop              Boolean  @default(true)
-  aiUserDailyRequestLimit Int      @default(25)
-  messageLanguage         MessageLanguage @default(EN)
-  smsTone                 SmsTone         @default(FRIENDLY)
-  autoReplyEnabled        Boolean         @default(true)
-  followUpsEnabled        Boolean         @default(true)
-  autoBookingEnabled      Boolean         @default(true)
-  smsGreetingLine         String?
-  smsWorkingHoursText     String?
-  smsWebsiteSignature     String?
-  smsQuietHoursStartMinute Int     @default(480)
-  smsQuietHoursEndMinute   Int     @default(1200)
-  missedCallAutoReplyOn   Boolean  @default(false)
-  missedCallAutoReplyBody String?
-  missedCallAutoReplyBodyEn String?
-  missedCallAutoReplyBodyEs String?
-  intakeAutomationEnabled Boolean  @default(false)
-  intakeAskLocationBody   String?
-  intakeAskLocationBodyEn String?
-  intakeAskLocationBodyEs String?
-  intakeAskWorkTypeBody   String?
-  intakeAskWorkTypeBodyEn String?
-  intakeAskWorkTypeBodyEs String?
-  intakeAskCallbackBody   String?
-  intakeAskCallbackBodyEn String?
-  intakeAskCallbackBodyEs String?
-  intakeCompletionBody    String?
-  intakeCompletionBodyEn String?
-  intakeCompletionBodyEs String?
-  createdAt               DateTime @default(now())
+  id                          String          @id @default(uuid())
+  name                        String
+  legalName                   String?
+  addressLine1                String?
+  addressLine2                String?
+  city                        String?
+  state                       String?
+  zip                         String?
+  phone                       String?
+  email                       String?
+  website                     String?
+  licenseNumber               String?
+  ein                         String?
+  purchaseOrderPrefix         String          @default("PO")
+  purchaseOrderNextNumber     Int             @default(1)
+  estimatePrefix              String          @default("EST")
+  estimateNextNumber          Int             @default(1)
+  invoicePrefix               String          @default("INV")
+  invoiceNextNumber           Int             @default(1)
+  invoicePaymentInstructions  String?
+  logoPhotoId                 String?         @unique
+  invoiceSequence             Int             @default(0)
+  ghostBustingEnabled         Boolean         @default(false)
+  voiceNotesEnabled           Boolean         @default(false)
+  metaCapiEnabled             Boolean         @default(false)
+  offlineModeEnabled          Boolean         @default(false)
+  ghostBustingQuietHoursStart Int             @default(1260)
+  ghostBustingQuietHoursEnd   Int             @default(480)
+  ghostBustingMaxNudges       Int             @default(2)
+  ghostBustingTemplateText    String?
+  allowWorkerLeadCreate       Boolean         @default(true)
+  onboardingStep              Int             @default(0)
+  onboardingCompletedAt       DateTime?
+  onboardingSkippedAt         DateTime?
+  smsFromNumberE164           String?
+  smsMonthlyLimit             Int             @default(3000)
+  smsHardStop                 Boolean         @default(true)
+  aiMonthlyBudgetCents        Int             @default(1000)
+  aiHardStop                  Boolean         @default(true)
+  aiUserDailyRequestLimit     Int             @default(25)
+  messageLanguage             MessageLanguage @default(EN)
+  smsTone                     SmsTone         @default(FRIENDLY)
+  autoReplyEnabled            Boolean         @default(true)
+  followUpsEnabled            Boolean         @default(true)
+  autoBookingEnabled          Boolean         @default(true)
+  smsGreetingLine             String?
+  smsWorkingHoursText         String?
+  smsWebsiteSignature         String?
+  smsQuietHoursStartMinute    Int             @default(480)
+  smsQuietHoursEndMinute      Int             @default(1200)
+  missedCallAutoReplyOn       Boolean         @default(false)
+  missedCallAutoReplyBody     String?
+  missedCallAutoReplyBodyEn   String?
+  missedCallAutoReplyBodyEs   String?
+  intakeAutomationEnabled     Boolean         @default(false)
+  intakeAskLocationBody       String?
+  intakeAskLocationBodyEn     String?
+  intakeAskLocationBodyEs     String?
+  intakeAskWorkTypeBody       String?
+  intakeAskWorkTypeBodyEn     String?
+  intakeAskWorkTypeBodyEs     String?
+  intakeAskCallbackBody       String?
+  intakeAskCallbackBodyEn     String?
+  intakeAskCallbackBodyEs     String?
+  intakeCompletionBody        String?
+  intakeCompletionBodyEn      String?
+  intakeCompletionBodyEs      String?
+  createdAt                   DateTime        @default(now())
 
   users                    User[]
   customers                Customer[]
   leads                    Lead[]
+  jobs                     Job[]
   calls                    Call[]
   messages                 Message[]
   events                   Event[]
+  communicationEvents      CommunicationEvent[]
+  voicemailArtifacts       VoicemailArtifact[]
   smsTemplates             SmsTemplate[]
   dashboardConfig          OrgDashboardConfig?
   budgetRequests           BudgetRequest[]
@@ -107,6 +115,18 @@ model Organization {
   googleSyncJobs           GoogleSyncJob[]
   googleSyncJobAttempts    GoogleSyncJobAttempt[]
   invoices                 Invoice[]
+  purchaseOrders           PurchaseOrder[]
+  businessExpenses         BusinessExpense[]
+  estimates                Estimate[]
+  estimateShareLinks       EstimateShareLink[]
+  jobTrackingLinks         JobTrackingLink[]
+  estimateDrafts           EstimateDraft[]
+  crews                    Crew[]
+  materials                Material[]
+  jobEvents                JobEvent[]
+  jobMeasurements          JobMeasurement[]
+  jobMaterials             JobMaterial[]
+  jobLabor                 JobLabor[]
   cronRunLogs              InternalCronRunLog[]
   metaCapiEvents           MetaCapiEvent[]
   clientMutationReceipts   ClientMutationReceipt[]
@@ -120,7 +140,7 @@ model Organization {
   twilioConfig             OrganizationTwilioConfig?
   twilioConfigAuditLogs    TwilioConfigAuditLog[]
 
-  logoPhoto                Photo?  @relation("OrganizationLogo", fields: [logoPhotoId], references: [id], onDelete: SetNull)
+  logoPhoto Photo? @relation("OrganizationLogo", fields: [logoPhotoId], references: [id], onDelete: SetNull)
 }
 
 model User {
@@ -137,100 +157,117 @@ model User {
   emailVerified      DateTime?
   createdAt          DateTime           @default(now())
 
-  org                    Organization?         @relation(fields: [orgId], references: [id])
-  assignedLeads          Lead[]                @relation("LeadAssignee")
-  assignedEvents         Event[]               @relation("EventAssignee")
-  requestedBudgetChanges BudgetRequest[]       @relation("BudgetRequestRequester")
-  reviewedBudgetChanges  BudgetRequest[]       @relation("BudgetRequestReviewer")
-  adSpendEntries         AdSpendEntry[]        @relation("AdSpendEntryCreator")
-  marketingSpends        MarketingSpend[]      @relation("MarketingSpendCreator")
-  createdLeads           Lead[]                @relation("LeadCreator")
-  createdCustomers       Customer[]            @relation("CustomerCreator")
-  leadNotes              LeadNote[]            @relation("LeadNoteCreator")
-  leadPhotos             LeadPhoto[]           @relation("LeadPhotoCreator")
-  leadMeasurements       LeadMeasurement[]     @relation("LeadMeasurementCreator")
-  calendarCreatedEvents  Event[]               @relation("EventCreator")
-  calendarAssignedEvents CalendarEventWorker[] @relation("CalendarEventWorker")
-  workingHours           WorkingHours[]        @relation("WorkingHoursWorker")
-  timeOffEntries         TimeOff[]             @relation("TimeOffWorker")
-  calendarHolds          CalendarHold[]        @relation("CalendarHoldWorker")
-  createdCalendarHolds   CalendarHold[]        @relation("CalendarHoldCreator")
-  googleAccounts         GoogleAccount[]       @relation("GoogleAccountUser")
-  googleOAuthStates      GoogleOAuthState[]    @relation("GoogleOAuthStateUser")
-  googleSyncJobs         GoogleSyncJob[]       @relation("GoogleSyncJobUser")
-  googleSyncRunsTriggered GoogleSyncRun[]      @relation("GoogleSyncRunTrigger")
-  googleSyncJobAttempts  GoogleSyncJobAttempt[] @relation("GoogleSyncJobAttemptUser")
-  createdInvoices        Invoice[]             @relation("InvoiceCreator")
-  accounts               Account[]
-  sessions               Session[]
-  resetTokens            PasswordResetToken[]
-  aiUserDayUsage         AiUserDayUsage[]
-  twilioConfigAuditLogs  TwilioConfigAuditLog[] @relation("TwilioConfigAuditActor")
+  org                       Organization?          @relation(fields: [orgId], references: [id])
+  assignedLeads             Lead[]                 @relation("LeadAssignee")
+  assignedEvents            Event[]                @relation("EventAssignee")
+  requestedBudgetChanges    BudgetRequest[]        @relation("BudgetRequestRequester")
+  reviewedBudgetChanges     BudgetRequest[]        @relation("BudgetRequestReviewer")
+  adSpendEntries            AdSpendEntry[]         @relation("AdSpendEntryCreator")
+  marketingSpends           MarketingSpend[]       @relation("MarketingSpendCreator")
+  createdLeads              Lead[]                 @relation("LeadCreator")
+  createdCustomers          Customer[]             @relation("CustomerCreator")
+  leadNotes                 LeadNote[]             @relation("LeadNoteCreator")
+  leadPhotos                LeadPhoto[]            @relation("LeadPhotoCreator")
+  leadMeasurements          LeadMeasurement[]      @relation("LeadMeasurementCreator")
+  calendarCreatedEvents     Event[]                @relation("EventCreator")
+  calendarAssignedEvents    CalendarEventWorker[]  @relation("CalendarEventWorker")
+  workingHours              WorkingHours[]         @relation("WorkingHoursWorker")
+  timeOffEntries            TimeOff[]              @relation("TimeOffWorker")
+  calendarHolds             CalendarHold[]         @relation("CalendarHoldWorker")
+  createdCalendarHolds      CalendarHold[]         @relation("CalendarHoldCreator")
+  googleAccounts            GoogleAccount[]        @relation("GoogleAccountUser")
+  googleOAuthStates         GoogleOAuthState[]     @relation("GoogleOAuthStateUser")
+  googleSyncJobs            GoogleSyncJob[]        @relation("GoogleSyncJobUser")
+  googleSyncRunsTriggered   GoogleSyncRun[]        @relation("GoogleSyncRunTrigger")
+  googleSyncJobAttempts     GoogleSyncJobAttempt[] @relation("GoogleSyncJobAttemptUser")
+  createdInvoices           Invoice[]              @relation("InvoiceCreator")
+  createdPurchaseOrders     PurchaseOrder[]        @relation("PurchaseOrderCreator")
+  createdBusinessExpenses   BusinessExpense[]      @relation("BusinessExpenseCreator")
+  createdEstimates          Estimate[]             @relation("EstimateCreator")
+  createdEstimateShareLinks EstimateShareLink[]    @relation("EstimateShareCreator")
+  createdJobTrackingLinks   JobTrackingLink[]      @relation("JobTrackingLinkCreator")
+  createdEstimateDrafts     EstimateDraft[]        @relation("EstimateDraftCreator")
+  createdJobs               Job[]                  @relation("JobCreator")
+  jobEvents                 JobEvent[]             @relation("JobEventActor")
+  estimateActivities        EstimateActivity[]     @relation("EstimateActivityActor")
+  accounts                  Account[]
+  sessions                  Session[]
+  resetTokens               PasswordResetToken[]
+  aiUserDayUsage            AiUserDayUsage[]
+  communicationEvents       CommunicationEvent[]   @relation("CommunicationEventActor")
+  twilioConfigAuditLogs     TwilioConfigAuditLog[] @relation("TwilioConfigAuditActor")
 
   @@index([orgId])
 }
 
 model Lead {
-  id                        String          @id @default(uuid())
+  id                        String                 @id @default(uuid())
   orgId                     String
   customerId                String?
   createdByUserId           String?
   assignedToUserId          String?
-  status                    LeadStatus      @default(NEW)
-  priority                  LeadPriority    @default(MEDIUM)
+  status                    LeadStatus             @default(NEW)
+  priority                  LeadPriority           @default(MEDIUM)
   businessName              String?
   contactName               String?
   phoneE164                 String
-  sourceType                LeadSourceType  @default(ORGANIC)
+  sourceType                LeadSourceType         @default(ORGANIC)
   preferredLanguage         LeadPreferredLanguage?
   sourceDetail              String?
-  sourceChannel             LeadSourceChannel @default(OTHER)
+  sourceChannel             LeadSourceChannel      @default(OTHER)
   utmSource                 String?
   utmMedium                 String?
   utmCampaign               String?
-  attributionLocked         Boolean         @default(true)
-  commissionEligible        Boolean         @default(false)
+  attributionLocked         Boolean                @default(true)
+  commissionEligible        Boolean                @default(false)
   city                      String?
   businessType              String?
-  leadSource                LeadSource      @default(OTHER)
+  leadSource                LeadSource             @default(OTHER)
   firstContactedAt          DateTime?
   lastContactedAt           DateTime?
   lastInboundAt             DateTime?
   lastOutboundAt            DateTime?
-  ghostNudgeCount           Int             @default(0)
+  ghostNudgeCount           Int                    @default(0)
   lastGhostNudgeAt          DateTime?
   nextFollowUpAt            DateTime?
-  intakeStage               LeadIntakeStage @default(NONE)
+  intakeStage               LeadIntakeStage        @default(NONE)
   intakeLocationText        String?
   intakeWorkTypeText        String?
   intakePreferredCallbackAt DateTime?
   estimatedRevenueCents     Int?
-  invoiceStatus             InvoiceStatus   @default(NONE)
+  invoiceStatus             InvoiceStatus          @default(NONE)
   invoiceDraftText          String?
   invoiceDueAt              DateTime?
   invoiceLastAutoTaskAt     DateTime?
   notes                     String?
+  latestEstimateId          String?
+  estimateCount             Int                    @default(0)
   fbClickId                 String?
   fbBrowserId               String?
-  createdAt                 DateTime        @default(now())
-  updatedAt                 DateTime        @updatedAt
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
 
-  org           Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  customer      Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  createdBy     User?             @relation("LeadCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  assignedTo    User?             @relation("LeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  calls         Call[]
-  messages      Message[]
-  events        Event[]
-  leadNotes     LeadNote[]
-  leadPhotos    LeadPhoto[]
-  measurements  LeadMeasurement[]
-  calendarHolds CalendarHold[]
-  invoices      Invoice[]
-  metaCapiEvents MetaCapiEvent[]
-  smsDispatchQueue SmsDispatchQueue[]
-  conversationState LeadConversationState?
-  conversationAudits LeadConversationAuditEvent[]
+  org                 Organization                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer            Customer?                    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdBy           User?                        @relation("LeadCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  assignedTo          User?                        @relation("LeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  calls               Call[]
+  messages            Message[]
+  events              Event[]
+  jobs                Job[]
+  communicationEvents CommunicationEvent[]
+  voicemailArtifacts  VoicemailArtifact[]
+  leadNotes           LeadNote[]
+  leadPhotos          LeadPhoto[]
+  measurements        LeadMeasurement[]
+  estimates           Estimate[]                   @relation("EstimateLead")
+  latestEstimate      Estimate?                    @relation("LeadLatestEstimate", fields: [latestEstimateId], references: [id], onDelete: SetNull)
+  calendarHolds       CalendarHold[]
+  invoices            Invoice[]
+  metaCapiEvents      MetaCapiEvent[]
+  smsDispatchQueue    SmsDispatchQueue[]
+  conversationState   LeadConversationState?
+  conversationAudits  LeadConversationAuditEvent[]
 
   @@index([orgId, status, createdAt])
   @@index([orgId, nextFollowUpAt])
@@ -240,6 +277,7 @@ model Lead {
   @@index([orgId, lastOutboundAt])
   @@index([orgId, ghostNudgeCount, lastGhostNudgeAt])
   @@index([orgId, invoiceStatus, updatedAt])
+  @@index([latestEstimateId])
   @@index([customerId, updatedAt])
   @@index([createdByUserId, createdAt])
   @@index([orgId, sourceType, createdAt])
@@ -247,20 +285,20 @@ model Lead {
 }
 
 model SmsDispatchQueue {
-  id             String        @id @default(uuid())
+  id             String          @id @default(uuid())
   orgId          String
   leadId         String
   kind           SmsDispatchKind @default(AUTOMATION_GENERIC)
-  messageType    MessageType   @default(AUTOMATION)
+  messageType    MessageType     @default(AUTOMATION)
   fromNumberE164 String
   toNumberE164   String
   body           String
   sendAfterAt    DateTime
-  status         MessageStatus @default(QUEUED)
-  attemptCount   Int           @default(0)
+  status         MessageStatus   @default(QUEUED)
+  attemptCount   Int             @default(0)
   lastError      String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   lead Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
@@ -281,11 +319,14 @@ model Customer {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  createdBy User?        @relation("CustomerCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  leads     Lead[]
-  events    Event[]
-  invoices  Invoice[]
+  org                 Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy           User?                @relation("CustomerCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  leads               Lead[]
+  events              Event[]
+  communicationEvents CommunicationEvent[] @relation("CommunicationEventContact")
+  voicemailArtifacts  VoicemailArtifact[]  @relation("VoicemailArtifactContact")
+  invoices            Invoice[]
+  jobs                Job[]
 
   @@index([orgId, phoneE164])
   @@index([orgId, name])
@@ -310,8 +351,10 @@ model Call {
   endedAt            DateTime?
   createdAt          DateTime          @default(now())
 
-  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  lead Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  org                 Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead                Lead?                @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  communicationEvents CommunicationEvent[]
+  voicemailArtifacts  VoicemailArtifact[]
 
   @@index([orgId, startedAt])
   @@index([leadId, startedAt])
@@ -331,12 +374,89 @@ model Message {
   status             MessageStatus?
   createdAt          DateTime         @default(now())
 
-  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  lead Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  org                 Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead                Lead                 @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  communicationEvents CommunicationEvent[]
 
   @@index([orgId, createdAt])
   @@index([leadId, createdAt])
   @@index([leadId, type, createdAt])
+}
+
+model CommunicationEvent {
+  id                    String                 @id @default(uuid())
+  orgId                 String
+  leadId                String?
+  contactId             String?
+  conversationId        String?
+  callId                String?
+  messageId             String?
+  actorUserId           String?
+  type                  CommunicationEventType
+  channel               CommunicationChannel
+  occurredAt            DateTime
+  summary               String
+  metadataJson          Json?
+  provider              String?
+  providerCallSid       String?
+  providerParentCallSid String?
+  providerMessageSid    String?
+  providerStatus        String?
+  idempotencyKey        String
+  createdAt             DateTime               @default(now())
+
+  org               Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead              Lead?                  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  contact           Customer?              @relation("CommunicationEventContact", fields: [contactId], references: [id], onDelete: SetNull)
+  conversation      LeadConversationState? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  call              Call?                  @relation(fields: [callId], references: [id], onDelete: SetNull)
+  message           Message?               @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  actor             User?                  @relation("CommunicationEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  voicemailArtifact VoicemailArtifact?
+
+  @@unique([orgId, idempotencyKey])
+  @@index([orgId, occurredAt])
+  @@index([leadId, occurredAt])
+  @@index([contactId, occurredAt])
+  @@index([conversationId, occurredAt])
+  @@index([callId, occurredAt])
+  @@index([messageId, occurredAt])
+  @@index([providerCallSid, occurredAt])
+  @@index([providerMessageSid, occurredAt])
+}
+
+model VoicemailArtifact {
+  id                       String                        @id @default(uuid())
+  orgId                    String
+  leadId                   String?
+  contactId                String?
+  conversationId           String?
+  callId                   String?
+  communicationEventId     String                        @unique
+  providerCallSid          String?
+  recordingSid             String?                       @unique
+  recordingUrl             String?
+  recordingDurationSeconds Int?
+  transcriptionStatus      VoicemailTranscriptionStatus?
+  transcriptionText        String?
+  voicemailAt              DateTime
+  metadataJson             Json?
+  createdAt                DateTime                      @default(now())
+  updatedAt                DateTime                      @updatedAt
+
+  org                Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead               Lead?                  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  contact            Customer?              @relation("VoicemailArtifactContact", fields: [contactId], references: [id], onDelete: SetNull)
+  conversation       LeadConversationState? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  call               Call?                  @relation(fields: [callId], references: [id], onDelete: SetNull)
+  communicationEvent CommunicationEvent     @relation(fields: [communicationEventId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, voicemailAt])
+  @@index([leadId, voicemailAt])
+  @@index([contactId, voicemailAt])
+  @@index([conversationId, voicemailAt])
+  @@index([callId, voicemailAt])
+  @@index([providerCallSid, voicemailAt])
 }
 
 model SmsTemplate {
@@ -396,36 +516,42 @@ model Event {
 }
 
 model Invoice {
-  id              String               @id @default(uuid())
-  orgId           String
-  jobId           String?
-  customerId      String
-  invoiceNumber   String
-  terms           InvoiceTerms         @default(DUE_ON_RECEIPT)
-  status          BillingInvoiceStatus @default(DRAFT)
-  subtotal        Decimal              @default(0) @db.Decimal(12, 2)
-  taxRate         Decimal              @default(0) @db.Decimal(6, 4)
-  taxAmount       Decimal              @default(0) @db.Decimal(12, 2)
-  total           Decimal              @default(0) @db.Decimal(12, 2)
-  amountPaid      Decimal              @default(0) @db.Decimal(12, 2)
-  balanceDue      Decimal              @default(0) @db.Decimal(12, 2)
-  issueDate       DateTime
-  dueDate         DateTime
-  notes           String?
-  createdByUserId String?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  id               String               @id @default(uuid())
+  orgId            String
+  jobId            String?
+  sourceEstimateId String?
+  sourceJobId      String?
+  customerId       String
+  invoiceNumber    String
+  terms            InvoiceTerms         @default(DUE_ON_RECEIPT)
+  status           BillingInvoiceStatus @default(DRAFT)
+  subtotal         Decimal              @default(0) @db.Decimal(12, 2)
+  taxRate          Decimal              @default(0) @db.Decimal(6, 4)
+  taxAmount        Decimal              @default(0) @db.Decimal(12, 2)
+  total            Decimal              @default(0) @db.Decimal(12, 2)
+  amountPaid       Decimal              @default(0) @db.Decimal(12, 2)
+  balanceDue       Decimal              @default(0) @db.Decimal(12, 2)
+  issueDate        DateTime
+  dueDate          DateTime
+  notes            String?
+  createdByUserId  String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
-  org       Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  job       Lead?             @relation(fields: [jobId], references: [id], onDelete: SetNull)
-  customer  Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  createdBy User?             @relation("InvoiceCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  lineItems InvoiceLineItem[]
-  payments  InvoicePayment[]
+  org            Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job            Lead?             @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  sourceEstimate Estimate?         @relation("EstimateSourceInvoice", fields: [sourceEstimateId], references: [id], onDelete: SetNull)
+  sourceJob      Job?              @relation("InvoiceSourceJob", fields: [sourceJobId], references: [id], onDelete: SetNull)
+  customer       Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  createdBy      User?             @relation("InvoiceCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  lineItems      InvoiceLineItem[]
+  payments       InvoicePayment[]
   metaCapiEvents MetaCapiEvent[]
 
   @@unique([orgId, invoiceNumber])
   @@index([orgId, status, dueDate])
+  @@index([sourceEstimateId, createdAt])
+  @@index([sourceJobId, createdAt])
   @@index([jobId, createdAt])
   @@index([customerId, createdAt])
 }
@@ -461,20 +587,491 @@ model InvoicePayment {
   @@index([invoiceId, date])
 }
 
-model MetaCapiEvent {
-  id             String         @id @default(uuid())
+model PurchaseOrder {
+  id              String              @id @default(uuid())
+  orgId           String
+  jobId           String?
+  createdByUserId String?
+  poNumber        String
+  vendorName      String
+  vendorEmail     String?
+  vendorPhone     String?
+  vendorAddress   String?
+  title           String
+  status          PurchaseOrderStatus @default(DRAFT)
+  notes           String?
+  subtotal        Decimal             @default(0) @db.Decimal(12, 2)
+  taxRate         Decimal             @default(0) @db.Decimal(6, 4)
+  taxAmount       Decimal             @default(0) @db.Decimal(12, 2)
+  total           Decimal             @default(0) @db.Decimal(12, 2)
+  sentAt          DateTime?
+  receivedAt      DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  org       Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job       Job?                    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  createdBy User?                   @relation("PurchaseOrderCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  lineItems PurchaseOrderLineItem[]
+  expenses  BusinessExpense[]
+
+  @@unique([orgId, poNumber])
+  @@index([orgId, status, updatedAt])
+  @@index([jobId, updatedAt])
+  @@index([createdByUserId, updatedAt])
+}
+
+model PurchaseOrderLineItem {
+  id              String   @id @default(uuid())
+  purchaseOrderId String
+  materialId      String?
+  sortOrder       Int      @default(0)
+  name            String
+  description     String?
+  quantity        Decimal  @default(1) @db.Decimal(10, 2)
+  unit            String?
+  unitCost        Decimal  @default(0) @db.Decimal(12, 2)
+  total           Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  material      Material?     @relation(fields: [materialId], references: [id], onDelete: SetNull)
+
+  @@index([purchaseOrderId, sortOrder])
+  @@index([materialId])
+}
+
+model BusinessExpense {
+  id              String   @id @default(uuid())
+  orgId           String
+  jobId           String?
+  purchaseOrderId String?
+  createdByUserId String?
+  receiptPhotoId  String?
+  expenseDate     DateTime
+  vendorName      String?
+  category        String
+  description     String
+  amount          Decimal  @default(0) @db.Decimal(12, 2)
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job           Job?           @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  createdBy     User?          @relation("BusinessExpenseCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  receiptPhoto  Photo?         @relation("BusinessExpenseReceipt", fields: [receiptPhotoId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, expenseDate])
+  @@index([jobId, createdAt])
+  @@index([purchaseOrderId, createdAt])
+  @@index([createdByUserId, createdAt])
+  @@index([receiptPhotoId])
+}
+
+model Material {
+  id            String   @id @default(uuid())
+  orgId         String
+  name          String
+  category      String
+  unit          String
+  baseCost      Float
+  markupPercent Float
+  sellPrice     Float
+  notes         String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  org                    Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  purchaseOrderLineItems PurchaseOrderLineItem[]
+  estimateLineItems      EstimateLineItem[]
+  estimateDraftLineItems EstimateDraftLineItem[]
+  jobMaterials           JobMaterial[]
+
+  @@index([orgId, active, category])
+  @@index([orgId, name])
+}
+
+model Estimate {
+  id                   String            @id @default(uuid())
+  orgId                String
+  leadId               String?
+  jobId                String?
+  createdByUserId      String?
+  status               EstimateStatus    @default(DRAFT)
+  estimateNumber       String
+  title                String
+  customerName         String?
+  siteAddress          String?
+  projectType          String?
+  description          String?
+  subtotal             Decimal           @default(0) @db.Decimal(12, 2)
+  taxRate              Decimal           @default(0) @db.Decimal(6, 4)
+  taxRateSource        EstimateTaxSource @default(MANUAL)
+  taxZipCode           String?
+  taxJurisdiction      String?
+  taxLocationCode      String?
+  taxCalculatedAt      DateTime?
+  tax                  Decimal           @default(0) @db.Decimal(12, 2)
+  total                Decimal           @default(0) @db.Decimal(12, 2)
+  notes                String?
+  terms                String?
+  validUntil           DateTime?
+  sharedAt             DateTime?
+  shareExpiresAt       DateTime?
+  sentAt               DateTime?
+  viewedAt             DateTime?
+  customerViewedAt     DateTime?
+  approvedAt           DateTime?
+  declinedAt           DateTime?
+  customerDecisionAt   DateTime?
+  customerDecisionName String?
+  customerDecisionNote String?
+  archivedAt           DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  org            Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead           Lead?               @relation("EstimateLead", fields: [leadId], references: [id], onDelete: SetNull)
+  job            Job?                @relation("EstimateAttachedJob", fields: [jobId], references: [id], onDelete: SetNull)
+  createdBy      User?               @relation("EstimateCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  lineItems      EstimateLineItem[]
+  activities     EstimateActivity[]
+  shareLinks     EstimateShareLink[]
+  latestForLeads Lead[]              @relation("LeadLatestEstimate")
+  linkedJobs     Job[]               @relation("DispatchLinkedEstimate")
+  sourcedJobs    Job[]               @relation("EstimateSourceJob")
+  sourceInvoices Invoice[]           @relation("EstimateSourceInvoice")
+
+  @@unique([orgId, estimateNumber])
+  @@index([orgId, status, updatedAt])
+  @@index([orgId, archivedAt, updatedAt])
+  @@index([orgId, customerName, updatedAt])
+  @@index([leadId, updatedAt])
+  @@index([jobId, updatedAt])
+  @@index([createdByUserId, updatedAt])
+}
+
+model EstimateLineItem {
+  id          String                @id @default(uuid())
+  estimateId  String
+  materialId  String?
+  type        EstimateDraftLineType @default(CUSTOM_MATERIAL)
+  sortOrder   Int                   @default(0)
+  name        String
+  description String?
+  quantity    Decimal               @default(1) @db.Decimal(10, 2)
+  unit        String?
+  unitPrice   Decimal               @default(0) @db.Decimal(12, 2)
+  total       Decimal               @default(0) @db.Decimal(12, 2)
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  estimate Estimate  @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  material Material? @relation(fields: [materialId], references: [id], onDelete: SetNull)
+
+  @@index([estimateId, sortOrder])
+  @@index([materialId])
+}
+
+model EstimateActivity {
+  id          String               @id @default(uuid())
+  estimateId  String
+  type        EstimateActivityType
+  actorUserId String?
+  metadata    Json?
+  createdAt   DateTime             @default(now())
+
+  estimate  Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  actorUser User?    @relation("EstimateActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([estimateId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model EstimateShareLink {
+  id                 String    @id @default(uuid())
+  orgId              String
+  estimateId         String
+  createdByUserId    String?
+  tokenHash          String    @unique
+  recipientName      String?
+  recipientEmail     String?
+  recipientPhoneE164 String?
+  expiresAt          DateTime?
+  revokedAt          DateTime?
+  firstViewedAt      DateTime?
+  lastViewedAt       DateTime?
+  approvedAt         DateTime?
+  declinedAt         DateTime?
+  decisionName       String?
+  decisionNote       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  estimate  Estimate     @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("EstimateShareCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([estimateId, createdAt])
+  @@index([createdByUserId, createdAt])
+  @@index([expiresAt, revokedAt])
+}
+
+model JobTrackingLink {
+  id              String   @id @default(uuid())
+  orgId           String
+  jobId           String
+  createdByUserId String?
+  tokenHash       String   @unique
+  revokedAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job       Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("JobTrackingLinkCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([jobId, createdAt])
+  @@index([createdByUserId, createdAt])
+  @@index([revokedAt, createdAt])
+}
+
+model EstimateDraft {
+  id              String   @id @default(uuid())
+  orgId           String
+  createdByUserId String?
+  projectName     String
+  customerName    String?
+  siteAddress     String?
+  projectType     String?
+  notes           String?
+  taxRate         Decimal  @default(0) @db.Decimal(6, 4)
+  materialsTotal  Decimal  @default(0) @db.Decimal(12, 2)
+  laborTotal      Decimal  @default(0) @db.Decimal(12, 2)
+  subtotal        Decimal  @default(0) @db.Decimal(12, 2)
+  taxAmount       Decimal  @default(0) @db.Decimal(12, 2)
+  finalTotal      Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org       Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy User?                   @relation("EstimateDraftCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  lineItems EstimateDraftLineItem[]
+  jobs      Job[]
+
+  @@index([orgId, updatedAt])
+  @@index([createdByUserId, updatedAt])
+}
+
+model EstimateDraftLineItem {
+  id              String                @id @default(uuid())
+  estimateDraftId String
+  materialId      String?
+  type            EstimateDraftLineType @default(MATERIAL)
+  description     String
+  quantity        Decimal               @default(1) @db.Decimal(10, 2)
+  unit            String?
+  unitCost        Decimal               @default(0) @db.Decimal(12, 2)
+  markupPercent   Decimal               @default(0) @db.Decimal(6, 2)
+  lineCostTotal   Decimal               @default(0) @db.Decimal(12, 2)
+  lineSellTotal   Decimal               @default(0) @db.Decimal(12, 2)
+  sortOrder       Int                   @default(0)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  estimateDraft EstimateDraft @relation(fields: [estimateDraftId], references: [id], onDelete: Cascade)
+  material      Material?     @relation(fields: [materialId], references: [id], onDelete: SetNull)
+
+  @@index([estimateDraftId, sortOrder])
+  @@index([materialId])
+}
+
+model Job {
+  id                 String            @id @default(uuid())
+  orgId              String
+  createdByUserId    String?
+  customerId         String?
+  leadId             String?
+  estimateDraftId    String?
+  sourceEstimateId   String?
+  linkedEstimateId   String?
+  customerName       String
+  phone              String?
+  address            String
+  serviceType        String
+  projectType        String
+  scheduledDate      DateTime?
+  scheduledStartTime String?
+  scheduledEndTime   String?
+  dispatchStatus     DispatchJobStatus @default(SCHEDULED)
+  assignedCrewId     String?
+  crewOrder          Int?
+  priority           String?
+  notes              String?
+  costingNotes       String?
+  status             JobStatus         @default(DRAFT)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  org            Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy      User?             @relation("JobCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  customer       Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  lead           Lead?             @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  sourceEstimate Estimate?         @relation("EstimateSourceJob", fields: [sourceEstimateId], references: [id], onDelete: SetNull)
+  linkedEstimate Estimate?         @relation("DispatchLinkedEstimate", fields: [linkedEstimateId], references: [id], onDelete: SetNull)
+  estimateDraft  EstimateDraft?    @relation(fields: [estimateDraftId], references: [id], onDelete: SetNull)
+  assignedCrew   Crew?             @relation(fields: [assignedCrewId], references: [id], onDelete: SetNull)
+  estimates      Estimate[]        @relation("EstimateAttachedJob")
+  sourceInvoices Invoice[]         @relation("InvoiceSourceJob")
+  purchaseOrders PurchaseOrder[]
+  expenses       BusinessExpense[]
+  materials      JobMaterial[]
+  measurements   JobMeasurement[]
+  labor          JobLabor[]
+  jobEvents      JobEvent[]
+  trackingLinks  JobTrackingLink[]
+
+  @@index([orgId, status, updatedAt])
+  @@index([orgId, scheduledDate, dispatchStatus])
+  @@index([orgId, scheduledDate, assignedCrewId, crewOrder])
+  @@index([sourceEstimateId, updatedAt])
+  @@index([linkedEstimateId])
+  @@index([estimateDraftId, updatedAt])
+  @@index([customerId, updatedAt])
+  @@index([leadId, updatedAt])
+  @@index([assignedCrewId, updatedAt])
+  @@index([createdByUserId, updatedAt])
+}
+
+model Crew {
+  id        String   @id @default(uuid())
+  orgId     String
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  jobs Job[]
+
+  @@unique([orgId, name])
+  @@index([orgId, active, createdAt])
+}
+
+model JobEvent {
+  id          String       @id @default(uuid())
+  jobId       String
+  orgId       String
+  eventType   JobEventType
+  fromValue   String?
+  toValue     String?
+  actorUserId String?
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+
+  job       Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actorUser User?        @relation("JobEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([jobId, createdAt])
+  @@index([orgId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model JobMeasurement {
+  id        String   @id @default(uuid())
+  orgId     String
+  jobId     String
+  label     String
+  value     String
+  unit      String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([orgId, createdAt])
+  @@map("JobMeasurements")
+}
+
+model JobMaterial {
+  id             String   @id @default(uuid())
   orgId          String
-  leadId         String?
-  invoiceId      String?
-  eventName      String
-  eventId        String
-  status         MetaCapiStatus @default(PENDING)
-  payloadJson    Json?
-  responseJson   Json?
-  errorMessage   String?
-  sentAt         DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  jobId          String
+  materialId     String?
+  name           String
+  quantity       Decimal  @default(1) @db.Decimal(10, 2)
+  unit           String?
+  cost           Decimal  @default(0) @db.Decimal(12, 2)
+  markupPercent  Decimal  @default(0) @db.Decimal(6, 2)
+  total          Decimal  @default(0) @db.Decimal(12, 2)
+  actualQuantity Decimal? @db.Decimal(10, 2)
+  actualUnitCost Decimal? @db.Decimal(12, 2)
+  actualTotal    Decimal  @default(0) @db.Decimal(12, 2)
+  notes          String?
+  varianceNotes  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job      Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  material Material?    @relation(fields: [materialId], references: [id], onDelete: SetNull)
+
+  @@index([jobId, createdAt])
+  @@index([materialId])
+  @@index([orgId, createdAt])
+  @@map("JobMaterials")
+}
+
+model JobLabor {
+  id               String   @id @default(uuid())
+  orgId            String
+  jobId            String
+  description      String
+  quantity         Decimal  @default(1) @db.Decimal(10, 2)
+  unit             String?
+  cost             Decimal  @default(0) @db.Decimal(12, 2)
+  markupPercent    Decimal  @default(0) @db.Decimal(6, 2)
+  total            Decimal  @default(0) @db.Decimal(12, 2)
+  actualHours      Decimal? @db.Decimal(10, 2)
+  actualHourlyCost Decimal? @db.Decimal(12, 2)
+  actualTotal      Decimal  @default(0) @db.Decimal(12, 2)
+  notes            String?
+  varianceNotes    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([orgId, createdAt])
+  @@map("JobLabor")
+}
+
+model MetaCapiEvent {
+  id           String         @id @default(uuid())
+  orgId        String
+  leadId       String?
+  invoiceId    String?
+  eventName    String
+  eventId      String
+  status       MetaCapiStatus @default(PENDING)
+  payloadJson  Json?
+  responseJson Json?
+  errorMessage String?
+  sentAt       DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
   org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   lead    Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
@@ -487,19 +1084,19 @@ model MetaCapiEvent {
 }
 
 model InternalCronRunLog {
-  id            String       @id @default(uuid())
-  orgId         String?
-  route         String
-  status        CronLogStatus @default(OK)
-  startedAt     DateTime     @default(now())
-  finishedAt    DateTime?
-  processedCount Int         @default(0)
-  successCount  Int          @default(0)
-  failureCount  Int          @default(0)
-  metricsJson   Json?
-  errorMessage  String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id             String        @id @default(uuid())
+  orgId          String?
+  route          String
+  status         CronLogStatus @default(OK)
+  startedAt      DateTime      @default(now())
+  finishedAt     DateTime?
+  processedCount Int           @default(0)
+  successCount   Int           @default(0)
+  failureCount   Int           @default(0)
+  metricsJson    Json?
+  errorMessage   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   org Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
 
@@ -509,19 +1106,19 @@ model InternalCronRunLog {
 }
 
 model OrganizationTwilioConfig {
-  id                      String            @id @default(uuid())
-  organizationId          String            @unique
-  twilioSubaccountSid     String            @unique
+  id                       String             @id @default(uuid())
+  organizationId           String             @unique
+  twilioSubaccountSid      String             @unique
   twilioAuthTokenEncrypted String
-  messagingServiceSid     String
-  phoneNumber             String
-  voiceForwardingNumber   String?
-  status                  TwilioConfigStatus @default(PENDING_A2P)
-  createdAt               DateTime          @default(now())
-  updatedAt               DateTime          @updatedAt
+  messagingServiceSid      String
+  phoneNumber              String
+  voiceForwardingNumber    String?
+  status                   TwilioConfigStatus @default(PENDING_A2P)
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
 
-  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  auditLogs     TwilioConfigAuditLog[]
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  auditLogs    TwilioConfigAuditLog[]
 
   @@index([status, updatedAt])
 }
@@ -547,21 +1144,26 @@ model TwilioConfigAuditLog {
 }
 
 model OrganizationMessagingSettings {
-  id                  String   @id @default(uuid())
-  orgId               String   @unique
-  smsTone             SmsTone  @default(FRIENDLY)
-  autoReplyEnabled    Boolean  @default(true)
-  followUpsEnabled    Boolean  @default(true)
-  autoBookingEnabled  Boolean  @default(true)
-  workingHoursStart   String   @default("09:00")
-  workingHoursEnd     String   @default("17:00")
-  slotDurationMinutes Int      @default(60)
-  bufferMinutes       Int      @default(15)
-  daysAhead           Int      @default(3)
-  timezone            String   @default("America/Los_Angeles")
-  customTemplates     Json?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                     String   @id @default(uuid())
+  orgId                  String   @unique
+  smsTone                SmsTone  @default(FRIENDLY)
+  dispatchSmsEnabled     Boolean  @default(false)
+  dispatchSmsScheduled   Boolean  @default(true)
+  dispatchSmsOnTheWay    Boolean  @default(true)
+  dispatchSmsRescheduled Boolean  @default(true)
+  dispatchSmsCompleted   Boolean  @default(true)
+  autoReplyEnabled       Boolean  @default(true)
+  followUpsEnabled       Boolean  @default(true)
+  autoBookingEnabled     Boolean  @default(true)
+  workingHoursStart      String   @default("09:00")
+  workingHoursEnd        String   @default("17:00")
+  slotDurationMinutes    Int      @default(60)
+  bufferMinutes          Int      @default(15)
+  daysAhead              Int      @default(3)
+  timezone               String   @default("America/Los_Angeles")
+  customTemplates        Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
@@ -569,10 +1171,10 @@ model OrganizationMessagingSettings {
 }
 
 model LeadConversationState {
-  id                    String                @id @default(uuid())
+  id                    String                 @id @default(uuid())
   orgId                 String
-  leadId                String                @unique
-  stage                 ConversationStage     @default(NEW)
+  leadId                String                 @unique
+  stage                 ConversationStage      @default(NEW)
   workSummary           String?
   addressText           String?
   addressCity           String?
@@ -586,13 +1188,15 @@ model LeadConversationState {
   bookedStartAt         DateTime?
   bookedEndAt           DateTime?
   bookedCalendarEventId String?
-  followUpStep          Int                   @default(0)
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
+  followUpStep          Int                    @default(0)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 
-  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  lead  Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  audits LeadConversationAuditEvent[]
+  org                 Organization                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead                Lead                         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  audits              LeadConversationAuditEvent[]
+  communicationEvents CommunicationEvent[]
+  VoicemailArtifact   VoicemailArtifact[]
 
   @@index([orgId, stage, updatedAt])
   @@index([orgId, nextFollowUpAt])
@@ -601,16 +1205,16 @@ model LeadConversationState {
 }
 
 model LeadConversationAuditEvent {
-  id             String                  @id @default(uuid())
-  orgId          String
-  leadId         String
+  id                  String                  @id @default(uuid())
+  orgId               String
+  leadId              String
   conversationStateId String?
-  action         ConversationAuditAction
-  metadataJson   Json?
-  createdAt      DateTime                @default(now())
+  action              ConversationAuditAction
+  metadataJson        Json?
+  createdAt           DateTime                @default(now())
 
-  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  lead Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  org               Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lead              Lead                   @relation(fields: [leadId], references: [id], onDelete: Cascade)
   conversationState LeadConversationState? @relation(fields: [conversationStateId], references: [id], onDelete: SetNull)
 
   @@index([orgId, createdAt])
@@ -634,16 +1238,16 @@ model ClientMutationReceipt {
 }
 
 model OrganizationUsage {
-  id                  String   @id @default(uuid())
-  orgId               String
-  periodStart         DateTime
-  smsSentCount        Int      @default(0)
-  smsReceivedCount    Int      @default(0)
-  smsCostEstimateCents Int     @default(0)
-  smsAlert80At        DateTime?
-  smsAlert100At       DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                   String    @id @default(uuid())
+  orgId                String
+  periodStart          DateTime
+  smsSentCount         Int       @default(0)
+  smsReceivedCount     Int       @default(0)
+  smsCostEstimateCents Int       @default(0)
+  smsAlert80At         DateTime?
+  smsAlert100At        DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
@@ -652,17 +1256,17 @@ model OrganizationUsage {
 }
 
 model AiUsage {
-  id                 String   @id @default(uuid())
+  id                 String    @id @default(uuid())
   orgId              String
   periodStart        DateTime
-  requestsCount      Int      @default(0)
-  inputTokens        Int      @default(0)
-  outputTokens       Int      @default(0)
-  estimatedCostCents Int      @default(0)
+  requestsCount      Int       @default(0)
+  inputTokens        Int       @default(0)
+  outputTokens       Int       @default(0)
+  estimatedCostCents Int       @default(0)
   alert80At          DateTime?
   alert100At         DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
@@ -831,9 +1435,9 @@ model GoogleSyncJob {
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
 
-  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user  User         @relation("GoogleSyncJobUser", fields: [userId], references: [id], onDelete: Cascade)
-  event Event?       @relation("GoogleSyncJobEvent", fields: [eventId], references: [id], onDelete: SetNull)
+  org      Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user     User                   @relation("GoogleSyncJobUser", fields: [userId], references: [id], onDelete: Cascade)
+  event    Event?                 @relation("GoogleSyncJobEvent", fields: [eventId], references: [id], onDelete: SetNull)
   attempts GoogleSyncJobAttempt[]
 
   @@index([status, runAfter])
@@ -843,17 +1447,17 @@ model GoogleSyncJob {
 
 model GoogleSyncJobAttempt {
   id            String              @id @default(uuid())
-  jobId          String
-  orgId          String
-  userId         String
-  action         GoogleSyncAction
-  status         GoogleSyncJobStatus
-  attemptNumber  Int
-  retryable      Boolean?
-  backoffMs      Int?
-  nextRunAt      DateTime?
-  errorMessage   String?
-  createdAt      DateTime            @default(now())
+  jobId         String
+  orgId         String
+  userId        String
+  action        GoogleSyncAction
+  status        GoogleSyncJobStatus
+  attemptNumber Int
+  retryable     Boolean?
+  backoffMs     Int?
+  nextRunAt     DateTime?
+  errorMessage  String?
+  createdAt     DateTime            @default(now())
 
   job  GoogleSyncJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
   org  Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -866,22 +1470,22 @@ model GoogleSyncJobAttempt {
 }
 
 model GoogleSyncRun {
-  id               String              @id @default(uuid())
-  source           GoogleSyncRunSource @default(CRON)
-  status           GoogleSyncRunStatus @default(RUNNING)
+  id                String              @id @default(uuid())
+  source            GoogleSyncRunSource @default(CRON)
+  status            GoogleSyncRunStatus @default(RUNNING)
   triggeredByUserId String?
-  maxJobs          Int?
-  maxAccounts      Int?
-  jobsProcessed    Int                 @default(0)
-  jobsCompleted    Int                 @default(0)
-  jobsFailed       Int                 @default(0)
-  accountsProcessed Int                @default(0)
-  accountsFailed   Int                 @default(0)
-  lastError        String?
-  startedAt        DateTime            @default(now())
-  finishedAt       DateTime?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
+  maxJobs           Int?
+  maxAccounts       Int?
+  jobsProcessed     Int                 @default(0)
+  jobsCompleted     Int                 @default(0)
+  jobsFailed        Int                 @default(0)
+  accountsProcessed Int                 @default(0)
+  accountsFailed    Int                 @default(0)
+  lastError         String?
+  startedAt         DateTime            @default(now())
+  finishedAt        DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
   triggeredBy User? @relation("GoogleSyncRunTrigger", fields: [triggeredByUserId], references: [id], onDelete: SetNull)
 
@@ -890,12 +1494,12 @@ model GoogleSyncRun {
 }
 
 model GoogleSyncHealthAlert {
-  id             String   @id @default(uuid())
-  cronStale      Boolean  @default(false)
-  queueHigh      Boolean  @default(false)
-  errorRateHigh  Boolean  @default(false)
+  id              String   @id @default(uuid())
+  cronStale       Boolean  @default(false)
+  queueHigh       Boolean  @default(false)
+  errorRateHigh   Boolean  @default(false)
   metricsSnapshot Json
-  createdAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
 
   @@index([createdAt])
   @@index([cronStale, createdAt])
@@ -998,8 +1602,9 @@ model Photo {
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
-  leadPhotos LeadPhoto[]
-  logoOrganizations Organization[] @relation("OrganizationLogo")
+  leadPhotos        LeadPhoto[]
+  expenseReceipts   BusinessExpense[] @relation("BusinessExpenseReceipt")
+  logoOrganizations Organization[]    @relation("OrganizationLogo")
 
   @@unique([orgId, key])
   @@index([orgId, createdAt])
@@ -1054,6 +1659,8 @@ model IntegrationAccount {
   refreshTokenEncrypted String?
   expiresAt             DateTime?
   providerAccountId     String?
+  providerEmail         String?
+  providerDisplayName   String?
   realmId               String?
   scopes                String[]
   connectedAt           DateTime                 @default(now())
@@ -1431,6 +2038,39 @@ enum CallStatus {
   VOICEMAIL
 }
 
+enum CommunicationChannel {
+  VOICE
+  SMS
+  FORM
+  SYSTEM
+}
+
+enum CommunicationEventType {
+  INBOUND_CALL_RECEIVED
+  FORWARDED_TO_OWNER
+  OWNER_ANSWERED
+  NO_ANSWER
+  BUSY
+  FAILED
+  CANCELED
+  COMPLETED
+  VOICEMAIL_REACHED
+  VOICEMAIL_LEFT
+  ABANDONED
+  MISSED_CALL_TEXT_QUEUED
+  MISSED_CALL_TEXT_SENT
+  MISSED_CALL_TEXT_SKIPPED
+  INBOUND_SMS_RECEIVED
+  OUTBOUND_SMS_SENT
+  FORM_SUBMITTED
+}
+
+enum VoicemailTranscriptionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 enum AttributionSource {
   PAID
   ORGANIC
@@ -1524,6 +2164,78 @@ enum InvoiceTerms {
   NET_30
 }
 
+enum EstimateDraftLineType {
+  MATERIAL
+  CUSTOM_MATERIAL
+  LABOR
+}
+
+enum EstimateStatus {
+  DRAFT
+  SENT
+  VIEWED
+  APPROVED
+  DECLINED
+  EXPIRED
+  CONVERTED
+}
+
+enum EstimateTaxSource {
+  MANUAL
+  WA_DOR
+}
+
+enum EstimateActivityType {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  SHARE_LINK_CREATED
+  SHARE_LINK_REVOKED
+  ITEM_ADDED
+  ITEM_REMOVED
+  SENT
+  VIEWED
+  APPROVED
+  DECLINED
+  CONVERTED_TO_JOB
+  CONVERTED_TO_INVOICE
+  ARCHIVED
+}
+
+enum JobStatus {
+  DRAFT
+  ESTIMATING
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+enum DispatchJobStatus {
+  SCHEDULED
+  ON_THE_WAY
+  ON_SITE
+  COMPLETED
+  RESCHEDULED
+  CANCELED
+}
+
+enum JobEventType {
+  JOB_CREATED
+  CREW_ASSIGNED
+  CREW_REASSIGNED
+  STATUS_CHANGED
+  JOB_UPDATED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  RECEIVED
+  CANCELLED
+}
+
 enum MetaCapiStatus {
   PENDING
   SENT
@@ -1538,6 +2250,7 @@ enum CronLogStatus {
 enum IntegrationProvider {
   JOBBER
   QBO
+  OUTLOOK
 }
 
 enum IntegrationAccountStatus {

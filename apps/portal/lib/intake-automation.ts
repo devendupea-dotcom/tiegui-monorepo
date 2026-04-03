@@ -1,8 +1,10 @@
 import { addDays, addMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "./calendar/availability";
+import { recordOutboundSmsCommunicationEvent } from "./communication-events";
 import { prisma } from "./prisma";
 import { pickLocalizedTemplate, resolveMessageLocale } from "./message-language";
+import { ensureSmsA2POpenerDisclosure } from "./sms-compliance";
 import { sendOutboundSms } from "./sms";
 import { queueSmsDispatch } from "./sms-dispatch-queue";
 
@@ -99,7 +101,16 @@ async function sendAutomationMessage({
 }) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
-    select: { status: true },
+    select: {
+      id: true,
+      status: true,
+      customerId: true,
+      conversationState: {
+        select: {
+          id: true,
+        },
+      },
+    },
   });
 
   if (!lead || lead.status === "DNC") {
@@ -112,14 +123,17 @@ async function sendAutomationMessage({
     toNumberE164,
     body,
   });
+  if (smsResult.suppressed) {
+    return;
+  }
   const resolvedFromNumber = smsResult.resolvedFromNumberE164 || organization.smsFromNumberE164;
   if (!resolvedFromNumber) {
     return;
   }
   const now = new Date();
 
-  await prisma.$transaction([
-    prisma.message.create({
+  await prisma.$transaction(async (tx) => {
+    const message = await tx.message.create({
       data: {
         orgId: organization.id,
         leadId,
@@ -132,15 +146,34 @@ async function sendAutomationMessage({
         providerMessageSid: smsResult.providerMessageSid,
         status: smsResult.status,
       },
-    }),
-    prisma.lead.update({
+      select: {
+        id: true,
+        createdAt: true,
+      },
+    });
+
+    await recordOutboundSmsCommunicationEvent(tx, {
+      orgId: organization.id,
+      leadId,
+      contactId: lead.customerId,
+      conversationId: lead.conversationState?.id || null,
+      messageId: message.id,
+      body,
+      fromNumberE164: resolvedFromNumber,
+      toNumberE164,
+      providerMessageSid: smsResult.providerMessageSid,
+      status: smsResult.status,
+      occurredAt: message.createdAt,
+    });
+
+    await tx.lead.update({
       where: { id: leadId },
       data: {
         lastContactedAt: now,
         lastOutboundAt: now,
       },
-    }),
-  ]);
+    });
+  });
 }
 
 function parseTimeParts(text: string): TimeParts {
@@ -598,9 +631,10 @@ export async function sendMissedCallIntroAndStartFlow({
     fallbackTemplate: DEFAULT_ASK_LOCATION,
   });
 
-  const openingBody = organization.intakeAutomationEnabled
-    ? `${introBody}\n\n${askLocationBody}`
-    : introBody;
+  const openingBody = ensureSmsA2POpenerDisclosure(
+    organization.intakeAutomationEnabled ? `${introBody}\n\n${askLocationBody}` : introBody,
+    locale === "ES" ? "BILINGUAL" : "EN",
+  );
 
   await sendAutomationMessage({
     organization,
@@ -664,9 +698,10 @@ export async function queueMissedCallIntroForQuietHours({
     fallbackTemplate: DEFAULT_ASK_LOCATION,
   });
 
-  const openingBody = organization.intakeAutomationEnabled
-    ? `${introBody}\n\n${askLocationBody}`
-    : introBody;
+  const openingBody = ensureSmsA2POpenerDisclosure(
+    organization.intakeAutomationEnabled ? `${introBody}\n\n${askLocationBody}` : introBody,
+    locale === "ES" ? "BILINGUAL" : "EN",
+  );
 
   const queued = await queueSmsDispatch({
     orgId: organization.id,

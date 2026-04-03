@@ -108,6 +108,12 @@ dist
 # vitepress cache directory
 **/.vitepress/cache
 
+# Turborepo local cache
+.turbo
+
+# Local test runner output
+test-results
+
 # Docusaurus cache and generated files
 .docusaurus
 

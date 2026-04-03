@@ -1,26 +1,13 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
 import { isInternalRole } from "@/lib/session";
 import { boolEnv, checkRequiredTables, getSafeDbEnvInfo, pingDb } from "@/lib/internal-health";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-function getBearerToken(headerValue: string | null): string | null {
-  if (!headerValue) return null;
-  const trimmed = headerValue.trim();
-  if (!trimmed.toLowerCase().startsWith("bearer ")) return null;
-  const token = trimmed.slice(7).trim();
-  return token || null;
-}
-
-function getCronSecret(req: Request): string | null {
-  const headerSecret = req.headers.get("x-cron-secret")?.trim();
-  if (headerSecret) return headerSecret;
-  return getBearerToken(req.headers.get("authorization"));
-}
 
 async function isAuthorized(req: Request): Promise<boolean> {
   const session = await getServerSession(authOptions);
@@ -29,9 +16,7 @@ async function isAuthorized(req: Request): Promise<boolean> {
     return true;
   }
 
-  const expectedCronSecret = normalizeEnvValue(process.env.CRON_SECRET);
-  const provided = getCronSecret(req);
-  if (expectedCronSecret && provided && provided === expectedCronSecret) {
+  if (isValidCronSecret(req, normalizeEnvValue(process.env.CRON_SECRET))) {
     return true;
   }
 

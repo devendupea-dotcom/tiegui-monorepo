@@ -34,7 +34,7 @@ export function KpiCard({
 
   if (href) {
     return (
-      <Link className="dashboard-kpi-card" href={href}>
+      <Link className="dashboard-kpi-card" href={href} prefetch={false}>
         {content}
       </Link>
     );
@@ -69,7 +69,7 @@ export function PanelCard({
           {subtitle ? <p className="muted">{subtitle}</p> : null}
         </div>
         {actionHref && actionLabel ? (
-          <Link className="table-link" href={actionHref}>
+          <Link className="table-link" href={actionHref} prefetch={false}>
             {actionLabel}
           </Link>
         ) : null}

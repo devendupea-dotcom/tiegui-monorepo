@@ -20,6 +20,7 @@ type SendSmsResult = {
   status: MessageStatus;
   resolvedFromNumberE164: string | null;
   notice?: string;
+  suppressed?: boolean;
 };
 
 function mapTwilioStatus(value: string | null | undefined): MessageStatus {
@@ -83,6 +84,26 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     normalizeE164(input.fromNumberE164 || null) ||
     normalizeE164(twilioConfig.phoneNumber) ||
     twilioConfig.phoneNumber;
+
+  const normalizedToNumber = normalizeE164(input.toNumberE164) || input.toNumberE164;
+  const optedOutLead = await prisma.lead.findFirst({
+    where: {
+      orgId: input.orgId,
+      phoneE164: normalizedToNumber,
+      status: "DNC",
+    },
+    select: { id: true },
+  });
+
+  if (optedOutLead) {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      resolvedFromNumberE164,
+      notice: "Suppressed outbound SMS because the contact is opted out.",
+      suppressed: true,
+    };
+  }
 
   // Safe default for development: persist outbound rows without calling Twilio.
   if (!isTwilioSendEnabled()) {

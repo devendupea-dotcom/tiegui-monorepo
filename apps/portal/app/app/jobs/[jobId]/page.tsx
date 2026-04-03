@@ -2,8 +2,6 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime, formatLabel, isOverdueFollowUp } from "@/lib/hq";
 import {
@@ -13,8 +11,10 @@ import {
   recomputeInvoiceTotals,
   reserveNextInvoiceNumber,
 } from "@/lib/invoices";
+import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
+import { leadPhotoSelect, resolveLeadPhotoUrls } from "@/lib/lead-photos";
+import { buildMapsHrefFromLocation, normalizeLeadCity, resolveLeadLocationLabel } from "@/lib/lead-location";
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
-import { isR2Configured, requireR2 } from "@/lib/r2";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
 import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session";
 import { getParam, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
@@ -124,6 +124,7 @@ async function requireLeadActionAccess(formData: FormData) {
       businessName: true,
       phoneE164: true,
       city: true,
+      intakeLocationText: true,
       businessType: true,
       estimatedRevenueCents: true,
     },
@@ -198,14 +199,20 @@ async function createInvoiceAction(formData: FormData) {
   "use server";
 
   const scoped = await requireLeadActionAccess(formData);
-  const now = new Date();
-  const terms = "NET_15" as const;
-  const dueAt = computeInvoiceDueDate(now, terms);
   const baseAmount = scoped.lead.estimatedRevenueCents
     ? new Prisma.Decimal(scoped.lead.estimatedRevenueCents).div(100).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
     : new Prisma.Decimal(0);
+
+  if (baseAmount.lte(0)) {
+    redirect(appendQuery(scoped.returnPath, "error", "invoice-empty"));
+  }
+
+  const now = new Date();
+  const terms = "NET_15" as const;
+  const dueAt = computeInvoiceDueDate(now, terms);
   const leadLabel = scoped.lead.contactName || scoped.lead.businessName || scoped.lead.phoneE164;
-  const description = scoped.lead.businessType ? `${scoped.lead.businessType} service` : `Service for ${leadLabel}`;
+  const displayBusinessType = sanitizeLeadBusinessTypeLabel(scoped.lead.businessType);
+  const description = displayBusinessType ? `${displayBusinessType} service` : `Service for ${leadLabel}`;
 
   const createdInvoice = await prisma.$transaction(async (tx) => {
     let customerId = scoped.lead.customerId;
@@ -216,7 +223,11 @@ async function createInvoiceAction(formData: FormData) {
           createdByUserId: scoped.user.id ?? null,
           name: scoped.lead.contactName || scoped.lead.businessName || scoped.lead.phoneE164,
           phoneE164: scoped.lead.phoneE164,
-          addressLine: scoped.lead.city || null,
+          addressLine:
+            resolveLeadLocationLabel({
+              intakeLocationText: scoped.lead.intakeLocationText,
+              city: scoped.lead.city,
+            }) || null,
         },
         select: { id: true },
       });
@@ -399,6 +410,11 @@ export default async function ClientJobDetailPage({
           },
         },
       },
+      customer: {
+        select: {
+          addressLine: true,
+        },
+      },
       calls: {
         select: {
           id: true,
@@ -440,6 +456,7 @@ export default async function ClientJobDetailPage({
           endAt: true,
           status: true,
           assignedToUserId: true,
+          updatedAt: true,
           assignedTo: {
             select: {
               id: true,
@@ -476,21 +493,7 @@ export default async function ClientJobDetailPage({
         take: 120,
       },
       leadPhotos: {
-        select: {
-          id: true,
-          photoId: true,
-          fileName: true,
-          mimeType: true,
-          imageDataUrl: true,
-          caption: true,
-          createdAt: true,
-          photo: {
-            select: { key: true },
-          },
-          createdBy: {
-            select: { name: true, email: true },
-          },
-        },
+        select: leadPhotoSelect,
         orderBy: { createdAt: "desc" },
         take: 120,
       },
@@ -543,45 +546,7 @@ export default async function ClientJobDetailPage({
 
   const resolvedLeadPhotos =
     currentTab === "photos"
-      ? await (async () => {
-          if (lead.leadPhotos.length === 0) return [];
-
-          if (!isR2Configured()) {
-            return lead.leadPhotos.map((photo) => ({
-              ...photo,
-              resolvedUrl: photo.imageDataUrl,
-            }));
-          }
-
-          const { r2, bucket } = requireR2();
-
-          return await Promise.all(
-            lead.leadPhotos.map(async (photo) => {
-              if (photo.imageDataUrl) {
-                return { ...photo, resolvedUrl: photo.imageDataUrl };
-              }
-
-              if (photo.photo?.key) {
-                try {
-                  const url = await getSignedUrl(
-                    r2,
-                    new GetObjectCommand({
-                      Bucket: bucket,
-                      Key: photo.photo.key,
-                    }),
-                    { expiresIn: 60 },
-                  );
-
-                  return { ...photo, resolvedUrl: url };
-                } catch {
-                  return { ...photo, resolvedUrl: null };
-                }
-              }
-
-              return { ...photo, resolvedUrl: null };
-            }),
-          );
-        })()
+      ? await resolveLeadPhotoUrls(lead.leadPhotos)
       : [];
 
   const timeline: TimelineItem[] = [
@@ -609,10 +574,38 @@ export default async function ClientJobDetailPage({
   ].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
   const schedulableEvents = lead.events.filter((event) => event.type === "JOB" || event.type === "ESTIMATE" || event.type === "CALL");
+  const activeSchedulableEvents = schedulableEvents.filter(
+    (event) =>
+      event.status === "SCHEDULED" ||
+      event.status === "CONFIRMED" ||
+      event.status === "EN_ROUTE" ||
+      event.status === "ON_SITE" ||
+      event.status === "IN_PROGRESS",
+  );
   const now = new Date();
+  const nextUpcomingEvent =
+    [...activeSchedulableEvents]
+      .filter((event) => {
+        const eventEnd = event.endAt || event.startAt;
+        return eventEnd >= now;
+      })
+      .sort((left, right) => left.startAt.getTime() - right.startAt.getTime())[0] || null;
   const primaryJobEvent =
-    schedulableEvents.find((event) => event.status !== "CANCELLED" && event.startAt >= now) ||
-    [...schedulableEvents].reverse().find((event) => event.status !== "CANCELLED") ||
+    nextUpcomingEvent ||
+    [...activeSchedulableEvents].sort((left, right) => {
+      const updatedDiff = right.updatedAt.getTime() - left.updatedAt.getTime();
+      if (updatedDiff !== 0) {
+        return updatedDiff;
+      }
+      return right.startAt.getTime() - left.startAt.getTime();
+    })[0] ||
+    [...schedulableEvents].sort((left, right) => {
+      const updatedDiff = right.updatedAt.getTime() - left.updatedAt.getTime();
+      if (updatedDiff !== 0) {
+        return updatedDiff;
+      }
+      return right.startAt.getTime() - left.startAt.getTime();
+    })[0] ||
     null;
   const primaryDurationMinutes = primaryJobEvent?.endAt
     ? Math.max(15, Math.round((primaryJobEvent.endAt.getTime() - primaryJobEvent.startAt.getTime()) / 60000))
@@ -634,6 +627,14 @@ export default async function ClientJobDetailPage({
   const latestInvoice = lead.invoices[0] || null;
   const primaryStatusLabel = formatLabel(primaryJobEvent?.status || lead.status);
   const hasPaidInvoice = latestInvoice ? latestInvoice.status === "PAID" || latestInvoice.balanceDue.lte(0) : false;
+  const displayCity = normalizeLeadCity(lead.city) || "-";
+  const displayBusinessType = sanitizeLeadBusinessTypeLabel(lead.businessType);
+  const effectiveNextFollowUpAt = activeSchedulableEvents.length > 0 ? null : lead.nextFollowUpAt;
+  const locationLabel = resolveLeadLocationLabel({
+    customerAddressLine: lead.customer?.addressLine,
+    intakeLocationText: lead.intakeLocationText,
+    city: lead.city,
+  });
   const jobValueLabel =
     lead.estimatedRevenueCents && lead.estimatedRevenueCents > 0
       ? formatCurrencyFromCents(lead.estimatedRevenueCents)
@@ -648,8 +649,8 @@ export default async function ClientJobDetailPage({
   const photosHref = withOrgQuery(`/app/jobs/${lead.id}?tab=photos`, scope.orgId, scope.internalUser);
   const measurementsHref = withOrgQuery(`/app/jobs/${lead.id}?tab=measurements`, scope.orgId, scope.internalUser);
   const invoiceHref = withOrgQuery(`/app/jobs/${lead.id}?tab=invoice`, scope.orgId, scope.internalUser);
-  const mapsQuery = [lead.businessName, lead.city].filter(Boolean).join(" ").trim();
-  const mapsHref = mapsQuery ? `https://maps.google.com/?q=${encodeURIComponent(mapsQuery)}` : null;
+  const scheduleCalendarHref = withOrgQuery(`/app/calendar?quickAction=schedule&leadId=${encodeURIComponent(lead.id)}`, scope.orgId, scope.internalUser);
+  const mapsHref = buildMapsHrefFromLocation(locationLabel);
 
   const returnPathFor = (tab: TabKey) =>
     withOrgQuery(`/app/jobs/${lead.id}?tab=${tab}`, scope.orgId, scope.internalUser);
@@ -680,7 +681,7 @@ export default async function ClientJobDetailPage({
           <span className={`badge priority-${lead.priority.toLowerCase()}`}>
             {formatLabel(lead.priority)} Priority
           </span>
-          {lead.nextFollowUpAt && isOverdueFollowUp(lead.nextFollowUpAt) ? (
+          {effectiveNextFollowUpAt && isOverdueFollowUp(effectiveNextFollowUpAt) ? (
             <span className="overdue-chip">Overdue</span>
           ) : null}
         </div>
@@ -735,6 +736,11 @@ export default async function ClientJobDetailPage({
           ) : (
             <p className="muted">No job time scheduled yet.</p>
           )}
+          <div className="portal-empty-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
+            <Link className="btn secondary" href={scheduleCalendarHref}>
+              {primaryJobEvent ? "Reschedule in Calendar" : "Schedule in Calendar"}
+            </Link>
+          </div>
         </article>
 
         <JobStatusControls
@@ -784,12 +790,16 @@ export default async function ClientJobDetailPage({
                 <dd>{lead.phoneE164}</dd>
               </div>
               <div>
+                <dt>Location</dt>
+                <dd>{locationLabel || "-"}</dd>
+              </div>
+              <div>
                 <dt>City</dt>
-                <dd>{lead.city || "-"}</dd>
+                <dd>{displayCity}</dd>
               </div>
               <div>
                 <dt>Type</dt>
-                <dd>{lead.businessType || "-"}</dd>
+                <dd>{displayBusinessType || "-"}</dd>
               </div>
               <div>
                 <dt>Lead Source</dt>
@@ -797,7 +807,7 @@ export default async function ClientJobDetailPage({
               </div>
               <div>
                 <dt>Next Follow-up</dt>
-                <dd>{formatDateTime(lead.nextFollowUpAt)}</dd>
+                <dd>{formatDateTime(effectiveNextFollowUpAt)}</dd>
               </div>
               <div>
                 <dt>Estimated Value</dt>
@@ -1132,6 +1142,9 @@ export default async function ClientJobDetailPage({
             </div>
           )}
 
+          {error === "invoice-empty" ? (
+            <p className="form-status">Add an estimated amount before creating an invoice from this job.</p>
+          ) : null}
           {saved === "invoice-paid" ? <p className="form-status">Invoice marked paid.</p> : null}
           {error === "invoice-paid" ? <p className="form-status">Could not mark invoice as paid.</p> : null}
         </section>
