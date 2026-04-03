@@ -49,6 +49,12 @@
   --tone-danger-border: rgba(255, 107, 107, 0.48);
   --tone-danger-surface: color-mix(in srgb, var(--surface) 90%, #ef4444 10%);
   --tone-danger-text: #b42318;
+  --font-ui: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", sans-serif;
+  --font-meta: var(--font-geist-mono), "SFMono-Regular", "SF Mono", ui-monospace, Consolas, monospace;
+  --copy-size: 0.97rem;
+  --copy-line: 1.58;
+  --heading-tight: -0.03em;
+  --meta-tracking: 0.08em;
 }
 
 :root[data-theme="dark"] {
@@ -163,9 +169,22 @@ body {
   overflow-x: hidden;
 }
 
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   color: var(--foreground);
   background: var(--background);
+  font-family: var(--font-ui);
+  font-size: var(--copy-size);
+  line-height: var(--copy-line);
+  letter-spacing: -0.012em;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -218,9 +237,32 @@ html[data-theme="dark"] .imgDark {
   }
 }
 
-body {
-  font-family: var(--font-geist-sans), "Inter", system-ui, -apple-system, Segoe UI, sans-serif;
-  line-height: 1.6;
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+::placeholder {
+  letter-spacing: 0;
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-ui);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: var(--heading-tight);
+  text-wrap: balance;
+}
+
+:where(h4, h5, h6) {
+  letter-spacing: -0.022em;
+}
+
+:where(p, li, dd, dt) {
+  text-wrap: pretty;
 }
 
 .page {
@@ -271,6 +313,8 @@ body {
   background: linear-gradient(180deg, var(--brand-gold-2) 0%, var(--brand-gold) 100%);
   color: #151515;
   font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: -0.012em;
   cursor: pointer;
   box-shadow: 0 8px 16px rgba(144, 109, 27, 0.26);
   transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
@@ -286,6 +330,8 @@ body {
   background: var(--btn-secondary-bg);
   color: var(--btn-secondary-text);
   font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
   cursor: pointer;
   transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
 }
@@ -590,9 +636,11 @@ body {
 }
 
 .data-table th {
-  font-size: 0.82rem;
+  font-family: var(--font-meta);
+  font-size: 0.76rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.06em;
   color: var(--table-heading);
 }
 
@@ -610,9 +658,10 @@ body {
   padding: 3px 9px;
   border-radius: 999px;
   border: 1px solid var(--badge-border);
-  font-size: 0.74rem;
+  font-family: var(--font-meta);
+  font-size: 0.72rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   white-space: nowrap;
 }
 
@@ -725,8 +774,10 @@ body {
   background: rgba(224, 74, 74, 0.14);
   border: 1px solid rgba(198, 52, 52, 0.46);
   color: color-mix(in srgb, var(--text) 54%, #a81818 46%);
-  font-size: 0.72rem;
+  font-family: var(--font-meta);
+  font-size: 0.71rem;
   font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .stack-cell {
@@ -2820,22 +2871,25 @@ body {
 }
 
 .portal-brand-text strong {
-  font-size: 1.02rem;
+  font-size: 1.14rem;
+  font-weight: 780;
   color: #f9fbff;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.035em;
 }
 
 .portal-brand-text span {
-  font-size: 0.78rem;
+  font-family: var(--font-meta);
+  font-size: 0.72rem;
   color: rgba(229, 202, 129, 0.96);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--meta-tracking);
 }
 
 .portal-brand-sub {
   color: rgba(216, 226, 239, 0.84);
-  font-size: 0.86rem;
-  line-height: 1.4;
+  font-size: 0.9rem;
+  line-height: 1.48;
+  letter-spacing: -0.012em;
   max-width: 24ch;
 }
 
@@ -2852,9 +2906,10 @@ body {
 
 .app-nav-section-label {
   margin: 0 0 0 4px;
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.14em;
+  font-family: var(--font-meta);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: rgba(229, 202, 129, 0.78);
 }
@@ -2873,8 +2928,8 @@ body {
   padding: 11px 13px 11px 14px;
   border: 1px solid rgba(231, 239, 255, 0.14);
   color: #d8e4f7;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-weight: 560;
+  letter-spacing: -0.012em;
   background: rgba(255, 255, 255, 0.04);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
@@ -2900,7 +2955,8 @@ body {
 }
 
 .app-nav-label {
-  line-height: 1;
+  font-size: 0.95rem;
+  line-height: 1.12;
 }
 
 .app-nav-link:hover {
@@ -2944,14 +3000,17 @@ body {
 
 .portal-profile-label {
   color: rgba(220, 231, 244, 0.88);
-  font-size: 0.78rem;
+  font-family: var(--font-meta);
+  font-size: 0.72rem;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.08em;
 }
 
 .portal-profile-name {
   color: #f9fbff;
+  font-size: 1.02rem;
   font-weight: 700;
+  letter-spacing: -0.02em;
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -2959,7 +3018,8 @@ body {
 
 .portal-profile-email {
   color: rgba(220, 231, 244, 0.84);
-  font-size: 0.86rem;
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -3024,15 +3084,18 @@ body {
 }
 
 .portal-topbar-copy p {
-  font-size: 0.75rem;
-  letter-spacing: 0.12em;
+  font-family: var(--font-meta);
+  font-size: 0.72rem;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  font-weight: 800;
+  font-weight: 700;
   color: color-mix(in srgb, var(--text-muted) 72%, var(--text) 28%);
 }
 
 .portal-topbar-copy span {
-  font-size: 0.96rem;
+  font-size: 1rem;
+  line-height: 1.4;
+  letter-spacing: -0.014em;
   color: color-mix(in srgb, var(--text-muted) 88%, var(--text) 12%);
   max-width: 48ch;
 }
@@ -3219,8 +3282,11 @@ html[data-mobile-mode="1"] textarea {
   min-height: 36px;
   border-radius: 999px;
   padding: 0 10px;
-  font-size: 0.8rem;
+  font-family: var(--font-meta);
+  font-size: 0.73rem;
   font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 
@@ -3250,9 +3316,11 @@ html[data-mobile-mode="1"] textarea {
   min-height: 36px;
   border-radius: 999px;
   padding: 0 12px;
-  font-size: 0.8rem;
+  font-family: var(--font-meta);
+  font-size: 0.73rem;
   font-weight: 700;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 
