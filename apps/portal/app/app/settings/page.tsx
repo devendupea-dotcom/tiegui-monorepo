@@ -12,8 +12,10 @@ import { containsAutomationRevealLanguage, normalizeCustomTemplates } from "@/li
 import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
 import type { ResolvedMessageLocale } from "@/lib/message-language";
 import { normalizeE164 } from "@/lib/phone";
-import { isInternalRole, requireSessionUser } from "@/lib/session";
-import { getParam, requireAppOrgAccess, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
+import { requireSessionUser } from "@/lib/session";
+import { listWorkspaceUsers } from "@/lib/workspace-users";
+import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
+import { requireAppPageViewer } from "../_lib/portal-viewer";
 import CommunicationDiagnosticsCard from "./communication-diagnostics-card";
 import OrgLogoUploader from "./branding/org-logo-uploader";
 import { SmsVoiceSection, type SmsVoiceCustomTemplates } from "./sms-voice-section";
@@ -86,13 +88,9 @@ async function buildSettingsPreviewSlots(input: {
     return ["Tomorrow 10:00am", "Thu 2:00pm", "Fri 9:00am"];
   }
 
-  const workers = await prisma.user.findMany({
-    where: {
-      orgId: input.orgId,
-      calendarAccessRole: { not: "READ_ONLY" },
-    },
-    select: { id: true },
-    take: 8,
+  const workers = await listWorkspaceUsers({
+    organizationId: input.orgId,
+    excludeReadOnly: true,
   });
   if (workers.length === 0) {
     return ["Tomorrow 10:00am", "Thu 2:00pm", "Fri 9:00am"];
@@ -142,7 +140,11 @@ async function updateSettingsAction(formData: FormData) {
     redirect("/app/settings?error=missing-org");
   }
 
-  const { internalUser } = await requireAppOrgAccess("/app/settings", orgId);
+  const actor = await requireAppOrgActor("/app/settings", orgId);
+  const internalUser = actor.internalUser;
+  const canManageLeadEntrySetting =
+    actor.internalUser || actor.calendarAccessRole === "OWNER" || actor.calendarAccessRole === "ADMIN";
+  const canManageAutomationSettings = canManageLeadEntrySetting;
 
   const senderRaw = String(formData.get("smsFromNumberE164") || "").trim();
   const organizationName = String(formData.get("organizationName") || "").trim();
@@ -196,18 +198,6 @@ async function updateSettingsAction(formData: FormData) {
   const userTimezoneInput = String(formData.get("userTimezone") || "").trim();
   const calendarTimezone = calendarTimezoneInput || DEFAULT_CALENDAR_TIMEZONE;
   const userTimezone = userTimezoneInput || null;
-
-  const user = await requireSessionUser("/app/settings");
-  const dbUser = user.id
-    ? await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { calendarAccessRole: true, role: true },
-      })
-    : null;
-  const canManageLeadEntrySetting = dbUser
-    ? isInternalRole(dbUser.role) || dbUser.calendarAccessRole === "OWNER" || dbUser.calendarAccessRole === "ADMIN"
-    : false;
-  const canManageAutomationSettings = canManageLeadEntrySetting;
 
   const sender = senderRaw ? normalizeE164(senderRaw) : null;
   const messageLanguage = parseMessageLanguage(messageLanguageRaw);
@@ -438,9 +428,9 @@ async function updateSettingsAction(formData: FormData) {
     },
   });
 
-  if (user.id) {
+  if (actor.id) {
     await prisma.user.update({
-      where: { id: user.id },
+      where: { id: actor.id },
       data: {
         timezone: userTimezone ? ensureTimeZone(userTimezone) : null,
       },
@@ -540,20 +530,21 @@ export default async function ClientSettingsPage({
     },
   });
 
+  const viewer = await requireAppPageViewer({
+    nextPath: "/app/settings",
+    orgId: scope.orgId,
+  });
   const sessionUser = await requireSessionUser("/app/settings");
-  const currentUser = sessionUser.id
+  const currentUserSettings = sessionUser.id
     ? await prisma.user.findUnique({
         where: { id: sessionUser.id },
         select: {
-          role: true,
-          calendarAccessRole: true,
           timezone: true,
         },
       })
     : null;
-  const canManageLeadEntrySetting = currentUser
-    ? isInternalRole(currentUser.role) || currentUser.calendarAccessRole === "OWNER" || currentUser.calendarAccessRole === "ADMIN"
-    : false;
+  const canManageLeadEntrySetting =
+    viewer.internalUser || viewer.calendarAccessRole === "OWNER" || viewer.calendarAccessRole === "ADMIN";
   const canManageAutomationSettings = canManageLeadEntrySetting;
 
   if (!organization) {
@@ -758,7 +749,7 @@ export default async function ClientSettingsPage({
                 {t("settings.yourTimezoneLabel")}
                 <input
                   name="userTimezone"
-                  defaultValue={currentUser?.timezone || ""}
+                  defaultValue={currentUserSettings?.timezone || ""}
                   placeholder={t("settings.timezonePlaceholder")}
                 />
               </label>

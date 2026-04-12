@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getAutomatedFollowUpThrottleUntil,
   getQueuedSmsSkipReason,
   shouldSkipQueuedFollowUp,
   shouldSuppressMissedCallKickoff,
@@ -113,4 +114,22 @@ test("shouldSkipQueuedFollowUp keeps eligible follow-ups active", () => {
   });
 
   assert.equal(skipped, false);
+});
+
+test("getAutomatedFollowUpThrottleUntil pushes follow-ups out when an automation just sent", () => {
+  const throttledUntil = getAutomatedFollowUpThrottleUntil({
+    lastOutboundAt: new Date("2025-01-01T12:00:00.000Z"),
+    now: new Date("2025-01-01T12:30:00.000Z"),
+  });
+
+  assert.equal(throttledUntil?.toISOString(), "2025-01-01T13:30:00.000Z");
+});
+
+test("getAutomatedFollowUpThrottleUntil returns null once the cool-down passed", () => {
+  const throttledUntil = getAutomatedFollowUpThrottleUntil({
+    lastOutboundAt: new Date("2025-01-01T10:00:00.000Z"),
+    now: new Date("2025-01-01T12:00:00.000Z"),
+  });
+
+  assert.equal(throttledUntil, null);
 });

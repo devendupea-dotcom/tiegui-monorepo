@@ -1,6 +1,7 @@
 import type { ConversationStage, ConversationTimeframe } from "@prisma/client";
 
 const MISSED_CALL_RESTART_COOLDOWN_MINUTES = 30;
+export const MIN_AUTOMATED_FOLLOW_UP_GAP_MINUTES = 90;
 
 export const ACTIVE_CONVERSATION_FOLLOW_UP_STAGES = [
   "ASKED_WORK",
@@ -38,6 +39,21 @@ export type FollowUpStateCurrent = FollowUpStateSnapshot & {
   pausedUntil: Date | null;
   stoppedAt: Date | null;
 };
+
+export function getAutomatedFollowUpThrottleUntil(input: {
+  lastOutboundAt: Date | null;
+  now: Date;
+  minimumGapMinutes?: number;
+}): Date | null {
+  if (!input.lastOutboundAt) {
+    return null;
+  }
+
+  const minimumGapMinutes = Math.max(1, input.minimumGapMinutes ?? MIN_AUTOMATED_FOLLOW_UP_GAP_MINUTES);
+  const throttleUntil = new Date(input.lastOutboundAt.getTime() + minimumGapMinutes * 60 * 1000);
+
+  return throttleUntil.getTime() > input.now.getTime() ? throttleUntil : null;
+}
 
 function isActiveFollowUpStage(stage: ConversationStage): boolean {
   return (ACTIVE_CONVERSATION_FOLLOW_UP_STAGES as readonly ConversationStage[]).includes(stage);

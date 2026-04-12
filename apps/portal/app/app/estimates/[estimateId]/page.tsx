@@ -1,9 +1,8 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/session";
 import { canManageEstimates } from "@/lib/estimates";
 import { getEstimateReferencesForOrg } from "@/lib/estimates-store";
 import { getParam, resolveAppScope } from "../../_lib/portal-scope";
+import { requireAppPageViewer } from "../../_lib/portal-viewer";
 import EstimateManager from "../estimate-manager";
 
 export const dynamic = "force-dynamic";
@@ -26,19 +25,14 @@ export default async function EstimateDetailPage({
     nextPath: `/app/estimates/${params.estimateId}`,
     requestedOrgId,
   });
-
-  const sessionUser = await requireSessionUser(`/app/estimates/${params.estimateId}`);
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { calendarAccessRole: true },
-        })
-      : null;
+  const viewer = await requireAppPageViewer({
+    nextPath: `/app/estimates/${params.estimateId}`,
+    orgId: scope.orgId,
+  });
 
   const canManage = canManageEstimates({
-    internalUser: scope.internalUser,
-    calendarAccessRole: currentUser?.calendarAccessRole || "OWNER",
+    internalUser: viewer.internalUser,
+    calendarAccessRole: viewer.calendarAccessRole,
   });
 
   const references = await getEstimateReferencesForOrg(scope.orgId);
@@ -47,7 +41,7 @@ export default async function EstimateDetailPage({
     <EstimateManager
       orgId={scope.orgId}
       orgName={scope.orgName}
-      internalUser={scope.internalUser}
+      internalUser={viewer.internalUser}
       canManage={canManage}
       initialEstimateId={params.estimateId}
       initialCreate={false}

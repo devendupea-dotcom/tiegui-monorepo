@@ -34,7 +34,7 @@ export async function GET(req: Request) {
       return NextResponse.redirect(new URL("/app/settings/integrations?error=google-invalid-user", url.origin));
     }
 
-    assertOrgAccess(user, oauthState.orgId);
+    await assertOrgAccess(user, oauthState.orgId);
 
     const token = await exchangeGoogleCodeForTokens({
       code,

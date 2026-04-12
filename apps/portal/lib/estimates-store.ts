@@ -1,30 +1,40 @@
 import "server-only";
 
-import { Prisma, type EstimateActivityType, type EstimateDraftLineType, type EstimateStatus, type EstimateTaxSource, type JobStatus } from "@prisma/client";
+import { Prisma, type EstimateActivityType, type JobStatus } from "@prisma/client";
 import {
-  canTransitionEstimateStatus,
-  ESTIMATE_CUSTOMER_NAME_MAX,
   ESTIMATE_DESCRIPTION_MAX,
   ESTIMATE_LINE_DESCRIPTION_MAX,
   ESTIMATE_LINE_UNIT_MAX,
-  ESTIMATE_MAX_LINES,
-  ESTIMATE_NOTES_MAX,
-  ESTIMATE_PROJECT_TYPE_MAX,
   ESTIMATE_SITE_ADDRESS_MAX,
-  ESTIMATE_TERMS_MAX,
-  ESTIMATE_TITLE_MAX,
-  estimateDraftLineTypeOptions,
-  estimateStatusOptions,
-  normalizeEstimateTaxRate,
   serializeEstimateDetail,
-  summarizeEstimateItems,
   type EstimateItemRow,
   type EstimateReferenceLead,
 } from "@/lib/estimates";
+import {
+  buildEstimateActivityMetadata,
+  buildExistingLineFallback,
+  buildInvoiceLineDescription,
+  mergeJobNotes,
+  normalizeEstimateLineItems,
+  normalizeEstimatePayloadCore,
+  normalizeLineType,
+  normalizeNonNegativeDecimal,
+  normalizeOptionalId,
+  normalizeOptionalText,
+  resolveActivityTypeForStatus,
+  type EstimateItemPayload,
+  type EstimatePayload,
+  type NormalizedEstimatePayload,
+} from "@/lib/estimates-store-core";
 import { formatDispatchStatusLabel, getDispatchTodayDateKey, normalizeDispatchDateKey, parseDispatchDateKey } from "@/lib/dispatch";
 import { maybeSendDispatchCustomerNotifications, type DispatchPersistedJobEvent } from "@/lib/dispatch-notifications";
 import { extractEstimateZipCode } from "@/lib/estimate-tax";
 import { DEFAULT_INVOICE_TERMS, computeInvoiceDueDate, recomputeInvoiceTotals, reserveNextInvoiceNumber, roundMoney, toMoneyDecimal } from "@/lib/invoices";
+import {
+  buildEstimateAttachmentData,
+  buildEstimateConversionJobLinkData,
+} from "@/lib/estimate-job-linking";
+import { findOperationalJobForLead } from "@/lib/operational-jobs";
 import { prisma } from "@/lib/prisma";
 import { AppApiError } from "@/lib/app-api-permissions";
 import { roundMaterialNumber, type MaterialListItem } from "@/lib/materials";
@@ -75,170 +85,9 @@ export const estimateDetailInclude = {
   },
 } satisfies Prisma.EstimateInclude;
 
-type EstimatePayload = {
-  leadId?: unknown;
-  title?: unknown;
-  customerName?: unknown;
-  siteAddress?: unknown;
-  projectType?: unknown;
-  description?: unknown;
-  notes?: unknown;
-  terms?: unknown;
-  taxRatePercent?: unknown;
-  taxRateSource?: unknown;
-  taxZipCode?: unknown;
-  taxJurisdiction?: unknown;
-  taxLocationCode?: unknown;
-  taxCalculatedAt?: unknown;
-  validUntil?: unknown;
-  status?: unknown;
-  lineItems?: unknown;
-};
-
-type EstimateItemPayload = {
-  materialId?: unknown;
-  type?: unknown;
-  name?: unknown;
-  description?: unknown;
-  quantity?: unknown;
-  unit?: unknown;
-  unitPrice?: unknown;
-};
-
-type NormalizedEstimateItem = {
-  materialId: string | null;
-  type: EstimateDraftLineType;
-  sortOrder: number;
-  name: string;
-  description: string | null;
-  quantity: Prisma.Decimal;
-  unit: string | null;
-  unitPrice: Prisma.Decimal;
-  total: Prisma.Decimal;
-};
-
-type NormalizedEstimatePayload = {
-  leadId: string | null;
-  title: string;
-  customerName: string | null;
-  siteAddress: string | null;
-  projectType: string | null;
-  description: string | null;
-  notes: string | null;
-  terms: string | null;
-  taxRate: Prisma.Decimal;
-  taxRateSource: EstimateTaxSource;
-  taxZipCode: string | null;
-  taxJurisdiction: string | null;
-  taxLocationCode: string | null;
-  taxCalculatedAt: Date | null;
-  subtotal: Prisma.Decimal;
-  tax: Prisma.Decimal;
-  total: Prisma.Decimal;
-  validUntil: Date | null;
-  status: EstimateStatus;
-  lineItems: NormalizedEstimateItem[];
-};
-
 type EstimateRecord = Prisma.EstimateGetPayload<{
   include: typeof estimateDetailInclude;
 }>;
-
-function normalizeRequiredText(value: unknown, label: string, maxLength: number): string {
-  if (typeof value !== "string") {
-    throw new AppApiError(`${label} is required.`, 400);
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new AppApiError(`${label} is required.`, 400);
-  }
-
-  if (trimmed.length > maxLength) {
-    throw new AppApiError(`${label} must be ${maxLength} characters or less.`, 400);
-  }
-
-  return trimmed;
-}
-
-function normalizeOptionalText(value: unknown, label: string, maxLength: number): string | null {
-  if (value == null || value === "") return null;
-  if (typeof value !== "string") {
-    throw new AppApiError(`${label} must be text.`, 400);
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed.length > maxLength) {
-    throw new AppApiError(`${label} must be ${maxLength} characters or less.`, 400);
-  }
-  return trimmed;
-}
-
-function normalizeOptionalId(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed || null;
-}
-
-function normalizeEstimateStatus(value: unknown, fallback: EstimateStatus): EstimateStatus {
-  if (estimateStatusOptions.includes(value as EstimateStatus)) {
-    return value as EstimateStatus;
-  }
-  return fallback;
-}
-
-function normalizeEstimateTaxSource(value: unknown, fallback: EstimateTaxSource): EstimateTaxSource {
-  if (value === "WA_DOR" || value === "MANUAL") {
-    return value;
-  }
-  return fallback;
-}
-
-function normalizeLineType(value: unknown): EstimateDraftLineType {
-  if (estimateDraftLineTypeOptions.includes(value as EstimateDraftLineType)) {
-    return value as EstimateDraftLineType;
-  }
-  return "CUSTOM_MATERIAL";
-}
-
-function normalizeNonNegativeDecimal(value: unknown, label: string): Prisma.Decimal {
-  const normalized =
-    typeof value === "string"
-      ? value.trim()
-      : typeof value === "number"
-        ? String(value)
-        : value instanceof Prisma.Decimal
-          ? value.toString()
-          : "";
-
-  const decimal = roundMoney(toMoneyDecimal(normalized || "0"));
-  if (decimal.lt(0)) {
-    throw new AppApiError(`${label} cannot be negative.`, 400);
-  }
-  return decimal;
-}
-
-function normalizeDate(value: unknown, label: string): Date | null {
-  if (value == null || value === "") return null;
-  if (typeof value !== "string") {
-    throw new AppApiError(`${label} must be an ISO date string.`, 400);
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new AppApiError(`${label} must be a valid date.`, 400);
-  }
-  return parsed;
-}
-
-function decimalToInput(value: Prisma.Decimal): string {
-  return value.toFixed(2);
-}
-
-function decimalToPercentInput(value: Prisma.Decimal): string {
-  return value.mul(100).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toString();
-}
 
 async function resolveEstimateLeadDefaults(orgId: string, leadId: string | null) {
   if (!leadId) return null;
@@ -280,99 +129,6 @@ async function validateEstimateMaterials(orgId: string, lineItems: EstimateItemR
 
   if (matches.length !== materialIds.length) {
     throw new AppApiError("One or more selected materials are not available for this organization.", 400);
-  }
-}
-
-function normalizeEstimateLineItems(value: unknown, fallback: EstimateItemRow[]): EstimateItemRow[] {
-  if (!Array.isArray(value)) {
-    return fallback;
-  }
-
-  if (value.length > ESTIMATE_MAX_LINES) {
-    throw new AppApiError(`Estimates support up to ${ESTIMATE_MAX_LINES} line items.`, 400);
-  }
-
-  return value.map((entry, index) => {
-    const row = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
-    return {
-      id: typeof row.id === "string" ? row.id : `estimate-item-${index}`,
-      materialId: normalizeOptionalId(row.materialId),
-      type: normalizeLineType(row.type),
-      sortOrder: typeof row.sortOrder === "number" ? row.sortOrder : index,
-      name: typeof row.name === "string" ? row.name : "",
-      description: typeof row.description === "string" ? row.description : "",
-      quantity:
-        typeof row.quantity === "string"
-          ? row.quantity
-          : typeof row.quantity === "number"
-            ? String(row.quantity)
-            : "1",
-      unit: typeof row.unit === "string" ? row.unit : "",
-      unitPrice:
-        typeof row.unitPrice === "string"
-          ? row.unitPrice
-          : typeof row.unitPrice === "number"
-            ? String(row.unitPrice)
-            : "0",
-      total: 0,
-    };
-  });
-}
-
-function normalizeEstimateItemRows(input: EstimateItemRow[]): NormalizedEstimateItem[] {
-  return input.map((line, index) => {
-    const name = normalizeRequiredText(line.name, "Line item name", ESTIMATE_LINE_DESCRIPTION_MAX);
-    const description = normalizeOptionalText(line.description, "Line item description", ESTIMATE_DESCRIPTION_MAX);
-    const quantity = normalizeNonNegativeDecimal(line.quantity, "Line item quantity");
-    const unit = normalizeOptionalText(line.unit, "Line item unit", ESTIMATE_LINE_UNIT_MAX);
-    const unitPrice = normalizeNonNegativeDecimal(line.unitPrice, "Line item unit price");
-    const total = roundMoney(quantity.mul(unitPrice));
-
-    return {
-      materialId: line.materialId,
-      type: line.type,
-      sortOrder: index,
-      name,
-      description,
-      quantity,
-      unit,
-      unitPrice,
-      total,
-    };
-  });
-}
-
-function buildExistingLineFallback(
-  estimate: EstimateRecord | null,
-): EstimateItemRow[] {
-  if (!estimate) return [];
-
-  return estimate.lineItems.map((line) => ({
-    id: line.id,
-    materialId: line.materialId,
-    type: line.type,
-    sortOrder: line.sortOrder,
-    name: line.name,
-    description: line.description || "",
-    quantity: decimalToInput(line.quantity).replace(/\.00$/, ""),
-    unit: line.unit || "",
-    unitPrice: decimalToInput(line.unitPrice),
-    total: Number(line.total),
-  }));
-}
-
-function resolveActivityTypeForStatus(status: EstimateStatus): "STATUS_CHANGED" | "SENT" | "VIEWED" | "APPROVED" | "DECLINED" {
-  switch (status) {
-    case "SENT":
-      return "SENT";
-    case "VIEWED":
-      return "VIEWED";
-    case "APPROVED":
-      return "APPROVED";
-    case "DECLINED":
-      return "DECLINED";
-    default:
-      return "STATUS_CHANGED";
   }
 }
 
@@ -466,7 +222,7 @@ async function normalizeEstimatePayload(input: {
 }): Promise<NormalizedEstimatePayload> {
   const payload = input.payload || {};
   const existing = input.existingEstimate || null;
-  const fallbackLines = buildExistingLineFallback(existing);
+  const fallbackLines = buildExistingLineFallback(existing?.lineItems);
   const rawLeadId =
     payload.leadId === null
       ? null
@@ -474,141 +230,50 @@ async function normalizeEstimatePayload(input: {
         ? existing?.leadId || null
         : normalizeOptionalId(payload.leadId);
   const lead = await resolveEstimateLeadDefaults(input.orgId, rawLeadId);
-
-  const title =
-    normalizeOptionalText(payload.title, "Estimate title", ESTIMATE_TITLE_MAX) ||
-    existing?.title ||
-    lead?.businessType ||
-    "Untitled Estimate";
-  const customerName =
-    normalizeOptionalText(payload.customerName, "Customer name", ESTIMATE_CUSTOMER_NAME_MAX) ||
-    existing?.customerName ||
-    lead?.contactName ||
-    lead?.businessName ||
-    null;
-  const siteAddress =
+  const rawLineItems = normalizeEstimateLineItems(payload.lineItems, fallbackLines);
+  await validateEstimateMaterials(input.orgId, rawLineItems);
+  const siteAddressCandidate =
     normalizeOptionalText(payload.siteAddress, "Site address", ESTIMATE_SITE_ADDRESS_MAX) ||
     existing?.siteAddress ||
     lead?.intakeLocationText ||
     null;
-  const projectType =
-    normalizeOptionalText(payload.projectType, "Project type", ESTIMATE_PROJECT_TYPE_MAX) ||
-    existing?.projectType ||
-    lead?.businessType ||
-    null;
-  const description =
-    normalizeOptionalText(payload.description, "Description", ESTIMATE_DESCRIPTION_MAX) ||
-    existing?.description ||
-    null;
-  const notes =
-    normalizeOptionalText(payload.notes, "Notes", ESTIMATE_NOTES_MAX) ||
-    existing?.notes ||
-    null;
-  const terms =
-    normalizeOptionalText(payload.terms, "Terms", ESTIMATE_TERMS_MAX) ||
-    existing?.terms ||
-    null;
-  const validUntil =
-    payload.validUntil === undefined
-      ? existing?.validUntil || null
-      : normalizeDate(payload.validUntil, "Valid until");
-
-  const currentStatus = existing?.status || "DRAFT";
-  const status = normalizeEstimateStatus(payload.status, currentStatus);
-  if (status === "CONVERTED" && currentStatus !== "CONVERTED") {
-    throw new AppApiError("Use the convert action to move an estimate into CONVERTED status.", 400);
-  }
-  if (!canTransitionEstimateStatus(currentStatus, status)) {
-    throw new AppApiError(`Cannot change estimate status from ${currentStatus} to ${status}.`, 400);
-  }
-
-  const taxRatePercentValue =
-    typeof payload.taxRatePercent === "string"
-      ? payload.taxRatePercent
-      : typeof payload.taxRatePercent === "number"
-        ? String(payload.taxRatePercent)
-        : existing
-          ? decimalToPercentInput(existing.taxRate)
-          : "0";
-  const taxRate = normalizeEstimateTaxRate(taxRatePercentValue);
-  const taxRateSource = normalizeEstimateTaxSource(payload.taxRateSource, existing?.taxRateSource || "MANUAL");
-  const siteZipCode = extractEstimateZipCode(siteAddress || "");
-  const taxZipCode =
-    taxRateSource === "WA_DOR"
-      ? normalizeOptionalText(payload.taxZipCode, "Tax ZIP code", 16) ||
-        existing?.taxZipCode ||
-        siteZipCode ||
-        null
-      : null;
-  const taxJurisdiction =
-    taxRateSource === "WA_DOR"
-      ? normalizeOptionalText(payload.taxJurisdiction, "Tax jurisdiction", ESTIMATE_TITLE_MAX) ||
-        existing?.taxJurisdiction ||
-        null
-      : null;
-  const taxLocationCode =
-    taxRateSource === "WA_DOR"
-      ? normalizeOptionalText(payload.taxLocationCode, "Tax location code", 40) ||
-        existing?.taxLocationCode ||
-        null
-      : null;
-  const taxCalculatedAt =
-    taxRateSource === "WA_DOR"
-      ? payload.taxCalculatedAt === undefined
-        ? existing?.taxCalculatedAt || new Date()
-        : normalizeDate(payload.taxCalculatedAt, "Tax calculated at")
-      : null;
-
-  if (taxRateSource === "WA_DOR") {
-    if (!siteZipCode) {
-      throw new AppApiError("Enter a Washington site ZIP code or switch tax to manual.", 400);
-    }
-    if (taxZipCode && siteZipCode !== taxZipCode) {
-      throw new AppApiError("Site ZIP changed. Refresh Auto Tax from ZIP or switch tax back to manual.", 400);
-    }
-  }
-
-  const rawLineItems = normalizeEstimateLineItems(payload.lineItems, fallbackLines);
-  await validateEstimateMaterials(input.orgId, rawLineItems);
-  const normalizedLineItems = normalizeEstimateItemRows(rawLineItems);
-  const summary = summarizeEstimateItems(
-    normalizedLineItems.map((line, index) => ({
-      id: String(index),
-      materialId: line.materialId,
-      type: line.type,
-      sortOrder: index,
-      name: line.name,
-      description: line.description || "",
-      quantity: decimalToInput(line.quantity),
-      unit: line.unit || "",
-      unitPrice: decimalToInput(line.unitPrice),
-      total: Number(line.total),
-    })),
-    taxRatePercentValue,
-  );
-
-  return {
-    leadId: lead?.id || null,
-    title,
-    customerName,
-    siteAddress,
-    projectType,
-    description,
-    notes,
-    terms,
-    taxRate,
-    taxRateSource,
-    taxZipCode,
-    taxJurisdiction,
-    taxLocationCode,
-    taxCalculatedAt,
-    subtotal: roundMoney(toMoneyDecimal(summary.subtotal)),
-    tax: roundMoney(toMoneyDecimal(summary.tax)),
-    total: roundMoney(toMoneyDecimal(summary.total)),
-    validUntil,
-    status,
-    lineItems: normalizedLineItems,
-  };
+  return normalizeEstimatePayloadCore({
+    payload: input.payload,
+    existingEstimate: existing
+      ? {
+          leadId: existing.leadId,
+          title: existing.title,
+          customerName: existing.customerName,
+          siteAddress: existing.siteAddress,
+          projectType: existing.projectType,
+          description: existing.description,
+          notes: existing.notes,
+          terms: existing.terms,
+          taxRate: existing.taxRate,
+          taxRateSource: existing.taxRateSource,
+          taxZipCode: existing.taxZipCode,
+          taxJurisdiction: existing.taxJurisdiction,
+          taxLocationCode: existing.taxLocationCode,
+          taxCalculatedAt: existing.taxCalculatedAt,
+          subtotal: existing.subtotal,
+          tax: existing.tax,
+          total: existing.total,
+          validUntil: existing.validUntil,
+          status: existing.status,
+        }
+      : null,
+    leadDefaults: lead
+      ? {
+          id: lead.id,
+          contactName: lead.contactName,
+          businessName: lead.businessName,
+          businessType: lead.businessType,
+          intakeLocationText: lead.intakeLocationText,
+        }
+      : null,
+    lineItemInputs: rawLineItems,
+    siteZipCode: extractEstimateZipCode(siteAddressCandidate || ""),
+  });
 }
 
 async function recomputeEstimateTotals(tx: Prisma.TransactionClient, estimateId: string) {
@@ -653,14 +318,6 @@ async function recomputeEstimateTotals(tx: Prisma.TransactionClient, estimateId:
     },
     include: estimateDetailInclude,
   });
-}
-
-function buildEstimateActivityMetadata(estimate: EstimateRecord) {
-  return {
-    status: estimate.status,
-    total: Number(estimate.total),
-    estimateNumber: estimate.estimateNumber,
-  };
 }
 
 export async function createBlankEstimate(input: {
@@ -817,7 +474,11 @@ export async function saveEstimate(input: {
           : "UPDATED"
         : "CREATED",
       actorUserId: input.actorId,
-      metadata: buildEstimateActivityMetadata(estimate),
+      metadata: buildEstimateActivityMetadata({
+        status: estimate.status,
+        total: estimate.total,
+        estimateNumber: estimate.estimateNumber,
+      }),
     });
 
     await recomputeLeadEstimateStats(tx, previousLeadId);
@@ -1171,13 +832,6 @@ async function resolveCustomerForEstimateConversion(input: {
   };
 }
 
-function buildInvoiceLineDescription(line: {
-  name: string;
-  description: string | null;
-}) {
-  return line.description ? `${line.name} - ${line.description}` : line.name;
-}
-
 export async function convertEstimate(input: {
   orgId: string;
   estimateId: string;
@@ -1211,6 +865,10 @@ export async function convertEstimate(input: {
     throw new AppApiError("Add at least one line item before converting this estimate.", 400);
   }
 
+  if (input.createInvoice && existing.total.lte(0)) {
+    throw new AppApiError("Set a positive total before creating an invoice from this estimate.", 400);
+  }
+
   const dispatchDateKey = input.createJob ? normalizeDispatchDateKey(input.dispatchDate || null) || getDispatchTodayDateKey() : null;
   const dispatchDate = dispatchDateKey ? parseDispatchDateKey(dispatchDateKey) : null;
   if (input.createJob && (!dispatchDateKey || !dispatchDate)) {
@@ -1221,47 +879,97 @@ export async function convertEstimate(input: {
     let createdJobId: string | null = null;
     let createdInvoiceId: string | null = null;
     const dispatchEvents: DispatchPersistedJobEvent[] = [];
+    const shouldEnsureOperationalJob = input.createJob || input.createInvoice;
     const resolvedCustomer =
-      input.createJob || input.createInvoice
+      shouldEnsureOperationalJob
         ? await resolveCustomerForEstimateConversion({
             tx,
             estimate: existing,
             actorId: input.actorId,
           })
         : null;
+    const reusableOperationalJob =
+      shouldEnsureOperationalJob && resolvedCustomer
+        ? await findOperationalJobForLead(tx, {
+            orgId: existing.orgId,
+            leadId: resolvedCustomer.leadId || existing.leadId || null,
+            preferredJobId: existing.jobId || null,
+            preferredEstimateId: existing.id,
+          })
+        : null;
 
-    if (input.createJob) {
+    if (shouldEnsureOperationalJob) {
       const jobStatus: JobStatus = "DRAFT";
-      const job = await tx.job.create({
-        data: {
-          orgId: existing.orgId,
-          createdByUserId: input.actorId,
-          customerId: resolvedCustomer?.customerId || null,
-          leadId: resolvedCustomer?.leadId || existing.leadId || null,
-          sourceEstimateId: existing.id,
-          linkedEstimateId: existing.id,
-          customerName: existing.customerName || existing.lead?.contactName || existing.lead?.businessName || existing.title,
-          phone: resolvedCustomer?.phoneE164 || existing.lead?.phoneE164 || null,
-          address: existing.siteAddress || "",
-          serviceType: existing.projectType || "Project",
-          projectType: existing.projectType || "Project",
-          scheduledDate: dispatchDate,
-          dispatchStatus: "SCHEDULED",
-          notes: [existing.description, existing.notes].filter(Boolean).join("\n\n") || null,
-          status: jobStatus,
-        },
-        select: { id: true },
-      });
-      createdJobId = job.id;
+      const mergedNotes = mergeJobNotes(reusableOperationalJob?.notes, existing.description, existing.notes);
+      const customerName =
+        existing.customerName || existing.lead?.contactName || existing.lead?.businessName || existing.title;
+      const phone = resolvedCustomer?.phoneE164 || existing.lead?.phoneE164 || null;
+      const address = existing.siteAddress || reusableOperationalJob?.address || "";
+      const serviceType = existing.projectType || reusableOperationalJob?.serviceType || "Project";
+      const projectType = existing.projectType || reusableOperationalJob?.projectType || "Project";
+
+      if (reusableOperationalJob) {
+        createdJobId = reusableOperationalJob.id;
+        await tx.job.update({
+          where: { id: reusableOperationalJob.id },
+          data: {
+            customerId: resolvedCustomer?.customerId || null,
+            leadId: resolvedCustomer?.leadId || existing.leadId || null,
+            ...buildEstimateConversionJobLinkData(existing.id),
+            customerName,
+            phone,
+            address,
+            serviceType,
+            projectType,
+            ...(input.createJob
+              ? {
+                  scheduledDate: dispatchDate,
+                  dispatchStatus: "SCHEDULED",
+                }
+              : {}),
+            notes: mergedNotes,
+            status:
+              reusableOperationalJob.status === "COMPLETED" || reusableOperationalJob.status === "CANCELLED"
+                ? "DRAFT"
+                : reusableOperationalJob.status,
+          },
+        });
+      } else {
+        const job = await tx.job.create({
+          data: {
+            orgId: existing.orgId,
+            createdByUserId: input.actorId,
+            customerId: resolvedCustomer?.customerId || null,
+            leadId: resolvedCustomer?.leadId || existing.leadId || null,
+            ...buildEstimateConversionJobLinkData(existing.id),
+            customerName,
+            phone,
+            address,
+            serviceType,
+            projectType,
+            scheduledDate: input.createJob ? dispatchDate : null,
+            dispatchStatus: "SCHEDULED",
+            notes: mergedNotes,
+            status: jobStatus,
+          },
+          select: { id: true },
+        });
+        createdJobId = job.id;
+      }
 
       const materialLines = existing.lineItems.filter((line) => line.type !== "LABOR");
       const laborLines = existing.lineItems.filter((line) => line.type === "LABOR");
+      const targetJobId = createdJobId;
+      const [materialCount, laborCount] = await Promise.all([
+        targetJobId ? tx.jobMaterial.count({ where: { jobId: targetJobId } }) : Promise.resolve(0),
+        targetJobId ? tx.jobLabor.count({ where: { jobId: targetJobId } }) : Promise.resolve(0),
+      ]);
 
-      if (materialLines.length > 0) {
+      if (targetJobId && materialLines.length > 0 && materialCount === 0) {
         await tx.jobMaterial.createMany({
           data: materialLines.map((line) => ({
             orgId: existing.orgId,
-            jobId: job.id,
+            jobId: targetJobId,
             materialId: line.materialId,
             name: line.name,
             quantity: line.quantity,
@@ -1274,11 +982,11 @@ export async function convertEstimate(input: {
         });
       }
 
-      if (laborLines.length > 0) {
+      if (targetJobId && laborLines.length > 0 && laborCount === 0) {
         await tx.jobLabor.createMany({
           data: laborLines.map((line) => ({
             orgId: existing.orgId,
-            jobId: job.id,
+            jobId: targetJobId,
             description: line.name,
             quantity: line.quantity,
             unit: line.unit,
@@ -1290,45 +998,47 @@ export async function convertEstimate(input: {
         });
       }
 
+      if (input.createJob && createdJobId) {
+        const dispatchEvent = await tx.jobEvent.create({
+          data: {
+            orgId: existing.orgId,
+            jobId: createdJobId,
+            actorUserId: input.actorId,
+            eventType: "JOB_CREATED",
+            metadata: {
+              source: "dispatch",
+              origin: "estimate_conversion",
+              customerId: resolvedCustomer?.customerId || null,
+              leadId: resolvedCustomer?.leadId || existing.leadId || null,
+              linkedEstimateId: existing.id,
+              scheduledDate: dispatchDateKey,
+              scheduledStartTime: reusableOperationalJob?.scheduledStartTime || null,
+              scheduledEndTime: reusableOperationalJob?.scheduledEndTime || null,
+              status: "scheduled",
+              statusLabel: formatDispatchStatusLabel("scheduled"),
+              assignedCrewId: null,
+              assignedCrewName: null,
+            },
+          },
+          select: {
+            id: true,
+            eventType: true,
+            fromValue: true,
+            toValue: true,
+            createdAt: true,
+          },
+        });
+        dispatchEvents.push(dispatchEvent);
+      }
+
       await appendEstimateActivity(tx, {
         estimateId: existing.id,
         type: "CONVERTED_TO_JOB",
         actorUserId: input.actorId,
         metadata: {
-          jobId: job.id,
+          jobId: createdJobId,
         },
       });
-
-      const dispatchEvent = await tx.jobEvent.create({
-        data: {
-          orgId: existing.orgId,
-          jobId: job.id,
-          actorUserId: input.actorId,
-          eventType: "JOB_CREATED",
-          metadata: {
-            source: "dispatch",
-            origin: "estimate_conversion",
-            customerId: resolvedCustomer?.customerId || null,
-            leadId: resolvedCustomer?.leadId || existing.leadId || null,
-            linkedEstimateId: existing.id,
-            scheduledDate: dispatchDateKey,
-            scheduledStartTime: null,
-            scheduledEndTime: null,
-            status: "scheduled",
-            statusLabel: formatDispatchStatusLabel("scheduled"),
-            assignedCrewId: null,
-            assignedCrewName: null,
-          },
-        },
-        select: {
-          id: true,
-          eventType: true,
-          fromValue: true,
-          toValue: true,
-          createdAt: true,
-        },
-      });
-      dispatchEvents.push(dispatchEvent);
     }
 
     if (input.createInvoice) {
@@ -1341,9 +1051,9 @@ export async function convertEstimate(input: {
       const invoice = await tx.invoice.create({
         data: {
           orgId: existing.orgId,
-          jobId: resolvedCustomer.leadId,
+          legacyLeadId: resolvedCustomer.leadId,
           sourceEstimateId: existing.id,
-          sourceJobId: createdJobId || existing.jobId || null,
+          sourceJobId: createdJobId || reusableOperationalJob?.id || existing.jobId || null,
           customerId: resolvedCustomer.customerId,
           invoiceNumber,
           status: "DRAFT",
@@ -1389,7 +1099,7 @@ export async function convertEstimate(input: {
       where: { id: existing.id },
       data: {
         status: "CONVERTED",
-        jobId: createdJobId || existing.jobId,
+        ...buildEstimateAttachmentData(createdJobId || reusableOperationalJob?.id || existing.jobId),
       },
       include: estimateDetailInclude,
     });
@@ -1420,29 +1130,4 @@ export async function convertEstimate(input: {
   };
 }
 
-export function buildEstimateListWhere(input: {
-  orgId: string;
-  query: string;
-  statusValues: EstimateStatus[];
-  includeArchived: boolean;
-}): Prisma.EstimateWhereInput {
-  return {
-    orgId: input.orgId,
-    ...(input.includeArchived ? {} : { archivedAt: null }),
-    ...(input.statusValues.length > 0 ? { status: { in: input.statusValues } } : {}),
-    ...(input.query
-      ? {
-          OR: [
-            { estimateNumber: { contains: input.query, mode: "insensitive" } },
-            { title: { contains: input.query, mode: "insensitive" } },
-            { customerName: { contains: input.query, mode: "insensitive" } },
-            { siteAddress: { contains: input.query, mode: "insensitive" } },
-            { projectType: { contains: input.query, mode: "insensitive" } },
-            { lead: { contactName: { contains: input.query, mode: "insensitive" } } },
-            { lead: { businessName: { contains: input.query, mode: "insensitive" } } },
-            { lead: { phoneE164: { contains: input.query, mode: "insensitive" } } },
-          ],
-        }
-      : {}),
-  };
-}
+export { buildEstimateListWhere } from "@/lib/estimates-store-core";

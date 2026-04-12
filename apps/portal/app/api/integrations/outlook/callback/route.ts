@@ -36,7 +36,7 @@ export async function GET(req: Request) {
 
   try {
     const user = await requireIntegrationSessionUser();
-    assertOrgAccess(user, oauthState.orgId);
+    await assertOrgAccess(user, oauthState.orgId);
 
     const token = await exchangeOutlookCodeForTokens({
       code,

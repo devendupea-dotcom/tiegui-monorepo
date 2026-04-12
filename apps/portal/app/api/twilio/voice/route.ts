@@ -1,7 +1,8 @@
 import { normalizeEnvValue } from "@/lib/env";
+import { assessInboundCallRisk } from "@/lib/inbound-call-risk";
 import { normalizeE164 } from "@/lib/phone";
 import { isWithinSmsSendWindow } from "@/lib/sms-quiet-hours";
-import { buildVoicemailFallbackTwiml } from "@/lib/twilio-voice-copy";
+import { buildForwardDialTwiml, buildVoicemailFallbackTwiml } from "@/lib/twilio-voice-copy";
 import { getBaseUrlFromRequest } from "@/lib/urls";
 import {
   asTwilioString,
@@ -12,19 +13,17 @@ import {
   resolveForwardTarget,
   trackVoiceCallStart,
   resolveTwilioVoiceWebhookContext,
-  twimlResponse,
   validateTwilioVoiceWebhookRequest,
 } from "@/lib/twilio-voice-webhook";
 
-const FORWARD_DIAL_TIMEOUT_SECONDS = 45;
+const DEFAULT_FORWARD_DIAL_TIMEOUT_SECONDS = 20;
 
-function escapeXml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("\"", "&quot;")
-    .replaceAll("'", "&apos;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+function getForwardDialTimeoutSeconds(): number {
+  const raw = Number.parseInt(normalizeEnvValue(process.env.TWILIO_VOICE_FORWARD_TIMEOUT_SECONDS) || "", 10);
+  if (!Number.isFinite(raw)) {
+    return DEFAULT_FORWARD_DIAL_TIMEOUT_SECONDS;
+  }
+  return Math.max(12, Math.min(30, raw));
 }
 
 function getAfterCallActionUrl(req: Request, params?: Record<string, string>): string {
@@ -45,6 +44,7 @@ function getAfterCallActionUrl(req: Request, params?: Record<string, string>): s
 export async function POST(req: Request) {
   const form = await req.formData();
   const accountSid = asTwilioString(form.get("AccountSid"));
+  const forwardDialTimeoutSeconds = getForwardDialTimeoutSeconds();
 
   let context: Awaited<ReturnType<typeof resolveTwilioVoiceWebhookContext>>;
   try {
@@ -68,10 +68,23 @@ export async function POST(req: Request) {
     return new Response(validation.error, { status: validation.status });
   }
 
-  const trackedCall = await trackVoiceCallStart({ context, form });
+  const riskAssessment = await assessInboundCallRisk({
+    orgId: context.organization.id,
+    fromNumber: asTwilioString(form.get("From")),
+    stirVerstat: asTwilioString(form.get("StirVerstat")),
+    excludeCallSid: asTwilioString(form.get("CallSid")) || null,
+  });
+  const suppressLeadCreation = riskAssessment.disposition === "VOICEMAIL_ONLY";
+
+  const trackedCall = await trackVoiceCallStart({
+    context,
+    form,
+    riskAssessment,
+    allowLeadCreation: !suppressLeadCreation,
+  });
 
   console.info(
-    `[twilio:voice] tracked call start callSid=${asTwilioString(form.get("CallSid")) || "unknown"} status=${trackedCall.status} leadId=${trackedCall.leadId || "none"} orgId=${context.organization.id}`,
+    `[twilio:voice] tracked call start callSid=${asTwilioString(form.get("CallSid")) || "unknown"} status=${trackedCall.status} leadId=${trackedCall.leadId || "none"} orgId=${context.organization.id} risk=${riskAssessment.disposition}:${riskAssessment.score}`,
   );
 
   const afterCallUrl = getAfterCallActionUrl(req);
@@ -91,6 +104,7 @@ export async function POST(req: Request) {
       contactId: trackedCall.contactId,
       callId: trackedCall.callId,
       reason: "twilio_paused",
+      riskAssessment,
     });
     return buildVoicemailFallbackTwiml({
       afterCallUrl: voicemailAfterCallUrl,
@@ -109,6 +123,7 @@ export async function POST(req: Request) {
       contactId: trackedCall.contactId,
       callId: trackedCall.callId,
       reason: "quiet_hours",
+      riskAssessment,
     });
     return buildVoicemailFallbackTwiml({
       afterCallUrl: voicemailAfterCallUrl,
@@ -125,6 +140,7 @@ export async function POST(req: Request) {
       contactId: trackedCall.contactId,
       callId: trackedCall.callId,
       reason: "missing_forward_target",
+      riskAssessment,
     });
     return buildVoicemailFallbackTwiml({
       afterCallUrl: voicemailAfterCallUrl,
@@ -141,19 +157,36 @@ export async function POST(req: Request) {
     forwardedTo: forwardingNumber,
   });
 
-  const callerId = normalizeE164(context.twilioConfig.phoneNumber) || context.twilioConfig.phoneNumber;
+  if (riskAssessment.disposition === "VOICEMAIL_ONLY") {
+    await recordVoiceVoicemailReached({
+      context,
+      form,
+      leadId: trackedCall.leadId,
+      contactId: trackedCall.contactId,
+      callId: trackedCall.callId,
+      reason: "spam_high_risk",
+      forwardedTo: forwardingNumber,
+      riskAssessment,
+    });
+    return buildVoicemailFallbackTwiml({
+      afterCallUrl: voicemailAfterCallUrl,
+      businessName: context.organization.name,
+    });
+  }
+
+  const originalCallerId = normalizeE164(asTwilioString(form.get("From")));
+  const fallbackCallerId = normalizeE164(context.twilioConfig.phoneNumber) || context.twilioConfig.phoneNumber;
 
   console.info(
-    `[twilio:voice] forwarding inbound call callSid=${asTwilioString(form.get("CallSid")) || "unknown"} orgId=${context.organization.id} target=${forwardingNumber} timeout=${FORWARD_DIAL_TIMEOUT_SECONDS}s afterCall=${afterCallUrl}`,
+    `[twilio:voice] forwarding inbound call callSid=${asTwilioString(form.get("CallSid")) || "unknown"} orgId=${context.organization.id} target=${forwardingNumber} timeout=${forwardDialTimeoutSeconds}s callerId=${originalCallerId || fallbackCallerId || "default"} risk=${riskAssessment.disposition}:${riskAssessment.score} afterCall=${afterCallUrl}`,
   );
 
-  return twimlResponse(
-    [
-      // Keep the caller on the forwarded leg long enough for the carrier voicemail to answer naturally.
-      // The after-call webhook only runs once Twilio finishes the dial attempt or the bridged call ends.
-      `<Dial timeout="${FORWARD_DIAL_TIMEOUT_SECONDS}" action="${escapeXml(afterCallUrl)}" method="POST" answerOnBridge="true" callerId="${escapeXml(callerId)}">`,
-      escapeXml(forwardingNumber),
-      "</Dial>",
-    ].join(""),
-  );
+  return buildForwardDialTwiml({
+    afterCallUrl,
+    forwardingNumber,
+    timeoutSeconds: forwardDialTimeoutSeconds,
+    // Let the owner see the real caller whenever Twilio gives it to us. Fall back to the business line only
+    // when the inbound caller number is unavailable.
+    callerId: originalCallerId ? null : fallbackCallerId,
+  });
 }

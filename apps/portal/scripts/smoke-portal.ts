@@ -41,6 +41,11 @@ type TwilioConfigSnapshot = {
   status: "PENDING_A2P" | "ACTIVE" | "PAUSED";
 };
 
+type ClientSmokeOrgContext = {
+  orgId: string;
+  source: "default_membership" | "single_membership";
+};
+
 const BASE_URL = normalizeBaseUrl(process.env.BASE_URL || "http://127.0.0.1:3001");
 const REQUEST_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15_000);
 const SMOKE_PNG_BYTES = Buffer.from(
@@ -489,6 +494,47 @@ async function resolveSessionEmail(session: SessionContext): Promise<string> {
   return email;
 }
 
+async function resolveClientSmokeOrgContext(prisma: PrismaClient, email: string): Promise<ClientSmokeOrgContext> {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: {
+      orgId: true,
+      organizationMemberships: {
+        where: { status: "ACTIVE" },
+        select: {
+          organizationId: true,
+        },
+        orderBy: {
+          createdAt: "asc",
+        },
+      },
+    },
+  });
+
+  assert(user, `Could not resolve smoke client user ${email}.`);
+
+  const defaultMembership = user.orgId
+    ? user.organizationMemberships.find((membership) => membership.organizationId === user.orgId) || null
+    : null;
+  if (defaultMembership) {
+    return {
+      orgId: defaultMembership.organizationId,
+      source: "default_membership",
+    };
+  }
+
+  if (user.organizationMemberships.length === 1 && user.organizationMemberships[0]) {
+    return {
+      orgId: user.organizationMemberships[0].organizationId,
+      source: "single_membership",
+    };
+  }
+
+  throw new Error(
+    `Could not resolve an active OrganizationMembership for ${email}. Run the tenant-access backfill and ensure User.orgId points at an active membership, or use a smoke account with exactly one active membership.`,
+  );
+}
+
 function printSummary(results: CheckResult[], sessions: SessionContext[]) {
   const passed = results.filter((result) => result.ok);
   const failed = results.filter((result) => !result.ok);
@@ -545,12 +591,9 @@ async function main() {
   const badLeadPhone = createRunPhone(2);
   const uniqueSuffix = `${Date.now()}`.slice(-6);
   const clientEmail = await resolveSessionEmail(clientSession);
-  const clientUser = await prisma.user.findFirst({
-    where: { email: clientEmail },
-    select: { orgId: true },
-  });
-  assert(clientUser?.orgId, `Could not resolve org for ${clientEmail}.`);
-  clientOrgId = clientUser.orgId;
+  const clientOrgContext = await resolveClientSmokeOrgContext(prisma, clientEmail);
+  clientOrgId = clientOrgContext.orgId;
+  console.log(`Smoke client org resolved from ${clientOrgContext.source}: ${clientOrgId}`);
   const clientOrg = await prisma.organization.findUnique({
     where: { id: clientOrgId },
     select: {
@@ -581,18 +624,31 @@ async function main() {
   const workerEmail = `portal-smoke-worker-${uniqueSuffix}@tiegui.local`;
   const workerPassword = "TieGui123!";
   const workerPasswordHash = await hashPassword(workerPassword);
-  const workerUser = await prisma.user.create({
-    data: {
-      name: "Portal Smoke Worker",
-      email: workerEmail,
-      role: "CLIENT",
-      calendarAccessRole: "WORKER",
-      orgId: clientOrgId,
-      passwordHash: workerPasswordHash,
-      mustChangePassword: false,
-      emailVerified: new Date(),
-    },
-    select: { id: true },
+  const workerUser = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: {
+        name: "Portal Smoke Worker",
+        email: workerEmail,
+        role: "CLIENT",
+        calendarAccessRole: "WORKER",
+        orgId: clientOrgId,
+        passwordHash: workerPasswordHash,
+        mustChangePassword: false,
+        emailVerified: new Date(),
+      },
+      select: { id: true },
+    });
+
+    await tx.organizationMembership.create({
+      data: {
+        organizationId: clientOrgId!,
+        userId: user.id,
+        role: "WORKER",
+        status: "ACTIVE",
+      },
+    });
+
+    return user;
   });
   createdWorkerUserId = workerUser.id;
   workerSession = await loginWithEmailPassword("worker", workerEmail, workerPassword);
@@ -643,7 +699,7 @@ async function main() {
     run: () =>
       expectPage({
         session: internalSession,
-        path: "/app",
+        path: `/app?orgId=${encodeURIComponent(clientOrgId!)}`,
         expectedPathPrefix: "/app/calendar",
         label: "GET /app (internal)",
       }),
@@ -1082,7 +1138,7 @@ async function main() {
       const xml = await response.text();
       assert(response.status === 200, `POST /api/webhooks/twilio/voice returned ${response.status}`);
       assert(xml.includes("<Dial"), "Expected <Dial> in TwiML response");
-      assert(xml.includes('timeout="45"'), "Expected 45 second dial timeout to allow carrier voicemail pickup");
+      assert(xml.includes('timeout="20"'), "Expected a 20 second dial timeout so missed calls fall back quickly");
       assert(xml.includes(smokeTwilioForwardTarget), `Expected forward target ${smokeTwilioForwardTarget}`);
       assert(
         xml.includes('action="https://app.tieguisolutions.com/api/webhooks/twilio/after-call"'),

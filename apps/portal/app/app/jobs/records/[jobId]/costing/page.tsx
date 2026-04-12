@@ -1,8 +1,7 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/session";
 import { canManageJobCosting } from "@/lib/job-costing";
 import { getParam, resolveAppScope } from "../../../../_lib/portal-scope";
+import { requireAppPageViewer } from "../../../../_lib/portal-viewer";
 import JobCostingManager from "./job-costing-manager";
 
 export const dynamic = "force-dynamic";
@@ -26,18 +25,14 @@ export default async function JobCostingDetailPage({
     requestedOrgId,
   });
 
-  const sessionUser = await requireSessionUser(`/app/jobs/records/${params.jobId}/costing`);
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { calendarAccessRole: true },
-        })
-      : null;
+  const viewer = await requireAppPageViewer({
+    nextPath: `/app/jobs/records/${params.jobId}/costing`,
+    orgId: scope.orgId,
+  });
 
   const canManage = canManageJobCosting({
-    internalUser: scope.internalUser,
-    calendarAccessRole: currentUser?.calendarAccessRole || "OWNER",
+    internalUser: viewer.internalUser,
+    calendarAccessRole: viewer.calendarAccessRole,
   });
 
   return (

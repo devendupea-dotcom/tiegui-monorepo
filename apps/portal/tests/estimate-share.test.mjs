@@ -92,7 +92,7 @@ test("normalizeOptionalShareText trims input and enforces max length", () => {
   );
 });
 
-test("buildEstimateShareEmailDraft includes share details and destination URL", () => {
+test("buildEstimateShareEmailDraft uses proposal-style copy with a clear next step", () => {
   const draft = buildEstimateShareEmailDraft({
     estimate: {
       estimateNumber: "EST-1007",
@@ -106,10 +106,15 @@ test("buildEstimateShareEmailDraft includes share details and destination URL", 
     shareUrl: "https://app.tieguisolutions.com/estimate/abc123",
     recipientName: "Maria",
     senderName: "TieGui",
+    senderPhone: "(555) 111-2222",
+    senderEmail: "office@tiegui.com",
   });
 
-  assert.match(draft.subject, /EST-1007/);
+  assert.match(draft.subject, /Your estimate from TieGui/);
   assert.match(draft.body, /Front yard refresh/);
+  assert.match(draft.body, /Total investment/);
   assert.match(draft.body, /https:\/\/app\.tieguisolutions\.com\/estimate\/abc123/);
-  assert.match(draft.body, /You can approve or decline the estimate/);
+  assert.match(draft.body, /Review and approve your estimate here/);
+  assert.match(draft.body, /will follow up to confirm scheduling and next steps/);
+  assert.match(draft.body, /office@tiegui\.com/);
 });

@@ -46,6 +46,8 @@ type UnifiedInboxProps = {
   internalUser: boolean;
   onboardingComplete: boolean;
   canManage: boolean;
+  initialLeadId?: string | null;
+  initialOpenContextEditor?: boolean;
 };
 
 type RenderItem =
@@ -129,8 +131,8 @@ function getInboxCopy(locale: string): InboxCopy {
       },
       title: "Bandeja",
       subtitle: "Conversaciones, llamadas y seguimiento en una sola bandeja operativa.",
-      openJobFolder: "Abrir carpeta del trabajo",
-      openJob: "Abrir trabajo",
+      openJobFolder: "Abrir carpeta CRM",
+      openJob: "Abrir carpeta CRM",
       activeThreads: "Conversaciones activas",
       activeThreadsBody: "Clientes con actividad reciente",
       unread: "No leidos",
@@ -186,8 +188,8 @@ function getInboxCopy(locale: string): InboxCopy {
     },
     title: "Inbox",
     subtitle: "Conversations, calls, and follow-up in one operating inbox.",
-    openJobFolder: "Open Job Folder",
-    openJob: "Open Job",
+    openJobFolder: "Open CRM Folder",
+    openJob: "Open CRM Folder",
     activeThreads: "Active threads",
     activeThreadsBody: "Customers with recent activity",
     unread: "Unread",
@@ -326,7 +328,14 @@ function isNearThreadBottom(element: HTMLDivElement | null): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight < 120;
 }
 
-export default function UnifiedInbox({ orgId, internalUser, onboardingComplete, canManage }: UnifiedInboxProps) {
+export default function UnifiedInbox({
+  orgId,
+  internalUser,
+  onboardingComplete,
+  canManage,
+  initialLeadId = null,
+  initialOpenContextEditor = false,
+}: UnifiedInboxProps) {
   const locale = useLocale();
   const copy = getInboxCopy(locale);
   function withOrgQuery(path: string) {
@@ -336,13 +345,13 @@ export default function UnifiedInbox({ orgId, internalUser, onboardingComplete, 
   }
 
   const isNarrow = useIsNarrow();
-  const [view, setView] = useState<"list" | "thread">("list");
+  const [view, setView] = useState<"list" | "thread">(initialLeadId ? "thread" : "list");
   const [search, setSearch] = useState("");
 
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
-  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialLeadId);
 
   const [loadingThread, setLoadingThread] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
@@ -359,6 +368,7 @@ export default function UnifiedInbox({ orgId, internalUser, onboardingComplete, 
   const selectedLeadIdRef = useRef<string | null>(null);
   const shouldStickThreadToBottomRef = useRef(true);
   const seenConversationAtRef = useRef<Record<string, string>>({});
+  const initialContextRequestRef = useRef(Boolean(initialOpenContextEditor));
   const closeContextDrawer = () => setShowContextDrawer(false);
 
   useEffect(() => {
@@ -609,6 +619,25 @@ export default function UnifiedInbox({ orgId, internalUser, onboardingComplete, 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNarrow]);
+
+  useEffect(() => {
+    if (!isNarrow || !initialContextRequestRef.current) {
+      return;
+    }
+
+    if (!selectedLeadId) {
+      return;
+    }
+
+    if (initialLeadId && selectedLeadId !== initialLeadId) {
+      initialContextRequestRef.current = false;
+      return;
+    }
+
+    setShowContextDrawer(true);
+    setView("thread");
+    initialContextRequestRef.current = false;
+  }, [initialLeadId, isNarrow, selectedLeadId]);
 
   async function handleSend() {
     if (!selectedLeadId || !canManage) return;
@@ -1086,6 +1115,7 @@ export default function UnifiedInbox({ orgId, internalUser, onboardingComplete, 
                   canManage={canManage}
                   jobHref={jobHref}
                   calendarHref={calendarHref}
+                  initialEditing={Boolean(initialOpenContextEditor && initialLeadId && selectedLeadId === initialLeadId)}
                   onSaved={handleLeadContextSaved}
                 />
               </div>
@@ -1116,6 +1146,7 @@ export default function UnifiedInbox({ orgId, internalUser, onboardingComplete, 
                 canManage={canManage}
                 jobHref={jobHref}
                 calendarHref={calendarHref}
+                initialEditing={Boolean(initialOpenContextEditor && initialLeadId && selectedLeadId === initialLeadId)}
                 onSaved={handleLeadContextSaved}
               />
             </div>

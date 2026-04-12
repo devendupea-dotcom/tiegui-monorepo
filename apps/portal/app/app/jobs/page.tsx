@@ -3,10 +3,11 @@ import { Prisma } from "@prisma/client";
 import { getRequestTranslator } from "@/lib/i18n";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { normalizeLeadCity, resolveLeadLocationLabel } from "@/lib/lead-location";
+import { operationalJobCandidateSelect, selectReusableOperationalJobCandidate } from "@/lib/operational-jobs";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime, isOverdueFollowUp, leadPriorityOptions, leadStatusOptions } from "@/lib/hq";
-import { requireSessionUser } from "@/lib/session";
 import { getParam, isOpenJobStatus, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
+import { isWorkerScopedPageViewer, requireAppPageViewer } from "../_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,7 @@ export default async function JobsPage({
   const status = getParam(searchParams?.status);
   const priority = getParam(searchParams?.priority);
   const openOnly = getParam(searchParams?.openOnly) || "1";
+  const saved = getParam(searchParams?.saved);
 
   const scope = await resolveAppScope({ nextPath: "/app/jobs", requestedOrgId });
   if (!scope.onboardingComplete) {
@@ -52,16 +54,12 @@ export default async function JobsPage({
     );
   }
 
-  const sessionUser = await requireSessionUser("/app/jobs");
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
-  const workerScoped = !scope.internalUser && currentUser?.calendarAccessRole === "WORKER";
-  const workerId = workerScoped ? currentUser!.id : null;
+  const viewer = await requireAppPageViewer({
+    nextPath: "/app/jobs",
+    orgId: scope.orgId,
+  });
+  const workerScoped = isWorkerScopedPageViewer(viewer);
+  const workerId = workerScoped ? viewer.id : null;
 
   const where: Prisma.LeadWhereInput = {
     orgId: scope.orgId,
@@ -129,6 +127,11 @@ export default async function JobsPage({
         orderBy: [{ createdAt: "desc" }],
         take: 1,
       },
+      jobs: {
+        select: operationalJobCandidateSelect,
+        orderBy: [{ updatedAt: "desc" }],
+        take: 12,
+      },
       _count: {
         select: {
           leadNotes: true,
@@ -153,6 +156,9 @@ export default async function JobsPage({
       normalizeLeadCity(job.city) ||
       "-";
     const workTypeLabel = sanitizeLeadBusinessTypeLabel(job.businessType);
+    const operationalJob = selectReusableOperationalJobCandidate({
+      candidates: job.jobs,
+    });
 
     return {
       ...job,
@@ -160,6 +166,7 @@ export default async function JobsPage({
       nextFollowUpAt: hasActiveBookedJob ? null : job.nextFollowUpAt,
       locationLabel,
       workTypeLabel,
+      operationalJobId: operationalJob?.id || null,
     };
   });
 
@@ -181,6 +188,11 @@ export default async function JobsPage({
       <section className="card">
         <h2>{t("jobs.title")}</h2>
         <p className="muted">{t("jobs.subtitle")}</p>
+        {saved === "spam-deleted" ? (
+          <p className="form-status">
+            Spam lead removed from CRM and the caller number is now blocked from future call/text staging.
+          </p>
+        ) : null}
         <div className="portal-empty-actions" style={{ marginTop: 12 }}>
           <Link className="btn secondary" href={withOrgQuery("/app/jobs/records", scope.orgId, scope.internalUser)}>
             {t("jobs.openStructuredRecords")}
@@ -189,6 +201,10 @@ export default async function JobsPage({
             {t("jobs.openJobCosting")}
           </Link>
         </div>
+        <p className="muted" style={{ marginTop: 10 }}>
+          Use Operational Job pages for day-to-day dispatch, schedule, and customer updates. Open records or costing only when
+          you need structured deep-work detail.
+        </p>
 
         <form className="filters" method="get" style={{ marginTop: 12 }}>
           {scope.internalUser ? <input type="hidden" name="orgId" value={scope.orgId} /> : null}
@@ -250,10 +266,15 @@ export default async function JobsPage({
         ) : (
           <>
             <ul className="mobile-list-cards" style={{ marginTop: 12 }}>
-              {visibleJobs.map((job) => (
+              {visibleJobs.map((job) => {
+                const jobHref = job.operationalJobId
+                  ? withOrgQuery(`/app/jobs/records/${job.operationalJobId}`, scope.orgId, scope.internalUser)
+                  : withOrgQuery(`/app/jobs/${job.id}`, scope.orgId, scope.internalUser);
+
+                return (
                 <li key={job.id} className="mobile-list-card">
                   <div className="stack-cell">
-                    <Link className="table-link" href={withOrgQuery(`/app/jobs/${job.id}`, scope.orgId, scope.internalUser)}>
+                    <Link className="table-link" href={jobHref}>
                       {job.contactName || job.businessName || job.phoneE164}
                     </Link>
                     <span className="muted">{job.phoneE164}</span>
@@ -288,12 +309,13 @@ export default async function JobsPage({
                     ) : null}
                   </div>
                   <div className="mobile-list-card-actions">
-                    <Link className="btn secondary" href={withOrgQuery(`/app/jobs/${job.id}`, scope.orgId, scope.internalUser)}>
-                      {t("buttons.openJob")}
+                    <Link className="btn secondary" href={jobHref}>
+                      {job.operationalJobId ? t("buttons.openOperationalJob") : t("buttons.openCrmFolder")}
                     </Link>
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
 
             <div className="table-wrap desktop-table-only">
@@ -312,12 +334,20 @@ export default async function JobsPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleJobs.map((job) => (
+                  {visibleJobs.map((job) => {
+                    const jobHref = job.operationalJobId
+                      ? withOrgQuery(`/app/jobs/records/${job.operationalJobId}`, scope.orgId, scope.internalUser)
+                      : withOrgQuery(`/app/jobs/${job.id}`, scope.orgId, scope.internalUser);
+
+                    return (
                     <tr key={job.id}>
                       <td>
-                        <Link className="table-link" href={withOrgQuery(`/app/jobs/${job.id}`, scope.orgId, scope.internalUser)}>
+                        <Link className="table-link" href={jobHref}>
                           {job.contactName || job.businessName || job.phoneE164}
                         </Link>
+                        <div className="muted" style={{ marginTop: 4 }}>
+                          {job.operationalJobId ? t("jobs.workspaceOperational") : t("jobs.workspaceCrm")}
+                        </div>
                       </td>
                       <td>
                         <span className={`badge status-${job.status.toLowerCase()}`}>{statusLabel(job.status)}</span>
@@ -357,7 +387,8 @@ export default async function JobsPage({
                       </td>
                       <td>{formatDateTime(job.updatedAt)}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

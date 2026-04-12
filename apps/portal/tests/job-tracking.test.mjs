@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildJobTrackingProgressSteps, createJobTrackingToken } from "../lib/job-tracking.ts";
+import {
+  buildJobTrackingProgressSteps,
+  createJobTrackingToken,
+  describeJobTrackingStatusChange,
+  formatOperationalJobStatusLabel,
+} from "../lib/job-tracking.ts";
 
 test("job tracking tokens are long, random-looking, and stored as hashes", () => {
   const first = createJobTrackingToken();
@@ -32,5 +37,32 @@ test("job tracking progress steps map dispatch states into a homeowner-friendly 
       "on_site:upcoming",
       "completed:upcoming",
     ],
+  );
+});
+
+test("operational job statuses stay readable in the workspace and timeline", () => {
+  assert.equal(formatOperationalJobStatusLabel("IN_PROGRESS"), "In Progress");
+  assert.equal(formatOperationalJobStatusLabel("ON_HOLD"), "On Hold");
+
+  assert.deepEqual(
+    describeJobTrackingStatusChange({
+      statusKind: "job",
+      nextStatusLabel: "In Progress",
+    }),
+    {
+      title: "Job status updated",
+      detail: "Internal status: In Progress.",
+    },
+  );
+
+  assert.deepEqual(
+    describeJobTrackingStatusChange({
+      statusKind: "dispatch",
+      nextStatusLabel: "On the way",
+    }),
+    {
+      title: "Status updated",
+      detail: "Current status: On the way.",
+    },
   );
 });

@@ -12,6 +12,7 @@ import {
   estimateStatusOptions,
   formatEstimateCurrency,
   formatEstimateStatusLabel,
+  getEstimateCustomerFacingIssues,
   summarizeEstimateItems,
   type EstimateDetail,
   type EstimateItemRow,
@@ -220,6 +221,22 @@ function buildDispatchPath(input: {
   return `/app/dispatch?${params.toString()}`;
 }
 
+function formatWorkflowTimestamp(value: string | null): string | null {
+  if (!value) return null;
+  return new Date(value).toLocaleString();
+}
+
+function formatShareStateLabel(value: string | null | undefined): string {
+  if (!value) return "No Link";
+  return value.replace(/_/g, " ");
+}
+
+function formatEstimateItemTypeLabel(type: EstimateItemRow["type"]): string {
+  if (type === "LABOR") return "Labor";
+  if (type === "CUSTOM_MATERIAL") return "Custom Scope";
+  return "Catalog Material";
+}
+
 export default function EstimateManager({
   orgId,
   orgName,
@@ -261,6 +278,10 @@ export default function EstimateManager({
   const totals = useMemo(
     () => summarizeEstimateItems(form.lineItems.map((line, index) => ({ ...line, sortOrder: index })), form.taxRatePercent),
     [form.lineItems, form.taxRatePercent],
+  );
+  const linkedLead = useMemo(
+    () => leadOptions.find((entry) => entry.id === form.leadId) || null,
+    [form.leadId, leadOptions],
   );
 
   useEffect(() => {
@@ -643,6 +664,10 @@ export default function EstimateManager({
 
   async function handleSendEstimate() {
     if (!selectedEstimateId) return;
+    if (customerFacingIssueText) {
+      setError(`Estimate is not ready to send. ${customerFacingIssueText}`);
+      return;
+    }
     setSending(true);
     setError(null);
     setNotice(null);
@@ -679,6 +704,10 @@ export default function EstimateManager({
 
   async function handleConvertEstimate(createInvoice: boolean) {
     if (!selectedEstimateId) return;
+    if (createInvoice && selectedEstimate && selectedEstimate.total <= 0) {
+      setError("Set a positive total before creating an invoice from this estimate.");
+      return;
+    }
     setConverting(true);
     setError(null);
     setNotice(null);
@@ -757,6 +786,10 @@ export default function EstimateManager({
 
   async function handleGenerateShareLink() {
     if (!selectedEstimateId) return;
+    if (customerFacingIssueText) {
+      setError(`Estimate is not ready to share. ${customerFacingIssueText}`);
+      return;
+    }
     setSharing(true);
     setError(null);
     setNotice(null);
@@ -836,10 +869,93 @@ export default function EstimateManager({
     updatePath(nextEstimateId);
   }
 
-  const canSend = Boolean(selectedEstimate && ["DRAFT", "SENT", "VIEWED", "EXPIRED"].includes(selectedEstimate.status));
+  const savedCustomerFacingIssues = selectedEstimate
+    ? getEstimateCustomerFacingIssues({
+        title: selectedEstimate.title,
+        customerName: selectedEstimate.customerName,
+        leadLabel: selectedEstimate.lead?.label || "",
+        lineItemCount: selectedEstimate.lineItems.length,
+        total: selectedEstimate.total,
+      })
+    : [];
+  const draftCustomerFacingIssues = selectedEstimate
+    ? getEstimateCustomerFacingIssues({
+        title: form.title,
+        customerName: form.customerName,
+        leadLabel: linkedLead?.label || selectedEstimate.lead?.label || "",
+        lineItemCount: form.lineItems.length,
+        total: totals.total,
+      })
+    : [];
+  const customerFacingIssueText = savedCustomerFacingIssues.join(" ");
+  const draftCustomerFacingIssueText = draftCustomerFacingIssues.join(" ");
+  const readinessChanged = draftCustomerFacingIssueText !== customerFacingIssueText;
+  const customerReadyLabel =
+    draftCustomerFacingIssues.length === 0 ? "Customer-ready" : "Needs customer-facing details";
+  const reviewStatusLabel = selectedEstimate
+    ? selectedEstimate.status === "APPROVED"
+      ? "Approved by customer"
+      : selectedEstimate.status === "DECLINED"
+        ? "Revision requested"
+        : selectedEstimate.customerViewedAt
+          ? "Viewed by customer"
+          : selectedEstimate.sentAt || selectedEstimate.sharedAt
+            ? "Sent for review"
+            : selectedEstimate.latestShareLink
+              ? "Share link ready"
+              : "Not shared yet"
+    : "Not started";
+  const reviewStatusDetail = selectedEstimate
+    ? selectedEstimate.status === "APPROVED"
+      ? `Approved ${formatWorkflowTimestamp(selectedEstimate.approvedAt) || "recently"}.`
+      : selectedEstimate.status === "DECLINED"
+        ? `Customer asked for changes ${formatWorkflowTimestamp(selectedEstimate.declinedAt) || "recently"}.`
+        : selectedEstimate.customerViewedAt
+          ? `Viewed ${formatWorkflowTimestamp(selectedEstimate.customerViewedAt) || "recently"}.`
+          : selectedEstimate.sentAt || selectedEstimate.sharedAt
+            ? `Shared ${formatWorkflowTimestamp(selectedEstimate.sharedAt || selectedEstimate.sentAt) || "recently"}.`
+            : selectedEstimate.latestShareLink
+              ? "The secure customer link is ready to send."
+              : "Shape the proposal and share it when it is ready."
+    : "";
+  const nextStepTitle = !selectedEstimate
+    ? "Create a proposal"
+    : draftCustomerFacingIssues.length > 0
+      ? "Finish the customer-facing basics"
+      : selectedEstimate.status === "APPROVED"
+        ? "Move approved work into operations"
+        : selectedEstimate.status === "DECLINED"
+          ? "Revise and resend"
+          : selectedEstimate.customerViewedAt
+            ? "Follow up while the proposal is warm"
+            : selectedEstimate.sentAt || selectedEstimate.sharedAt || selectedEstimate.latestShareLink
+              ? "Get the customer to review it"
+              : "Create the customer view";
+  const nextStepDetail = !selectedEstimate
+    ? "Start a new proposal, price the scope, and get it customer-ready."
+    : draftCustomerFacingIssues.length > 0
+      ? draftCustomerFacingIssues.join(" ")
+      : selectedEstimate.status === "APPROVED"
+        ? "Create the job, send it to dispatch, or spin up the invoice draft."
+        : selectedEstimate.status === "DECLINED"
+          ? "Review the customer note, adjust the proposal, and send a fresh link."
+          : selectedEstimate.customerViewedAt
+            ? "They have already seen it. Follow up or wait for approval, then move the work into ops."
+            : selectedEstimate.sentAt || selectedEstimate.sharedAt || selectedEstimate.latestShareLink
+              ? "Share the proposal and keep the next step clear so it closes quickly."
+              : "Generate the secure customer link or send the proposal as soon as the scope is ready.";
+  const canSend = Boolean(
+    selectedEstimate &&
+      ["DRAFT", "SENT", "VIEWED", "EXPIRED"].includes(selectedEstimate.status) &&
+      savedCustomerFacingIssues.length === 0,
+  );
   const canConvert = selectedEstimate?.status === "APPROVED";
+  const canConvertToInvoice = Boolean(canConvert && selectedEstimate && selectedEstimate.total > 0);
   const canGenerateShare = Boolean(
-    selectedEstimate && ["DRAFT", "SENT", "VIEWED", "APPROVED"].includes(selectedEstimate.status) && !selectedEstimate.archivedAt,
+    selectedEstimate &&
+      ["DRAFT", "SENT", "VIEWED", "APPROVED"].includes(selectedEstimate.status) &&
+      !selectedEstimate.archivedAt &&
+      savedCustomerFacingIssues.length === 0,
   );
   const canRevokeShare = Boolean(selectedEstimate?.latestShareLink && selectedEstimate.latestShareLink.state === "ACTIVE");
 
@@ -850,7 +966,7 @@ export default function EstimateManager({
             <div className="stack-cell">
               <h2>Estimates</h2>
               <p className="muted">
-                Build internal contractor estimates for {orgName}, save them by status, and send approved work into Dispatch or invoicing.
+                Prepare customer-ready proposals for {orgName}, track review, and move approved work into dispatch or invoicing.
               </p>
             </div>
           <div className="portal-empty-actions">
@@ -868,8 +984,8 @@ export default function EstimateManager({
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>Estimate List</h3>
-              <p className="muted">Filter by status, search by estimate number or customer, and open a detail sheet.</p>
+              <h3>Proposals</h3>
+              <p className="muted">Search by customer, estimate number, or review status to reopen the right proposal fast.</p>
             </div>
           </div>
 
@@ -933,15 +1049,17 @@ export default function EstimateManager({
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>{selectedEstimate ? selectedEstimate.estimateNumber : "Estimate Detail"}</h3>
+              <h3>{selectedEstimate ? `${selectedEstimate.estimateNumber} Proposal Workspace` : "Proposal Workspace"}</h3>
               <p className="muted">
-                {selectedEstimate ? "Edit line items, notes, and status before sending or converting." : "Select an estimate to edit its pricing and status."}
+                {selectedEstimate
+                  ? "Shape the customer-facing proposal, confirm readiness, and move approved work into operations."
+                  : "Select a proposal to shape its scope, pricing, and next step."}
               </p>
             </div>
             {selectedEstimate ? (
               <div className="portal-empty-actions">
                 <Link className="btn secondary" href={buildPath({ estimateId: selectedEstimate.id, orgId, internalUser, mobileMode })}>
-                  Open Route
+                  Open Full Page
                 </Link>
               </div>
             ) : null}
@@ -958,14 +1076,66 @@ export default function EstimateManager({
             </div>
           ) : (
             <>
-              <form className="auth-form" style={{ marginTop: 14 }} onSubmit={(event) => event.preventDefault()}>
-                <div className="grid two-col">
-                  <label>
-                    Title
+              <section className="estimate-module-section">
+                <div className="estimate-proposal-grid">
+                  <article className="estimate-proposal-card">
+                    <span className="estimate-share-eyebrow">Project Summary</span>
+                    <strong>{form.title || "Add a proposal title"}</strong>
+                    <span>{form.customerName || linkedLead?.label || "Attach the customer or lead"}</span>
+                    <span className="muted">{form.siteAddress || "Add the site address"}</span>
+                    <div className="estimate-proposal-status-inline">
+                      <span className="badge">{form.projectType || "Project Type"}</span>
+                      {form.validUntil ? <span className="badge">Valid Until {new Date(`${form.validUntil}T12:00:00.000Z`).toLocaleDateString()}</span> : null}
+                    </div>
+                  </article>
+
+                  <article className="estimate-proposal-card">
+                    <span className="estimate-share-eyebrow">Customer Ready</span>
+                    <strong>{customerReadyLabel}</strong>
+                    <span>{reviewStatusLabel}</span>
+                    <span className="muted">{reviewStatusDetail}</span>
+                    {draftCustomerFacingIssues.length > 0 ? (
+                      <ul className="estimate-proposal-issue-list">
+                        {draftCustomerFacingIssues.map((issue) => (
+                          <li key={issue}>{issue}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span className="muted">Customer-facing essentials are in place.</span>
+                    )}
+                    {readinessChanged ? (
+                      <span className="muted">Save changes to refresh the live customer view used for sharing.</span>
+                    ) : null}
+                  </article>
+
+                  <article className="estimate-proposal-card">
+                    <span className="estimate-share-eyebrow">Next Step</span>
+                    <strong>{nextStepTitle}</strong>
+                    <span className="muted">{nextStepDetail}</span>
+                    <div className="estimate-proposal-status-inline">
+                      <span className="badge">{formatShareStateLabel(selectedEstimate.latestShareLink?.state)}</span>
+                      <span className="badge">{formatEstimateStatusLabel(selectedEstimate.status)}</span>
+                    </div>
+                  </article>
+                </div>
+              </section>
+
+              <section className="estimate-module-section">
+                <div className="invoice-header-row">
+                  <div className="stack-cell">
+                    <h4>Project Summary</h4>
+                    <p className="muted">Set the customer-facing title, property details, and proposal terms before you share it.</p>
+                  </div>
+                </div>
+
+                <form className="auth-form" style={{ marginTop: 14 }} onSubmit={(event) => event.preventDefault()}>
+                  <div className="grid two-col">
+                    <label>
+                      Proposal Title
                     <input value={form.title} onChange={(event) => updateForm("title", event.currentTarget.value)} placeholder="Front yard refresh" />
                   </label>
                   <label>
-                    Status
+                    Proposal Status
                     <select
                       value={form.status}
                       onChange={(event) => {
@@ -1069,35 +1239,36 @@ export default function EstimateManager({
                 </div>
 
                 <label>
-                  Description
+                  Project Summary
                   <textarea
                     value={form.description}
                     onChange={(event) => updateForm("description", event.currentTarget.value)}
                     rows={3}
-                    placeholder="Short overview of the estimate."
+                    placeholder="Short customer-facing overview of the project."
                   />
                 </label>
 
                 <label>
-                  Notes
+                  Internal Notes
                   <textarea
                     value={form.notes}
                     onChange={(event) => updateForm("notes", event.currentTarget.value)}
                     rows={4}
-                    placeholder="Internal notes, scope clarifications, or exclusions."
+                    placeholder="Internal scope notes, follow-up reminders, or contractor-only context."
                   />
                 </label>
 
                 <label>
-                  Terms
+                  Customer Terms
                   <textarea
                     value={form.terms}
                     onChange={(event) => updateForm("terms", event.currentTarget.value)}
                     rows={4}
-                    placeholder="Warranty, payment terms, scheduling notes."
+                    placeholder="Warranty, payment terms, scheduling notes, or customer-facing details."
                   />
                 </label>
-              </form>
+                </form>
+              </section>
 
               <EstimatePhotosPanel
                 estimateId={selectedEstimate.id}
@@ -1109,8 +1280,8 @@ export default function EstimateManager({
               <section className="estimate-module-section">
                 <div className="invoice-header-row">
                   <div className="stack-cell">
-                    <h4>Line Items</h4>
-                    <p className="muted">Use materials from your catalog or add custom material and labor rows.</p>
+                    <h4>Customer Scope</h4>
+                    <p className="muted">Shape the labor, materials, and custom scope the customer will review.</p>
                   </div>
                   <div className="portal-empty-actions">
                     <select
@@ -1138,82 +1309,96 @@ export default function EstimateManager({
                   </div>
                 </div>
 
-                <div className="table-wrap" style={{ marginTop: 12 }}>
-                  <table className="data-table estimate-module-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Type</th>
-                        <th>Description</th>
-                        <th>Qty</th>
-                        <th>Unit</th>
-                        <th>Unit Price</th>
-                        <th>Total</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {form.lineItems.length === 0 ? (
-                        <tr>
-                          <td className="muted" colSpan={8}>
-                            No line items yet.
-                          </td>
-                        </tr>
-                      ) : (
-                        form.lineItems.map((line, index) => (
-                          <tr key={line.id}>
-                            <td>
-                              <input value={line.name} onChange={(event) => updateLine(line.id, { name: event.currentTarget.value })} />
-                            </td>
-                            <td>
-                              <select value={line.type} onChange={(event) => updateLine(line.id, { type: event.currentTarget.value as EstimateItemRow["type"] })}>
-                                <option value="MATERIAL">Catalog</option>
-                                <option value="CUSTOM_MATERIAL">Custom</option>
-                                <option value="LABOR">Labor</option>
-                              </select>
-                            </td>
-                            <td>
-                              <input value={line.description} onChange={(event) => updateLine(line.id, { description: event.currentTarget.value })} />
-                            </td>
-                            <td>
-                              <input value={line.quantity} onChange={(event) => updateLine(line.id, { quantity: event.currentTarget.value })} />
-                            </td>
-                            <td>
-                              <input value={line.unit} onChange={(event) => updateLine(line.id, { unit: event.currentTarget.value })} />
-                            </td>
-                            <td>
-                              <input value={line.unitPrice} onChange={(event) => updateLine(line.id, { unitPrice: event.currentTarget.value })} />
-                            </td>
-                            <td>
-                              <strong>{formatEstimateCurrency(line.total)}</strong>
-                            </td>
-                            <td>
-                              <div className="estimate-module-line-actions">
-                                <button className="btn secondary" type="button" onClick={() => moveLine(line.id, -1)} disabled={index === 0}>
-                                  Up
-                                </button>
-                                <button
-                                  className="btn secondary"
-                                  type="button"
-                                  onClick={() => moveLine(line.id, 1)}
-                                  disabled={index === form.lineItems.length - 1}
-                                >
-                                  Down
-                                </button>
-                                <button className="btn secondary" type="button" onClick={() => removeLine(line.id)}>
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                {form.lineItems.length === 0 ? (
+                  <div className="portal-empty-state estimate-module-empty">
+                    <strong>No customer scope yet.</strong>
+                    <p className="muted">Add labor, catalog materials, or custom scope before sharing this proposal.</p>
+                  </div>
+                ) : (
+                  <div className="estimate-scope-editor">
+                    {form.lineItems.map((line, index) => (
+                      <article className="estimate-scope-editor-card" key={line.id}>
+                        <div className="estimate-scope-editor-card-header">
+                          <div className="stack-cell">
+                            <span className="estimate-share-eyebrow">Scope Item {index + 1}</span>
+                            <label>
+                              Customer-facing item name
+                              <input
+                                value={line.name}
+                                onChange={(event) => updateLine(line.id, { name: event.currentTarget.value })}
+                                placeholder="Landscape installation labor"
+                              />
+                            </label>
+                          </div>
+                          <div className="estimate-scope-editor-total">
+                            <span className="muted">{formatEstimateItemTypeLabel(line.type)}</span>
+                            <strong>{formatEstimateCurrency(line.total)}</strong>
+                          </div>
+                        </div>
+
+                        <label>
+                          Scope detail
+                          <textarea
+                            value={line.description}
+                            onChange={(event) => updateLine(line.id, { description: event.currentTarget.value })}
+                            rows={2}
+                            placeholder="What this item covers for the customer."
+                          />
+                        </label>
+
+                        <div className="estimate-scope-editor-fields">
+                          <label>
+                            Type
+                            <select value={line.type} onChange={(event) => updateLine(line.id, { type: event.currentTarget.value as EstimateItemRow["type"] })}>
+                              <option value="MATERIAL">Catalog Material</option>
+                              <option value="CUSTOM_MATERIAL">Custom Scope</option>
+                              <option value="LABOR">Labor</option>
+                            </select>
+                          </label>
+                          <label>
+                            Quantity
+                            <input value={line.quantity} onChange={(event) => updateLine(line.id, { quantity: event.currentTarget.value })} />
+                          </label>
+                          <label>
+                            Unit
+                            <input value={line.unit} onChange={(event) => updateLine(line.id, { unit: event.currentTarget.value })} />
+                          </label>
+                          <label>
+                            Unit price
+                            <input value={line.unitPrice} onChange={(event) => updateLine(line.id, { unitPrice: event.currentTarget.value })} />
+                          </label>
+                        </div>
+
+                        <div className="estimate-module-line-actions">
+                          <button className="btn secondary" type="button" onClick={() => moveLine(line.id, -1)} disabled={index === 0}>
+                            Move Up
+                          </button>
+                          <button
+                            className="btn secondary"
+                            type="button"
+                            onClick={() => moveLine(line.id, 1)}
+                            disabled={index === form.lineItems.length - 1}
+                          >
+                            Move Down
+                          </button>
+                          <button className="btn secondary" type="button" onClick={() => removeLine(line.id)}>
+                            Remove
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </section>
 
               <section className="estimate-module-section">
+                <div className="invoice-header-row">
+                  <div className="stack-cell">
+                    <h4>Pricing / Investment</h4>
+                    <p className="muted">Keep the investment clear before you share the proposal or convert it into real work.</p>
+                  </div>
+                </div>
+
                 <div className="estimate-summary-grid">
                   <article className="card estimate-summary-card">
                     <span className="muted">Subtotal</span>
@@ -1235,13 +1420,18 @@ export default function EstimateManager({
                   <div className="stack-cell">
                     <h4>Share & Approval</h4>
                     <p className="muted">
-                      Generate a secure customer link here. If Outlook is connected, the portal can email the estimate
-                      link directly; otherwise you can still copy and share it manually.
+                      Deliver the customer view, track review activity, and keep the proposal moving toward approval.
                     </p>
                   </div>
                 </div>
 
                 <div className="estimate-share-internal-card" style={{ marginTop: 12 }}>
+                  <div className="estimate-proposal-status-inline" style={{ marginBottom: 12 }}>
+                    <span className="badge">{customerReadyLabel}</span>
+                    <span className="badge">{reviewStatusLabel}</span>
+                    <span className="muted">{reviewStatusDetail}</span>
+                  </div>
+
                   <div className="grid two-col" style={{ marginTop: 0 }}>
                     <label>
                       Recipient name
@@ -1264,7 +1454,7 @@ export default function EstimateManager({
 
                   <div className="estimate-share-inline-meta">
                     <span className="badge">
-                      {selectedEstimate.latestShareLink ? selectedEstimate.latestShareLink.state : "NO LINK"}
+                      {selectedEstimate.latestShareLink ? formatShareStateLabel(selectedEstimate.latestShareLink.state) : "No Link"}
                     </span>
                     <span className="muted">
                       {selectedEstimate.sharedAt
@@ -1299,7 +1489,7 @@ export default function EstimateManager({
                   {latestShareUrl ? (
                     <div className="estimate-share-link-box" style={{ marginTop: 12 }}>
                       <label>
-                        Secure customer link
+                        Secure proposal link
                         <input value={latestShareUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
                       </label>
                       <div className="portal-empty-actions">
@@ -1321,7 +1511,7 @@ export default function EstimateManager({
                       disabled={!canManage || !canGenerateShare || sharing}
                       onClick={() => void handleGenerateShareLink()}
                     >
-                      {sharing ? "Generating..." : selectedEstimate.latestShareLink ? "Regenerate Link" : "Generate Link"}
+                      {sharing ? "Generating..." : selectedEstimate.latestShareLink ? "Refresh Share Link" : "Create Share Link"}
                     </button>
                     <button
                       className="btn secondary"
@@ -1329,7 +1519,7 @@ export default function EstimateManager({
                       disabled={!canManage || !canRevokeShare || revokingShare}
                       onClick={() => void handleRevokeShareLink()}
                     >
-                      {revokingShare ? "Revoking..." : "Revoke Link"}
+                      {revokingShare ? "Revoking..." : "Revoke Share Link"}
                     </button>
                     {latestShareUrl ? (
                       <a className="btn secondary" href={latestShareUrl} target="_blank" rel="noreferrer">
@@ -1337,23 +1527,33 @@ export default function EstimateManager({
                       </a>
                     ) : null}
                   </div>
+                  {customerFacingIssueText ? (
+                    <p className="form-status" style={{ marginTop: 12 }}>
+                      Before sharing the live proposal: {customerFacingIssueText}
+                    </p>
+                  ) : null}
+                  {readinessChanged ? (
+                    <p className="muted" style={{ marginTop: 12 }}>
+                      You have unsaved customer-facing edits. Save first if you want the shared proposal to match what you see here.
+                    </p>
+                  ) : null}
                 </div>
               </section>
 
               <section className="estimate-module-section">
                 <div className="invoice-header-row">
                   <div className="stack-cell">
-                    <h4>Actions</h4>
-                    <p className="muted">Save changes first, then send approved work into Dispatch or create an invoice.</p>
+                    <h4>Next Step</h4>
+                    <p className="muted">{nextStepDetail}</p>
                   </div>
                 </div>
 
                 <div className="portal-empty-actions" style={{ marginTop: 12 }}>
                   <button className="btn primary" type="button" disabled={!canManage || saving} onClick={() => void handleSaveEstimate()}>
-                    {saving ? "Saving..." : "Save Estimate"}
+                    {saving ? "Saving..." : "Save Proposal"}
                   </button>
                   <button className="btn secondary" type="button" disabled={!canManage || !canSend || sending} onClick={() => void handleSendEstimate()}>
-                    {sending ? "Sending..." : "Send Estimate"}
+                    {sending ? "Sending..." : "Send Proposal"}
                   </button>
                   <button
                     className="btn secondary"
@@ -1366,21 +1566,26 @@ export default function EstimateManager({
                   <button
                     className="btn secondary"
                     type="button"
-                    disabled={!canManage || !canConvert || converting}
+                    disabled={!canManage || !canConvertToInvoice || converting}
                     onClick={() => void handleConvertEstimate(true)}
                   >
-                    {converting ? "Sending..." : "Send to Dispatch + Invoice"}
+                    {converting ? "Sending..." : "Send to Dispatch + Invoice Draft"}
                   </button>
                   <button className="btn secondary" type="button" disabled={!canManage || archiving} onClick={() => void handleArchiveEstimate()}>
-                    {archiving ? "Archiving..." : "Archive"}
+                    {archiving ? "Archiving..." : "Archive Proposal"}
                   </button>
                 </div>
+                {selectedEstimate && selectedEstimate.total <= 0 ? (
+                  <p className="form-status" style={{ marginTop: 12 }}>
+                    Set a positive total before creating an invoice draft from this proposal.
+                  </p>
+                ) : null}
               </section>
 
               <section className="estimate-module-section">
                 <div className="invoice-header-row">
                   <div className="stack-cell">
-                    <h4>Activity</h4>
+                    <h4>Proposal Activity</h4>
                   </div>
                 </div>
                 {selectedEstimate.activities.length === 0 ? (

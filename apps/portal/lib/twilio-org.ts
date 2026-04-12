@@ -1,6 +1,10 @@
 import { normalizeE164 } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { decryptTwilioAuthToken } from "@/lib/twilio-config-crypto";
+import {
+  listWorkspaceUsers,
+  sortWorkspaceUsersByCalendarRoleThenCreatedAt,
+} from "@/lib/workspace-users";
 
 type TwilioRequestInput = {
   accountSid: string;
@@ -150,37 +154,13 @@ export async function resolveTwilioVoiceForwardingNumber(input: {
     return configuredNumber;
   }
 
-  const candidates = await prisma.user.findMany({
-    where: {
-      orgId: input.organizationId,
-      phoneE164: { not: null },
-      calendarAccessRole: { in: ["OWNER", "ADMIN"] },
-    },
-    select: {
-      phoneE164: true,
-      calendarAccessRole: true,
-      createdAt: true,
-      id: true,
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-
-  const rank: Record<string, number> = {
-    OWNER: 0,
-    ADMIN: 1,
-  };
-
-  candidates.sort((left, right) => {
-    const rankDiff = (rank[left.calendarAccessRole] ?? 99) - (rank[right.calendarAccessRole] ?? 99);
-    if (rankDiff !== 0) {
-      return rankDiff;
-    }
-    const createdAtDiff = left.createdAt.getTime() - right.createdAt.getTime();
-    if (createdAtDiff !== 0) {
-      return createdAtDiff;
-    }
-    return left.id.localeCompare(right.id);
-  });
+  const candidates = sortWorkspaceUsersByCalendarRoleThenCreatedAt(
+    await listWorkspaceUsers({
+      organizationId: input.organizationId,
+      allowedCalendarRoles: ["OWNER", "ADMIN"],
+      requirePhone: true,
+    }),
+  );
 
   for (const candidate of candidates) {
     const normalizedPhone = normalizeTwilioPhone(candidate.phoneE164 || "");
@@ -284,6 +264,7 @@ export async function sendTwilioMessageWithConfig(input: {
   config: Pick<TwilioOrgRuntimeConfig, "twilioSubaccountSid" | "twilioAuthToken" | "messagingServiceSid">;
   toNumberE164: string;
   body: string;
+  statusCallbackUrl?: string | null;
 }): Promise<
   | {
       ok: true;
@@ -301,11 +282,14 @@ export async function sendTwilioMessageWithConfig(input: {
     authToken: input.config.twilioAuthToken,
     path: "/Messages.json",
     method: "POST",
-    formBody: new URLSearchParams({
-      To: input.toNumberE164,
-      Body: input.body,
-      MessagingServiceSid: input.config.messagingServiceSid,
-    }),
+    formBody: new URLSearchParams(
+      Object.entries({
+        To: input.toNumberE164,
+        Body: input.body,
+        MessagingServiceSid: input.config.messagingServiceSid,
+        ...(input.statusCallbackUrl ? { StatusCallback: input.statusCallbackUrl } : {}),
+      }),
+    ),
   });
 
   const providerMessageSid = typeof response.payload?.sid === "string" ? response.payload.sid : null;

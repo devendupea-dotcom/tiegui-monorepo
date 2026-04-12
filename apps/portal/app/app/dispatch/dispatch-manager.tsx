@@ -182,6 +182,7 @@ type DispatchManagerCopy = {
   generating: string;
   customerTrackingLink: string;
   openTrackingPage: string;
+  openJobWorkspace: string;
   createFreshLink: string;
   createShareableLink: string;
   editJob: string;
@@ -304,6 +305,7 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
       generating: "Generando...",
       customerTrackingLink: "Enlace de seguimiento del cliente",
       openTrackingPage: "Abrir pagina de seguimiento",
+      openJobWorkspace: "Abrir trabajo",
       createFreshLink: "Crear enlace nuevo",
       createShareableLink: "Crea un enlace compartible cuando estes listo para enviarle al cliente actualizaciones en vivo.",
       editJob: "Editar trabajo",
@@ -425,6 +427,7 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
     generating: "Generating...",
     customerTrackingLink: "Customer tracking link",
     openTrackingPage: "Open Tracking Page",
+    openJobWorkspace: "Open Operational Job",
     createFreshLink: "Create Fresh Link",
     createShareableLink: "Create a shareable link when you are ready to send the customer live job updates.",
     editJob: "Edit job",
@@ -1795,17 +1798,27 @@ export default function DispatchManager({
                 <p className="muted">{copy.jobDetails}</p>
                 <h3>{selectedJob?.customerName || selectedJobSummary?.customerName || copy.dispatchJob}</h3>
               </div>
-              <button
-                className="btn secondary"
-                type="button"
-                onClick={() => {
-                  setSelectedJobId(null);
-                  setSelectedJob(null);
-                  setDetailError(null);
-                }}
-              >
-                {copy.close}
-              </button>
+              <div className="quick-links">
+                {selectedJob ? (
+                  <Link
+                    className="btn secondary"
+                    href={withOrgQuery(`/app/jobs/records/${selectedJob.id}`, orgId, internalUser)}
+                  >
+                    {copy.openJobWorkspace}
+                  </Link>
+                ) : null}
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => {
+                    setSelectedJobId(null);
+                    setSelectedJob(null);
+                    setDetailError(null);
+                  }}
+                >
+                  {copy.close}
+                </button>
+              </div>
             </div>
 
             <div className="dispatch-drawer-body">

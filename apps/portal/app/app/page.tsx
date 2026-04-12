@@ -1,14 +1,12 @@
 import Link from "next/link";
-import type { CalendarAccessRole } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { isNotFoundError } from "next/dist/client/components/not-found";
 import { isRedirectError } from "next/dist/client/components/redirect";
 import type { AnalyticsRange } from "@/lib/portal-analytics";
-import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/session";
 import OwnerCommandCenter from "./owner-command-center";
 import WorkerOpsDashboard from "./worker-ops-dashboard";
 import { getParam, resolveAppScope, withOrgQuery } from "./_lib/portal-scope";
+import { requireAppPageViewer } from "./_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -30,29 +28,12 @@ export default async function AppHomePage({
       redirect(withOrgQuery("/app/calendar", scope.orgId, true));
     }
 
-    const sessionUser = await requireSessionUser("/app");
-    let calendarAccessRole: CalendarAccessRole = "WORKER";
-
-    if (sessionUser.id) {
-      try {
-        const currentUser = await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { calendarAccessRole: true },
-        });
-        calendarAccessRole = currentUser?.calendarAccessRole || "WORKER";
-      } catch (error) {
-        console.error("AppHomePage failed to load calendar access role. Falling back to worker dashboard.", error);
-      }
-    }
-
-    const viewer = {
-      id: sessionUser.id || "",
-      internalUser: false,
-      calendarAccessRole,
+    const viewer = await requireAppPageViewer({
+      nextPath: "/app",
       orgId: scope.orgId,
-    };
+    });
 
-    if (calendarAccessRole === "OWNER" || calendarAccessRole === "ADMIN") {
+    if (viewer.calendarAccessRole === "OWNER" || viewer.calendarAccessRole === "ADMIN") {
       return <OwnerCommandCenter scope={scope} viewer={viewer} range={normalizeDashboardRange(getParam(searchParams?.range))} />;
     }
 

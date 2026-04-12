@@ -18,8 +18,8 @@ test("buildMissedCallOpeningMessages builds a single compliant opener for the mi
     openerTemplate: SMS_TEMPLATES.friendly.opener,
   });
 
-  assert.match(messages.immediateBody, /sorry we missed ya/i);
-  assert.match(messages.immediateBody, /What kind of work are you looking to get done\?/);
+  assert.match(messages.immediateBody, /Sorry we missed your call\./i);
+  assert.match(messages.immediateBody, /What kind of work do you need help with\?/);
   assert.match(messages.immediateBody, /Reply STOP to unsubscribe\.$/);
   assert.equal(messages.delayedPromptBody, null);
 });

@@ -51,6 +51,56 @@ function decisionEventType(decision: MissedCallRecoveryDecision) {
   return "MISSED_CALL_TEXT_SKIPPED" as const;
 }
 
+function mapDispatchSkipDecision(input: {
+  reason: string;
+  withinBusinessHours: boolean;
+}): MissedCallRecoveryDecision {
+  switch (input.reason) {
+    case "lead_dnc":
+      return { action: "skip", reason: "dnc", withinBusinessHours: input.withinBusinessHours };
+    case "auto_reply_disabled":
+      return { action: "skip", reason: "disabled", withinBusinessHours: input.withinBusinessHours };
+    default:
+      return { action: "skip", reason: "already_processed", withinBusinessHours: input.withinBusinessHours };
+  }
+}
+
+async function finalizeReservedDecisionEvent(input: {
+  eventId: string;
+  candidate: RecoveryCandidate;
+  decision: MissedCallRecoveryDecision;
+  senderNumberE164?: string | null;
+  dispatchReason?: string | null;
+}) {
+  await prisma.communicationEvent.update({
+    where: { id: input.eventId },
+    data: {
+      type: decisionEventType(input.decision),
+      summary: decisionSummary(input.decision),
+      metadataJson: {
+        source: input.candidate.source,
+        reason: input.decision.reason,
+        withinBusinessHours: input.decision.withinBusinessHours,
+        sendAfterAt: input.decision.action === "queue" ? input.decision.sendAfterAt.toISOString() : null,
+        duplicateWindowMinutes: MISSED_CALL_DUPLICATE_WINDOW_MINUTES,
+        fromNumberE164: input.candidate.fromNumberE164,
+        senderNumberE164: input.senderNumberE164 || null,
+        occurredAt: input.candidate.occurredAt.toISOString(),
+        forwardedTo: input.candidate.forwardedTo || null,
+        dispatchReason: input.dispatchReason || null,
+        finalizedAt: new Date().toISOString(),
+      },
+    },
+  });
+}
+
+async function releaseReservedDecisionEvent(eventId: string | undefined) {
+  if (!eventId) {
+    return;
+  }
+  await prisma.communicationEvent.delete({ where: { id: eventId } }).catch(() => undefined);
+}
+
 const processMissedCallRecoveryImpl = createMissedCallRecoveryRunner({
   async reserveDecision(candidate) {
     const decisionKey = buildMissedCallRecoveryKey(candidate);
@@ -135,9 +185,15 @@ const processMissedCallRecoveryImpl = createMissedCallRecoveryRunner({
           select: {
             id: true,
             missedCallAutoReplyOn: true,
+            autoReplyEnabled: true,
             smsFromNumberE164: true,
             smsQuietHoursStartMinute: true,
             smsQuietHoursEndMinute: true,
+            messagingSettings: {
+              select: {
+                autoReplyEnabled: true,
+              },
+            },
             dashboardConfig: {
               select: {
                 calendarTimezone: true,
@@ -195,7 +251,10 @@ const processMissedCallRecoveryImpl = createMissedCallRecoveryRunner({
         organization?.smsFromNumberE164 || organization?.twilioConfig?.phoneNumber || candidate.toNumberE164 || null;
 
       const decision = evaluateMissedCallTextEligibility({
-        missedCallAutoReplyOn: Boolean(organization?.missedCallAutoReplyOn),
+        missedCallAutoReplyOn: Boolean(
+          organization?.missedCallAutoReplyOn &&
+            (organization?.messagingSettings?.autoReplyEnabled ?? organization?.autoReplyEnabled ?? true),
+        ),
         leadStatus: lead?.status || null,
         fromNumberE164: candidate.fromNumberE164,
         senderNumberE164: senderNumber,
@@ -247,21 +306,75 @@ const processMissedCallRecoveryImpl = createMissedCallRecoveryRunner({
     }
 
     if (decision.action === "send") {
-      await startConversationalSmsFromMissedCall({
+      const result = await startConversationalSmsFromMissedCall({
         orgId: candidate.orgId,
         leadId: candidate.leadId,
         toNumberE164: candidate.fromNumberE164 || "",
       });
-      return decision;
+
+      if (result.outcome === "sent") {
+        return decision;
+      }
+
+      if (result.outcome === "skipped") {
+        const skippedDecision = mapDispatchSkipDecision({
+          reason: result.reason,
+          withinBusinessHours: decision.withinBusinessHours,
+        });
+        if (reserved.eventId) {
+          await finalizeReservedDecisionEvent({
+            eventId: reserved.eventId,
+            candidate,
+            decision: skippedDecision,
+            senderNumberE164: candidate.toNumberE164 || null,
+            dispatchReason: result.reason,
+          });
+        }
+        return skippedDecision;
+      }
+
+      await releaseReservedDecisionEvent(reserved.eventId);
+      return {
+        action: "skip",
+        reason: "already_processed",
+        withinBusinessHours: decision.withinBusinessHours,
+      };
     }
 
-    await queueConversationalIntroForQuietHours({
+    const result = await queueConversationalIntroForQuietHours({
       orgId: candidate.orgId,
       leadId: candidate.leadId,
       toNumberE164: candidate.fromNumberE164 || "",
       sendAfterAt: decision.sendAfterAt,
     });
-    return decision;
+
+    if (result.outcome === "queued") {
+      return decision;
+    }
+
+    if (result.outcome === "skipped") {
+      const skippedDecision = mapDispatchSkipDecision({
+        reason: result.reason,
+        withinBusinessHours: decision.withinBusinessHours,
+      });
+      if (reserved.eventId) {
+        await finalizeReservedDecisionEvent({
+          eventId: reserved.eventId,
+          candidate,
+          decision: skippedDecision,
+          senderNumberE164: candidate.toNumberE164 || null,
+          dispatchReason: result.reason,
+        });
+      }
+      return skippedDecision;
+    }
+
+    await releaseReservedDecisionEvent(reserved.eventId);
+    return {
+      action: "skip",
+      reason: "already_processed",
+      withinBusinessHours: decision.withinBusinessHours,
+    };
   },
 });
 

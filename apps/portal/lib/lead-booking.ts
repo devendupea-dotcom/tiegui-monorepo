@@ -1,6 +1,6 @@
 import { Prisma, type CalendarEventStatus, type EventType } from "@prisma/client";
+import { ensureOperationalJobFromLeadBooking, isOperationalBookingEventType } from "@/lib/operational-jobs";
 
-const LEAD_BOOKING_EVENT_TYPES: EventType[] = ["JOB", "ESTIMATE"];
 const ACTIVE_LEAD_BOOKING_STATUSES: CalendarEventStatus[] = [
   "SCHEDULED",
   "CONFIRMED",
@@ -10,7 +10,7 @@ const ACTIVE_LEAD_BOOKING_STATUSES: CalendarEventStatus[] = [
 ];
 
 export function isLeadBookingEvent(type: EventType): boolean {
-  return LEAD_BOOKING_EVENT_TYPES.includes(type);
+  return isOperationalBookingEventType(type);
 }
 
 export function isActiveLeadBookingEvent(input: {
@@ -23,16 +23,38 @@ export function isActiveLeadBookingEvent(input: {
 export async function syncLeadBookingState(
   tx: Prisma.TransactionClient,
   input: {
+    orgId: string;
     leadId: string | null | undefined;
     eventId: string;
     type: EventType;
     status: CalendarEventStatus;
     startAt: Date;
     endAt: Date | null;
+    title?: string | null;
+    customerName?: string | null;
+    addressLine?: string | null;
+    createdByUserId?: string | null;
   },
-) {
-  if (!input.leadId || !isActiveLeadBookingEvent({ type: input.type, status: input.status })) {
-    return;
+): Promise<string | null> {
+  // Event is the canonical booking row. LeadConversationState keeps only a
+  // lightweight snapshot so the automation/conversation layer can stay aligned.
+  if (!input.leadId || !isLeadBookingEvent(input.type)) {
+    await tx.event.updateMany({
+      where: {
+        id: input.eventId,
+        orgId: input.orgId,
+      },
+      data: {
+        jobId: null,
+      },
+    });
+    return null;
+  }
+
+  const bookingJob = await ensureOperationalJobFromLeadBooking(tx, input);
+
+  if (!isActiveLeadBookingEvent({ type: input.type, status: input.status })) {
+    return bookingJob.jobId;
   }
 
   await Promise.all([
@@ -58,4 +80,6 @@ export async function syncLeadBookingState(
       },
     }),
   ]);
+
+  return bookingJob.jobId;
 }

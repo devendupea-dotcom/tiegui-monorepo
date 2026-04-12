@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
 import { parseUtcDateTime } from "@/lib/calendar/dates";
+import { syncLeadBookingState } from "@/lib/lead-booking";
 import { capturePortalError, trackPortalEvent } from "@/lib/telemetry";
 import {
   AppApiError,
@@ -423,6 +424,7 @@ export async function POST(req: Request) {
               },
               select: {
                 id: true,
+                jobId: true,
                 type: true,
                 status: true,
                 startAt: true,
@@ -431,6 +433,24 @@ export async function POST(req: Request) {
               },
             })
           : null;
+
+      if (event) {
+        const linkedJobId = await syncLeadBookingState(tx, {
+          orgId,
+          leadId: lead.id,
+          eventId: event.id,
+          type: event.type,
+          status: event.status,
+          startAt: event.startAt,
+          endAt: event.endAt,
+          title: `${name} ${schedule?.type === "ESTIMATE" ? "Estimate" : "Job"}`,
+          customerName: customer.name,
+          addressLine: address,
+          createdByUserId: actor.id,
+        });
+
+        event.jobId = linkedJobId ?? event.jobId;
+      }
 
       return {
         customer,

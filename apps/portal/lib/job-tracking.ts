@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { formatDispatchStatusLabel, type DispatchStatusValue } from "./dispatch";
 import { hashToken } from "./tokens";
 
+export { formatOperationalJobStatusLabel } from "./job-tracking-format";
+
 export const jobTrackingProgressKeys = ["scheduled", "on_the_way", "on_site", "completed"] as const;
 
 export type JobTrackingProgressKey = (typeof jobTrackingProgressKeys)[number];
@@ -85,4 +87,24 @@ export function buildJobTrackingProgressSteps(status: DispatchStatusValue): JobT
 
 export function formatJobTrackingStatusLabel(status: DispatchStatusValue): string {
   return formatDispatchStatusLabel(status);
+}
+
+export function describeJobTrackingStatusChange(input: {
+  statusKind?: string | null;
+  nextStatusLabel: string;
+}): {
+  title: string;
+  detail: string;
+} {
+  if (input.statusKind === "job") {
+    return {
+      title: "Job status updated",
+      detail: `Internal status: ${input.nextStatusLabel}.`,
+    };
+  }
+
+  return {
+    title: "Status updated",
+    detail: `Current status: ${input.nextStatusLabel}.`,
+  };
 }

@@ -172,6 +172,12 @@ export default function PurchaseOrdersManager({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const currentOperationalJobId = selectedPurchaseOrderId ? form.jobId || "" : jobFilter || form.jobId || "";
+  const selectedOperationalJobHref = currentOperationalJobId
+    ? internalUser
+      ? `/app/jobs/records/${currentOperationalJobId}?orgId=${orgId}`
+      : `/app/jobs/records/${currentOperationalJobId}`
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -538,10 +544,20 @@ export default function PurchaseOrdersManager({
               Create supplier orders for {orgName}, tie them to jobs, and send from Outlook when connected. Without
               Outlook, the portal falls back to a vendor email draft.
             </p>
+            <p className="muted">Use the Operational Job page for dispatch, schedule, tracking, and customer communication.</p>
           </div>
           <div className="portal-empty-actions">
-            <button className="btn secondary" type="button" onClick={beginCreate}>
-              New PO
+            {selectedOperationalJobHref ? (
+              <button className="btn primary" type="button" onClick={() => router.push(selectedOperationalJobHref)}>
+                Open Operational Job
+              </button>
+            ) : null}
+            <button
+              className={selectedOperationalJobHref ? "btn secondary" : "btn primary"}
+              type="button"
+              onClick={beginCreate}
+            >
+              New Purchase Order
             </button>
           </div>
         </div>
@@ -571,8 +587,8 @@ export default function PurchaseOrdersManager({
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>PO Folder</h3>
-              <p className="muted">Search by PO number, vendor, or title. Filter by job or status.</p>
+              <h3>Purchase Order Lookup</h3>
+              <p className="muted">Find job-linked supplier orders when you need procurement detail.</p>
             </div>
           </div>
 

@@ -5,21 +5,26 @@ import type { BillingInvoiceStatus, InvoicePaymentMethod, InvoiceTerms } from "@
 import { prisma } from "@/lib/prisma";
 import {
   billingInvoiceStatusOptions,
+  buildInvoiceWorkerLeadAccessWhere,
   computeLineTotal,
   formatCurrency,
   formatInvoiceNumber,
+  getInvoiceActionContext,
+  getInvoiceActionRevalidationPaths,
+  getInvoiceReadJobContext,
   invoicePaymentMethodOptions,
   invoiceTermsOptions,
   parseMoneyInput,
   parseTaxRatePercent,
   recomputeInvoiceTotals,
+  shouldRenderInvoicePaidIndicator,
   taxRateToPercent,
   toMoneyDecimal,
 } from "@/lib/invoices";
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
 import { formatDateTime, formatLabel } from "@/lib/hq";
-import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session";
-import { getParam, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import { requireAppPageViewer } from "../../_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +118,15 @@ function formatOrgContact(input: {
   return parts.length > 0 ? parts.join(" • ") : null;
 }
 
+function revalidateInvoiceMutationPaths(input: {
+  invoiceId: string;
+  leadId?: string | null;
+}) {
+  for (const path of getInvoiceActionRevalidationPaths(input)) {
+    revalidatePath(path);
+  }
+}
+
 async function requireInvoiceActionAccess(formData: FormData) {
   const invoiceId = String(formData.get("invoiceId") || "").trim();
   const orgId = String(formData.get("orgId") || "").trim();
@@ -123,22 +137,9 @@ async function requireInvoiceActionAccess(formData: FormData) {
     redirect(fallbackPath);
   }
 
-  const sessionUser = await requireSessionUser(`/app/invoices/${invoiceId}`);
-  const internalUser = isInternalRole(sessionUser.role);
+  const actor = await requireAppOrgActor(`/app/invoices/${invoiceId}`, orgId);
 
-  if (!canAccessOrg(sessionUser, orgId)) {
-    redirect("/app");
-  }
-
-  const currentUser =
-    sessionUser.id && !internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
-
-  if (!internalUser && currentUser?.calendarAccessRole === "READ_ONLY") {
+  if (!actor.internalUser && actor.calendarAccessRole === "READ_ONLY") {
     redirect(appendQuery(returnPathRaw || fallbackPath, "error", "readonly"));
   }
 
@@ -150,12 +151,19 @@ async function requireInvoiceActionAccess(formData: FormData) {
     select: {
       id: true,
       orgId: true,
-      jobId: true,
+      legacyLeadId: true,
+      sourceJobId: true,
       status: true,
       dueDate: true,
       total: true,
       amountPaid: true,
       balanceDue: true,
+      sourceJob: {
+        select: {
+          id: true,
+          leadId: true,
+        },
+      },
     },
   });
 
@@ -163,22 +171,25 @@ async function requireInvoiceActionAccess(formData: FormData) {
     redirect(fallbackPath);
   }
 
-  if (!internalUser && currentUser?.calendarAccessRole === "WORKER") {
-    if (!invoice.jobId) {
+  const invoiceActionContext = getInvoiceActionContext({
+    legacyLeadId: invoice.legacyLeadId,
+    sourceJobId: invoice.sourceJobId,
+    sourceJob: invoice.sourceJob,
+  });
+
+  if (!actor.internalUser && actor.calendarAccessRole === "WORKER") {
+    if (!invoiceActionContext.leadId) {
       redirect(appendQuery(returnPathRaw || fallbackPath, "error", "worker-permission"));
     }
 
     const workerAllowed = await prisma.lead.findFirst({
       where: {
-        id: invoice.jobId,
+        id: invoiceActionContext.leadId,
         orgId,
-        OR: [
-          { assignedToUserId: currentUser.id },
-          { createdByUserId: currentUser.id },
-          { events: { some: { assignedToUserId: currentUser.id } } },
-          { events: { some: { workerAssignments: { some: { workerUserId: currentUser.id } } } } },
-          { invoices: { some: { id: invoice.id } } },
-        ],
+        ...buildInvoiceWorkerLeadAccessWhere({
+          actorId: actor.id,
+          invoiceId: invoice.id,
+        }),
       },
       select: { id: true },
     });
@@ -191,10 +202,11 @@ async function requireInvoiceActionAccess(formData: FormData) {
   const returnPath = returnPathRaw.startsWith("/app/invoices/") ? returnPathRaw : fallbackPath;
   return {
     invoice,
+    invoiceActionContext,
     orgId,
     returnPath,
-    actorId: sessionUser.id ?? null,
-    internalUser,
+    actorId: actor.id ?? null,
+    internalUser: actor.internalUser,
   };
 }
 
@@ -254,11 +266,10 @@ async function saveInvoiceMetaAction(formData: FormData) {
 
   await sendMetaCapiPurchaseForInvoice({ invoiceId: scoped.invoice.id });
 
-  revalidatePath(`/app/invoices/${scoped.invoice.id}`);
-  revalidatePath("/app/invoices");
-  if (scoped.invoice.jobId) {
-    revalidatePath(`/app/jobs/${scoped.invoice.jobId}`);
-  }
+  revalidateInvoiceMutationPaths({
+    invoiceId: scoped.invoice.id,
+    leadId: scoped.invoiceActionContext.leadId,
+  });
 
   redirect(appendQuery(scoped.returnPath, "saved", "meta"));
 }
@@ -304,11 +315,10 @@ async function addLineItemAction(formData: FormData) {
 
   await sendMetaCapiPurchaseForInvoice({ invoiceId: scoped.invoice.id });
 
-  revalidatePath(`/app/invoices/${scoped.invoice.id}`);
-  revalidatePath("/app/invoices");
-  if (scoped.invoice.jobId) {
-    revalidatePath(`/app/jobs/${scoped.invoice.jobId}`);
-  }
+  revalidateInvoiceMutationPaths({
+    invoiceId: scoped.invoice.id,
+    leadId: scoped.invoiceActionContext.leadId,
+  });
 
   redirect(appendQuery(scoped.returnPath, "saved", "line"));
 }
@@ -358,11 +368,10 @@ async function updateLineItemAction(formData: FormData) {
     await recomputeInvoiceTotals(tx, scoped.invoice.id);
   });
 
-  revalidatePath(`/app/invoices/${scoped.invoice.id}`);
-  revalidatePath("/app/invoices");
-  if (scoped.invoice.jobId) {
-    revalidatePath(`/app/jobs/${scoped.invoice.jobId}`);
-  }
+  revalidateInvoiceMutationPaths({
+    invoiceId: scoped.invoice.id,
+    leadId: scoped.invoiceActionContext.leadId,
+  });
 
   redirect(appendQuery(scoped.returnPath, "saved", "line-update"));
 }
@@ -387,11 +396,10 @@ async function deleteLineItemAction(formData: FormData) {
     await recomputeInvoiceTotals(tx, scoped.invoice.id);
   });
 
-  revalidatePath(`/app/invoices/${scoped.invoice.id}`);
-  revalidatePath("/app/invoices");
-  if (scoped.invoice.jobId) {
-    revalidatePath(`/app/jobs/${scoped.invoice.jobId}`);
-  }
+  revalidateInvoiceMutationPaths({
+    invoiceId: scoped.invoice.id,
+    leadId: scoped.invoiceActionContext.leadId,
+  });
 
   redirect(appendQuery(scoped.returnPath, "saved", "line-delete"));
 }
@@ -437,11 +445,10 @@ async function recordPaymentAction(formData: FormData) {
     await recomputeInvoiceTotals(tx, scoped.invoice.id);
   });
 
-  revalidatePath(`/app/invoices/${scoped.invoice.id}`);
-  revalidatePath("/app/invoices");
-  if (scoped.invoice.jobId) {
-    revalidatePath(`/app/jobs/${scoped.invoice.jobId}`);
-  }
+  revalidateInvoiceMutationPaths({
+    invoiceId: scoped.invoice.id,
+    leadId: scoped.invoiceActionContext.leadId,
+  });
 
   redirect(appendQuery(scoped.returnPath, "saved", "payment"));
 }
@@ -478,11 +485,10 @@ async function markInvoicePaidAction(formData: FormData) {
     await recomputeInvoiceTotals(tx, scoped.invoice.id);
   });
 
-  revalidatePath(`/app/invoices/${scoped.invoice.id}`);
-  revalidatePath("/app/invoices");
-  if (scoped.invoice.jobId) {
-    revalidatePath(`/app/jobs/${scoped.invoice.jobId}`);
-  }
+  revalidateInvoiceMutationPaths({
+    invoiceId: scoped.invoice.id,
+    leadId: scoped.invoiceActionContext.leadId,
+  });
 
   redirect(appendQuery(scoped.returnPath, "saved", "paid"));
 }
@@ -496,14 +502,10 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
     nextPath: `/app/invoices/${params.invoiceId}`,
     requestedOrgId,
   });
-  const sessionUser = await requireSessionUser(`/app/invoices/${params.invoiceId}`);
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
+  const viewer = await requireAppPageViewer({
+    nextPath: `/app/invoices/${params.invoiceId}`,
+    orgId: scope.orgId,
+  });
 
   const invoice = await prisma.invoice.findFirst({
     where: {
@@ -538,7 +540,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
           addressLine: true,
         },
       },
-      job: {
+      legacyLead: {
         select: {
           id: true,
           contactName: true,
@@ -546,6 +548,15 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
           phoneE164: true,
           city: true,
           status: true,
+        },
+      },
+      sourceJob: {
+        select: {
+          id: true,
+          leadId: true,
+          customerName: true,
+          serviceType: true,
+          projectType: true,
         },
       },
       lineItems: {
@@ -572,21 +583,24 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
     notFound();
   }
 
-  if (!scope.internalUser && currentUser?.calendarAccessRole === "WORKER") {
-    if (!invoice.jobId) {
+  const invoiceActionContext = getInvoiceActionContext({
+    legacyLeadId: invoice.legacyLeadId,
+    sourceJobId: invoice.sourceJobId,
+    sourceJob: invoice.sourceJob,
+  });
+
+  if (!viewer.internalUser && viewer.calendarAccessRole === "WORKER") {
+    if (!invoiceActionContext.leadId) {
       notFound();
     }
     const workerAllowed = await prisma.lead.findFirst({
       where: {
-        id: invoice.jobId,
+        id: invoiceActionContext.leadId,
         orgId: scope.orgId,
-        OR: [
-          { assignedToUserId: currentUser.id },
-          { createdByUserId: currentUser.id },
-          { events: { some: { assignedToUserId: currentUser.id } } },
-          { events: { some: { workerAssignments: { some: { workerUserId: currentUser.id } } } } },
-          { invoices: { some: { id: invoice.id } } },
-        ],
+        ...buildInvoiceWorkerLeadAccessWhere({
+          actorId: viewer.id,
+          invoiceId: invoice.id,
+        }),
       },
       select: { id: true },
     });
@@ -597,7 +611,18 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
 
   const invoicePath = withOrgQuery(`/app/invoices/${invoice.id}`, scope.orgId, scope.internalUser);
   const invoicesPath = withOrgQuery("/app/invoices", scope.orgId, scope.internalUser);
-  const jobPath = invoice.jobId ? withOrgQuery(`/app/jobs/${invoice.jobId}?tab=invoice`, scope.orgId, scope.internalUser) : null;
+  const jobContext = getInvoiceReadJobContext({
+    legacyLeadId: invoice.legacyLeadId,
+    sourceJobId: invoice.sourceJobId,
+    legacyLead: invoice.legacyLead,
+    sourceJob: invoice.sourceJob,
+  });
+  const operationalJobPath = jobContext.operationalJobId
+    ? withOrgQuery(`/app/jobs/records/${jobContext.operationalJobId}`, scope.orgId, scope.internalUser)
+    : null;
+  const crmJobPath = jobContext.crmLeadId
+    ? withOrgQuery(`/app/jobs/${jobContext.crmLeadId}?tab=invoice`, scope.orgId, scope.internalUser)
+    : null;
   const pdfPath = `/api/invoices/${invoice.id}/pdf`;
   const paymentDefault = Number(toMoneyDecimal(invoice.balanceDue).toString()).toFixed(2);
   const orgDisplayName = invoice.org.legalName?.trim() || invoice.org.name;
@@ -614,10 +639,9 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
     website: invoice.org.website,
   });
   const hasTax = invoice.taxAmount.gt(0) || invoice.taxRate.gt(0);
-  const isPaidInvoice = invoice.status === "PAID" || invoice.balanceDue.lte(0);
-  const jobLabel = invoice.job
-    ? invoice.job.contactName || invoice.job.businessName || invoice.job.phoneE164
-    : null;
+  const isPaidInvoice = shouldRenderInvoicePaidIndicator({ status: invoice.status });
+  const balanceBadgeClass = isPaidInvoice ? "status-paid" : invoice.balanceDue.gt(0) ? "status-overdue" : "";
+  const jobLabel = jobContext.primaryLabel;
 
   return (
     <div className="invoice-detail-shell">
@@ -634,15 +658,25 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
             <div className="quick-meta">
               <span className={`badge status-${invoice.status.toLowerCase()}`}>{formatLabel(invoice.status)}</span>
               <span className="badge">Total {formatCurrency(invoice.total)}</span>
-              <span className={`badge ${invoice.balanceDue.gt(0) ? "status-overdue" : "status-paid"}`}>
+              <span className={`badge${balanceBadgeClass ? ` ${balanceBadgeClass}` : ""}`}>
                 Balance {formatCurrency(invoice.balanceDue)}
               </span>
             </div>
           </div>
           <div className="quick-links">
-            {jobPath ? (
-              <Link className="btn secondary" href={jobPath}>
-                Open Job Folder
+            {operationalJobPath ? (
+              <Link className="btn secondary" href={operationalJobPath}>
+                Open Operational Job
+              </Link>
+            ) : null}
+            {!operationalJobPath && crmJobPath ? (
+              <Link className="btn secondary" href={crmJobPath}>
+                Open CRM Folder
+              </Link>
+            ) : null}
+            {operationalJobPath && crmJobPath ? (
+              <Link className="btn secondary" href={crmJobPath}>
+                Open CRM Folder
               </Link>
             ) : null}
             <a className="btn secondary" href={pdfPath}>
@@ -710,7 +744,9 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
               <h4>Bill To</h4>
               <p className="invoice-sheet-strong">{invoice.customer.name}</p>
               {invoice.customer.addressLine ? <p>{invoice.customer.addressLine}</p> : null}
-              {jobLabel ? <p>Job: {jobLabel}</p> : null}
+              {jobContext.operationalLabel ? <p>Operational Job: {jobContext.operationalLabel}</p> : null}
+              {!jobContext.operationalLabel && jobLabel ? <p>Job: {jobLabel}</p> : null}
+              {jobContext.operationalLabel && jobContext.crmLabel ? <p>CRM Folder: {jobContext.crmLabel}</p> : null}
               {invoice.customer.phoneE164 ? <p>Phone: {invoice.customer.phoneE164}</p> : null}
               {invoice.customer.email ? <p>Email: {invoice.customer.email}</p> : null}
             </section>

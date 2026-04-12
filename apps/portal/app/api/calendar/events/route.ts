@@ -16,11 +16,13 @@ import {
   assertOrgWriteAccess,
   assertWorkerEditAllowed,
   requireCalendarActor,
+  resolveCalendarOrgId,
 } from "@/lib/calendar/permissions";
 import { clampWeekStartsOn, formatDateOnly, getVisibleRange, localDateFromUtc, parseUtcDateTime } from "@/lib/calendar/dates";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
 import { syncLeadBookingState } from "@/lib/lead-booking";
 import { capturePortalError, trackPortalEvent } from "@/lib/telemetry";
+import { resolveWorkspaceUserIds } from "@/lib/workspace-users";
 
 export const dynamic = "force-dynamic";
 
@@ -86,14 +88,11 @@ async function resolveEditableWorkerIds(input: {
   orgId: string;
   requestedWorkerIds: string[];
 }) {
-  const users = await prisma.user.findMany({
-    where: {
-      id: { in: input.requestedWorkerIds },
-      OR: [{ orgId: input.orgId }, { role: "INTERNAL" }],
-    },
-    select: { id: true },
+  const ids = await resolveWorkspaceUserIds({
+    organizationId: input.orgId,
+    requestedUserIds: input.requestedWorkerIds,
+    includeInternal: true,
   });
-  const ids = users.map((item) => item.id);
   if (ids.length !== input.requestedWorkerIds.length) {
     throw new CalendarApiError("One or more workers are invalid for this organization.", 400);
   }
@@ -155,11 +154,11 @@ export async function GET(req: Request) {
   try {
     const actor = await requireCalendarActor();
     const url = new URL(req.url);
-    const orgId = url.searchParams.get("orgId")?.trim() || actor.orgId;
-    if (!orgId) {
-      throw new CalendarApiError("orgId is required for internal users.", 400);
-    }
-
+    const orgId = await resolveCalendarOrgId({
+      actor,
+      req,
+      requestedOrgId: url.searchParams.get("orgId"),
+    });
     assertOrgReadAccess(actor, orgId);
 
     const settings = await getOrgCalendarSettings(orgId);
@@ -240,11 +239,11 @@ export async function POST(req: Request) {
       throw new CalendarApiError("Invalid JSON payload.", 400);
     }
 
-    const orgId = (body.orgId || "").trim() || actor.orgId;
-    if (!orgId) {
-      throw new CalendarApiError("orgId is required for internal users.", 400);
-    }
-
+    const orgId = await resolveCalendarOrgId({
+      actor,
+      body,
+      requestedOrgId: body.orgId,
+    });
     assertOrgWriteAccess(actor, orgId);
 
     const title = (body.title || "").trim();
@@ -327,16 +326,24 @@ export async function POST(req: Request) {
         select: calendarEventSelect,
       });
 
-      await syncLeadBookingState(tx, {
+      const linkedJobId = await syncLeadBookingState(tx, {
+        orgId,
         leadId: nextEvent.leadId,
         eventId: nextEvent.id,
         type: nextEvent.type,
         status: nextEvent.status,
         startAt: nextEvent.startAt,
         endAt: nextEvent.endAt,
+        title: nextEvent.title,
+        customerName: nextEvent.customerName,
+        addressLine: nextEvent.addressLine,
+        createdByUserId: nextEvent.createdByUserId,
       });
 
-      return nextEvent;
+      return {
+        ...nextEvent,
+        jobId: linkedJobId ?? nextEvent.jobId,
+      };
     });
 
     if (created.provider === "LOCAL" && created.assignedToUserId) {

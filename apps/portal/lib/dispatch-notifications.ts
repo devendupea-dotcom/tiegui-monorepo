@@ -1,104 +1,261 @@
-import type { JobEventType, MessageStatus, Prisma } from "@prisma/client";
-import {
-  dispatchStatusFromDb,
-  formatDispatchCustomerSms,
-  formatDispatchStatusLabel,
-  serializeDispatchNotificationSettings,
-  shouldSendDispatchStatusNotification,
-  type DispatchNotificationSettings,
-} from "@/lib/dispatch";
-import { upsertCommunicationEvent, buildCommunicationIdempotencyKey } from "@/lib/communication-events";
+import type { MessageStatus, Prisma } from "@prisma/client";
+import { dispatchStatusFromDb, getDispatchSmsDeliveryState } from "@/lib/dispatch";
+import { upsertCommunicationEvent } from "@/lib/communication-events";
 import { AppApiError } from "@/lib/app-api-permissions";
 import { normalizeE164 } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
-import { isWithinSmsSendWindow } from "@/lib/sms-quiet-hours";
+import {
+  buildDispatchCustomerNotificationReadiness,
+  buildDispatchNotificationAttemptIdempotencyKey,
+  buildDispatchNotificationIdempotencyKey,
+  createDispatchNotificationAttemptSummary,
+  selectAutomaticDispatchCustomerNotificationCandidate,
+  type DispatchCustomerCommunicationState,
+  type DispatchCustomerNotificationCandidate,
+  type DispatchCustomerNotificationJobRecord,
+  type DispatchNotificationAttemptOutcome,
+  type DispatchPersistedJobEvent,
+  type PendingDispatchScheduleCustomerUpdate,
+} from "@/lib/dispatch-notification-core";
+import {
+  getDispatchCustomerCommunicationState,
+  getDispatchCustomerNotificationJob,
+  getDispatchScheduleNotificationCandidate,
+  getPendingDispatchScheduleCustomerUpdate,
+} from "@/lib/dispatch-notification-state";
+import {
+  getDispatchNotificationSettings,
+  updateDispatchNotificationSettings,
+  type NotificationSettingsPayload,
+} from "@/lib/dispatch-notification-settings";
 
-export type DispatchPersistedJobEvent = {
-  id: string;
-  eventType: JobEventType;
-  fromValue: string | null;
-  toValue: string | null;
-  createdAt: Date;
-};
+export type { DispatchPersistedJobEvent, PendingDispatchScheduleCustomerUpdate, DispatchCustomerCommunicationState };
+export { getDispatchCustomerCommunicationState, getPendingDispatchScheduleCustomerUpdate };
+export { getDispatchNotificationSettings, updateDispatchNotificationSettings };
+export type { NotificationSettingsPayload };
 
-type NotificationSettingsPayload = {
-  smsEnabled?: unknown;
-  notifyScheduled?: unknown;
-  notifyOnTheWay?: unknown;
-  notifyRescheduled?: unknown;
-  notifyCompleted?: unknown;
-};
-
-function parseBoolean(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true") return true;
-    if (normalized === "false") return false;
-  }
-  return fallback;
-}
-
-export async function getDispatchNotificationSettings(orgId: string): Promise<DispatchNotificationSettings> {
-  const organization = await prisma.organization.findUnique({
-    where: { id: orgId },
-    select: {
-      messagingSettings: {
-        select: {
-          dispatchSmsEnabled: true,
-          dispatchSmsScheduled: true,
-          dispatchSmsOnTheWay: true,
-          dispatchSmsRescheduled: true,
-          dispatchSmsCompleted: true,
-        },
-      },
-      twilioConfig: {
-        select: {
-          phoneNumber: true,
-          status: true,
-        },
-      },
-    },
-  });
-
-  if (!organization) {
-    throw new AppApiError("Workspace not found.", 404);
-  }
-
-  const canSend = Boolean(organization.twilioConfig?.phoneNumber && organization.twilioConfig?.status !== "PAUSED");
-  return serializeDispatchNotificationSettings(organization.messagingSettings, canSend);
-}
-
-export async function updateDispatchNotificationSettings(input: {
+async function sendDispatchCustomerNotification(input: {
   orgId: string;
-  payload: NotificationSettingsPayload | null;
-}): Promise<DispatchNotificationSettings> {
-  const current = await getDispatchNotificationSettings(input.orgId);
-  const payload = input.payload || {};
+  jobId: string;
+  actorUserId: string | null;
+  candidate: DispatchCustomerNotificationCandidate;
+  explicit: boolean;
+  recovery?: boolean;
+}): Promise<{ sent: boolean; alreadySent: boolean }> {
+  const [settings, job] = await Promise.all([
+    getDispatchNotificationSettings(input.orgId),
+    getDispatchCustomerNotificationJob({
+      orgId: input.orgId,
+      jobId: input.jobId,
+    }),
+  ]);
 
-  await prisma.organizationMessagingSettings.upsert({
+  const idempotencyKey = buildDispatchNotificationIdempotencyKey({
+    kind: input.candidate.kind,
+    orgId: input.orgId,
+    eventId: input.candidate.event.id,
+    status: input.candidate.notificationStatus,
+  });
+  const existingDispatchEvent = await prisma.communicationEvent.findUnique({
     where: {
-      orgId: input.orgId,
+      orgId_idempotencyKey: {
+        orgId: input.orgId,
+        idempotencyKey,
+      },
     },
-    update: {
-      dispatchSmsEnabled: parseBoolean(payload.smsEnabled, current.smsEnabled),
-      dispatchSmsScheduled: parseBoolean(payload.notifyScheduled, current.notifyScheduled),
-      dispatchSmsOnTheWay: parseBoolean(payload.notifyOnTheWay, current.notifyOnTheWay),
-      dispatchSmsRescheduled: parseBoolean(payload.notifyRescheduled, current.notifyRescheduled),
-      dispatchSmsCompleted: parseBoolean(payload.notifyCompleted, current.notifyCompleted),
-    },
-    create: {
-      orgId: input.orgId,
-      dispatchSmsEnabled: parseBoolean(payload.smsEnabled, current.smsEnabled),
-      dispatchSmsScheduled: parseBoolean(payload.notifyScheduled, current.notifyScheduled),
-      dispatchSmsOnTheWay: parseBoolean(payload.notifyOnTheWay, current.notifyOnTheWay),
-      dispatchSmsRescheduled: parseBoolean(payload.notifyRescheduled, current.notifyRescheduled),
-      dispatchSmsCompleted: parseBoolean(payload.notifyCompleted, current.notifyCompleted),
+    select: {
+      id: true,
     },
   });
 
-  return getDispatchNotificationSettings(input.orgId);
+  if (existingDispatchEvent) {
+    return {
+      sent: false,
+      alreadySent: true,
+    };
+  }
+
+  if (!job) {
+    throw new AppApiError("Dispatch job not found.", 404);
+  }
+
+  const readiness = buildDispatchCustomerNotificationReadiness({
+    settings,
+    job,
+    candidate: input.candidate,
+  });
+
+  if (!readiness.allowed || !readiness.previewBody || !readiness.toNumberE164) {
+    throw new AppApiError(readiness.blockedReason || "Failed to send customer update.", 409);
+  }
+
+  const body = readiness.previewBody;
+  const toNumberE164 = readiness.toNumberE164;
+  const occurredAt = input.explicit ? new Date() : input.candidate.event.createdAt;
+
+  const dispatched = await sendOutboundSms({
+    orgId: input.orgId,
+    fromNumberE164: job.org.smsFromNumberE164 || null,
+    toNumberE164,
+    body,
+  });
+
+  if (dispatched.suppressed) {
+    await persistDispatchCustomerNotificationAttempt({
+      orgId: input.orgId,
+      actorUserId: input.actorUserId,
+      job,
+      candidate: input.candidate,
+      recovery: input.recovery === true,
+      occurredAt,
+      body,
+      outcome: "suppressed",
+      providerStatus: "SUPPRESSED",
+      messageStatus: "FAILED",
+      providerMessageSid: dispatched.providerMessageSid,
+      failureReason: dispatched.notice || "Customer SMS was suppressed.",
+    });
+    throw new AppApiError(dispatched.notice || "Customer SMS was suppressed.", 409);
+  }
+
+  if (dispatched.status === "FAILED") {
+    await persistDispatchCustomerNotificationAttempt({
+      orgId: input.orgId,
+      actorUserId: input.actorUserId,
+      job,
+      candidate: input.candidate,
+      recovery: input.recovery === true,
+      occurredAt,
+      body,
+      outcome: "failed",
+      providerStatus: "FAILED",
+      messageStatus: "FAILED",
+      providerMessageSid: dispatched.providerMessageSid,
+      failureReason: dispatched.notice || "Failed to send customer update.",
+    });
+    throw new AppApiError(dispatched.notice || "Failed to send customer update.", 409);
+  }
+
+  await persistDispatchCustomerNotificationAttempt({
+    orgId: input.orgId,
+    actorUserId: input.actorUserId,
+    job,
+    candidate: input.candidate,
+    recovery: input.recovery === true,
+    occurredAt,
+    body,
+    outcome: "sent",
+    providerStatus: dispatched.status,
+    messageStatus: dispatched.status as MessageStatus,
+    providerMessageSid: dispatched.providerMessageSid,
+    resolvedFromNumberE164: dispatched.resolvedFromNumberE164 || job.org.smsFromNumberE164 || "",
+  });
+
+  return {
+    sent: true,
+    alreadySent: false,
+  };
+}
+
+async function persistDispatchCustomerNotificationAttempt(input: {
+  orgId: string;
+  actorUserId: string | null;
+  job: DispatchCustomerNotificationJobRecord;
+  candidate: DispatchCustomerNotificationCandidate;
+  recovery: boolean;
+  occurredAt: Date;
+  body: string;
+  outcome: DispatchNotificationAttemptOutcome;
+  providerStatus: string | null;
+  messageStatus: MessageStatus;
+  providerMessageSid: string | null;
+  failureReason?: string | null;
+  resolvedFromNumberE164?: string | null;
+}) {
+  const idempotencyKey = buildDispatchNotificationAttemptIdempotencyKey({
+    kind: input.candidate.kind,
+    orgId: input.orgId,
+    eventId: input.candidate.event.id,
+    status: input.candidate.notificationStatus,
+    outcome: input.outcome,
+  });
+
+  await prisma.$transaction(async (tx) => {
+    let messageId: string | null = null;
+
+    if (input.job.leadId) {
+      const messageToNumberE164 = normalizeE164(input.job.phone || null) || input.job.phone || "";
+      const message = await tx.message.create({
+        data: {
+          orgId: input.orgId,
+          leadId: input.job.leadId,
+          direction: "OUTBOUND",
+          type: "SYSTEM_NUDGE",
+          fromNumberE164: input.resolvedFromNumberE164 || input.job.org.smsFromNumberE164 || "",
+          toNumberE164: messageToNumberE164,
+          body: input.body,
+          provider: "TWILIO",
+          providerMessageSid: input.providerMessageSid,
+          status: input.messageStatus,
+        },
+        select: {
+          id: true,
+        },
+      });
+      messageId = message.id;
+
+      await tx.lead.update({
+        where: { id: input.job.leadId },
+        data: {
+          lastContactedAt: input.occurredAt,
+          lastOutboundAt: input.occurredAt,
+        },
+      });
+
+      await tx.leadConversationState.updateMany({
+        where: {
+          leadId: input.job.leadId,
+        },
+        data: {
+          lastOutboundAt: input.occurredAt,
+        },
+      });
+    }
+
+    await upsertCommunicationEvent(tx, {
+      orgId: input.orgId,
+      leadId: input.job.leadId,
+      contactId: input.job.customerId || input.job.lead?.customerId || null,
+      conversationId: input.job.lead?.conversationState?.id || null,
+      messageId,
+      actorUserId: input.actorUserId,
+      type: "OUTBOUND_SMS_SENT",
+      channel: "SMS",
+      occurredAt: input.occurredAt,
+      summary: createDispatchNotificationAttemptSummary({
+        candidate: input.candidate,
+        outcome: input.outcome,
+      }),
+      metadataJson: {
+        body: input.body,
+        dispatchJobId: input.job.id,
+        dispatchStatus: dispatchStatusFromDb(input.job.dispatchStatus),
+        dispatchNotificationKind: input.candidate.kind,
+        dispatchNotificationStatus: input.candidate.notificationStatus,
+        dispatchChangedFields: input.candidate.changedFields,
+        dispatchRecoverySend: input.recovery,
+        dispatchSourceEventId: input.candidate.event.id,
+        dispatchAttemptOutcome: input.outcome,
+        dispatchFailureReason: input.failureReason || null,
+        dispatchDeliveryState: getDispatchSmsDeliveryState(input.providerStatus) || input.outcome,
+      } satisfies Prisma.InputJsonValue,
+      provider: "TWILIO",
+      providerMessageSid: input.providerMessageSid,
+      providerStatus: input.providerStatus,
+      idempotencyKey,
+    });
+  });
 }
 
 export async function maybeSendDispatchCustomerNotifications(input: {
@@ -111,187 +268,134 @@ export async function maybeSendDispatchCustomerNotifications(input: {
     return;
   }
 
-  const [settings, job] = await Promise.all([
-    getDispatchNotificationSettings(input.orgId),
-    prisma.job.findFirst({
-      where: {
-        id: input.jobId,
-        orgId: input.orgId,
-      },
-      select: {
-        id: true,
-        orgId: true,
-        customerId: true,
-        leadId: true,
-        customerName: true,
-        phone: true,
-        serviceType: true,
-        scheduledDate: true,
-        scheduledStartTime: true,
-        scheduledEndTime: true,
-        dispatchStatus: true,
-        org: {
-          select: {
-            name: true,
-            smsFromNumberE164: true,
-            smsQuietHoursStartMinute: true,
-            smsQuietHoursEndMinute: true,
-            dashboardConfig: {
-              select: {
-                calendarTimezone: true,
-              },
-            },
-            messagingSettings: {
-              select: {
-                timezone: true,
-              },
-            },
-          },
-        },
-        lead: {
-          select: {
-            id: true,
-            status: true,
-            customerId: true,
-            conversationState: {
-              select: {
-                id: true,
-              },
-            },
-          },
-        },
-      },
-    }),
-  ]);
-
-  const toNumberE164 = normalizeE164(job?.phone || null);
-  if (!job || !toNumberE164 || !job.scheduledDate) {
-    return;
-  }
-
-  const status = dispatchStatusFromDb(job.dispatchStatus);
-  const candidateEvents = input.events.filter((event) => {
-    if (event.eventType === "STATUS_CHANGED") {
-      return typeof event.toValue === "string" && event.toValue.trim() === status;
-    }
-    if (event.eventType === "JOB_CREATED") {
-      return true;
-    }
-    return false;
-  });
-
-  if (candidateEvents.length === 0 || !shouldSendDispatchStatusNotification(settings, status)) {
-    return;
-  }
-
-  if (job.lead?.status === "DNC") {
-    return;
-  }
-
-  const timeZone =
-    job.org.messagingSettings?.timezone || job.org.dashboardConfig?.calendarTimezone || "America/Los_Angeles";
-  const inSendWindow = isWithinSmsSendWindow({
-    at: new Date(),
-    timeZone,
-    startMinute: job.org.smsQuietHoursStartMinute,
-    endMinute: job.org.smsQuietHoursEndMinute,
-  });
-
-  if (!inSendWindow) {
-    return;
-  }
-
-  const body = formatDispatchCustomerSms({
-    orgName: job.org.name,
-    serviceType: job.serviceType,
-    scheduledDate: job.scheduledDate.toISOString().slice(0, 10),
-    scheduledStartTime: job.scheduledStartTime,
-    scheduledEndTime: job.scheduledEndTime,
-    status,
-    timeZone,
-  });
-
-  const dispatched = await sendOutboundSms({
-    orgId: input.orgId,
-    fromNumberE164: job.org.smsFromNumberE164 || null,
-    toNumberE164,
-    body,
-  });
-
-  if (dispatched.suppressed) {
-    return;
-  }
-
-  if (dispatched.status === "FAILED") {
-    return;
-  }
-
-  const event = candidateEvents[0];
-  if (!event) {
-    return;
-  }
-
-  await prisma.$transaction(async (tx) => {
-    let messageId: string | null = null;
-
-    if (job.leadId) {
-      const message = await tx.message.create({
-        data: {
-          orgId: input.orgId,
-          leadId: job.leadId,
-          direction: "OUTBOUND",
-          type: "SYSTEM_NUDGE",
-          fromNumberE164: dispatched.resolvedFromNumberE164 || job.org.smsFromNumberE164 || "",
-          toNumberE164,
-          body,
-          provider: "TWILIO",
-          providerMessageSid: dispatched.providerMessageSid,
-          status: dispatched.status as MessageStatus,
-        },
-        select: {
-          id: true,
-        },
-      });
-      messageId = message.id;
-
-      await tx.lead.update({
-        where: { id: job.leadId },
-        data: {
-          lastContactedAt: event.createdAt,
-          lastOutboundAt: event.createdAt,
-        },
-      });
-
-      await tx.leadConversationState.updateMany({
-        where: {
-          leadId: job.leadId,
-        },
-        data: {
-          lastOutboundAt: event.createdAt,
-        },
-      });
-    }
-
-    await upsertCommunicationEvent(tx, {
+  const scopedJob = await prisma.job.findFirst({
+    where: {
+      id: input.jobId,
       orgId: input.orgId,
-      leadId: job.leadId,
-      contactId: job.customerId || job.lead?.customerId || null,
-      conversationId: job.lead?.conversationState?.id || null,
-      messageId,
+    },
+    select: {
+      dispatchStatus: true,
+    },
+  });
+
+  if (!scopedJob) {
+    return;
+  }
+
+  const candidate = selectAutomaticDispatchCustomerNotificationCandidate({
+    events: input.events,
+    status: dispatchStatusFromDb(scopedJob.dispatchStatus),
+  });
+
+  if (!candidate) {
+    return;
+  }
+
+  try {
+    await sendDispatchCustomerNotification({
+      orgId: input.orgId,
+      jobId: input.jobId,
       actorUserId: input.actorUserId,
-      type: "OUTBOUND_SMS_SENT",
-      channel: "SMS",
-      occurredAt: event.createdAt,
-      summary: `Dispatch update: ${formatDispatchStatusLabel(status)}`,
-      metadataJson: {
-        body,
-        dispatchJobId: job.id,
-        dispatchStatus: status,
-      } satisfies Prisma.InputJsonValue,
-      provider: "TWILIO",
-      providerMessageSid: dispatched.providerMessageSid,
-      providerStatus: dispatched.status,
-      idempotencyKey: buildCommunicationIdempotencyKey("dispatch-status-sms", input.orgId, event.id, status),
+      candidate,
+      explicit: false,
     });
+  } catch {
+    return;
+  }
+}
+
+export async function sendPendingDispatchScheduleCustomerUpdate(input: {
+  orgId: string;
+  jobId: string;
+  actorUserId: string | null;
+  recovery?: boolean;
+}) {
+  const candidate = await getDispatchScheduleNotificationCandidate(input);
+  if (!candidate) {
+    throw new AppApiError("No meaningful schedule change is waiting for a customer update.", 409);
+  }
+
+  const result = await sendDispatchCustomerNotification({
+    orgId: input.orgId,
+    jobId: input.jobId,
+    actorUserId: input.actorUserId,
+    candidate,
+    explicit: true,
+    recovery: input.recovery === true,
+  });
+
+  return {
+    status: result.alreadySent ? "already_sent" : "sent",
+    changedFields: candidate.changedFields,
+  };
+}
+
+export async function recordDispatchManualFollowThrough(input: {
+  orgId: string;
+  jobId: string;
+  actorUserId: string | null;
+  state: "started" | "handled";
+  actionId?: string | null;
+}) {
+  const state = await getDispatchCustomerCommunicationState({
+    orgId: input.orgId,
+    jobId: input.jobId,
+  });
+
+  if (
+    !state.lastCustomerUpdate?.recoverySend ||
+    (state.lastCustomerUpdate.deliveryState !== "failed" && state.lastCustomerUpdate.deliveryState !== "suppressed")
+  ) {
+    throw new AppApiError("No recovery follow-up is waiting for manual handling.", 409);
+  }
+
+  await prisma.jobEvent.create({
+    data: {
+      orgId: input.orgId,
+      jobId: input.jobId,
+      actorUserId: input.actorUserId,
+      eventType: "JOB_UPDATED",
+      metadata: {
+        dispatchManualFollowThrough: true,
+        dispatchManualFollowThroughState: input.state,
+        dispatchManualFollowThroughActionId: input.actionId || null,
+      } satisfies Prisma.InputJsonValue,
+    },
+  });
+}
+
+export async function recordDispatchManualContactOutcome(input: {
+  orgId: string;
+  jobId: string;
+  actorUserId: string | null;
+  outcome: "confirmed_schedule" | "reschedule_needed" | "no_response";
+}) {
+  const state = await getDispatchCustomerCommunicationState({
+    orgId: input.orgId,
+    jobId: input.jobId,
+  });
+
+  if (
+    !state.lastCustomerUpdate?.recoverySend ||
+    (state.lastCustomerUpdate.deliveryState !== "failed" && state.lastCustomerUpdate.deliveryState !== "suppressed")
+  ) {
+    throw new AppApiError("No recovery follow-up is waiting for a manual contact outcome.", 409);
+  }
+
+  if (state.lastCustomerUpdate.manualFollowThrough?.state !== "handled") {
+    throw new AppApiError("Mark the manual follow-up handled before recording the contact outcome.", 409);
+  }
+
+  await prisma.jobEvent.create({
+    data: {
+      orgId: input.orgId,
+      jobId: input.jobId,
+      actorUserId: input.actorUserId,
+      eventType: "JOB_UPDATED",
+      metadata: {
+        dispatchManualContactOutcome: true,
+        dispatchManualContactOutcomeValue: input.outcome,
+      } satisfies Prisma.InputJsonValue,
+    },
   });
 }

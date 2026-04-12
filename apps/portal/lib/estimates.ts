@@ -412,6 +412,43 @@ export function formatEstimateStatusLabel(status: EstimateStatus): string {
   return status.replace(/_/g, " ");
 }
 
+function hasEstimateValue(value: string | null | undefined): boolean {
+  return Boolean(value && value.trim());
+}
+
+export function isPlaceholderEstimateTitle(value: string | null | undefined): boolean {
+  const normalized = (value || "").trim().toLowerCase();
+  return !normalized || normalized === "untitled estimate";
+}
+
+export function getEstimateCustomerFacingIssues(input: {
+  title: string | null | undefined;
+  customerName: string | null | undefined;
+  leadLabel?: string | null | undefined;
+  lineItemCount: number;
+  total: number;
+}): string[] {
+  const issues: string[] = [];
+
+  if (isPlaceholderEstimateTitle(input.title)) {
+    issues.push("Add a specific estimate title.");
+  }
+
+  if (!hasEstimateValue(input.customerName) && !hasEstimateValue(input.leadLabel)) {
+    issues.push("Attach a customer before sharing or sending this estimate.");
+  }
+
+  if (!Number.isFinite(input.lineItemCount) || input.lineItemCount < 1) {
+    issues.push("Add at least one line item before sharing or sending this estimate.");
+  }
+
+  if (!Number.isFinite(input.total) || input.total <= 0) {
+    issues.push("Set a positive total before sharing or sending this estimate.");
+  }
+
+  return issues;
+}
+
 export function describeEstimateActivityType(type: EstimateActivityType): string {
   switch (type) {
     case "CREATED":

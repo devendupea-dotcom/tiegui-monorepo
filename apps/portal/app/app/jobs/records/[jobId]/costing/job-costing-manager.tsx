@@ -147,6 +147,14 @@ export default function JobCostingManager({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const selectedOperationalJobHref = selectedJobId
+    ? buildLinkPath({
+        orgId,
+        internalUser,
+        mobileMode,
+        href: `/app/jobs/records/${selectedJobId}`,
+      })
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -619,14 +627,20 @@ export default function JobCostingManager({
         <div className="stack" style={{ gap: 8 }}>
           <div className="inline" style={{ justifyContent: "space-between", gap: 12, alignItems: "center" }}>
             <div>
-              <h2 style={{ marginBottom: 4 }}>{selectedJobId ? "Job Costing" : "Job Profitability"}</h2>
+              <h2 style={{ marginBottom: 4 }}>{selectedJobId ? "Costing Workspace" : "Job Profitability"}</h2>
               <p className="muted">
                 {selectedJobId
-                  ? "Track planned vs actual costs, revenue, and margin for this structured job."
-                  : `See profitability across structured jobs in ${orgName}.`}
+                  ? "Track planned vs actual costs, revenue, and margin for this operational job."
+                  : `See profitability across operational jobs in ${orgName}.`}
               </p>
+              <p className="muted">Use the Operational Job page for dispatch, schedule, tracking, and customer communication.</p>
             </div>
             <div className="portal-empty-actions">
+              {selectedOperationalJobHref ? (
+                <Link className="btn primary" href={selectedOperationalJobHref}>
+                  Open Operational Job
+                </Link>
+              ) : null}
               <Link
                 className="btn secondary"
                 href={buildLinkPath({
@@ -636,7 +650,7 @@ export default function JobCostingManager({
                   href: "/app/jobs/records",
                 })}
               >
-                Structured Jobs
+                Operational Records
               </Link>
               {selectedJobId ? (
                 <button className="btn secondary" type="button" onClick={() => selectJob(null)}>
@@ -683,8 +697,8 @@ export default function JobCostingManager({
               </div>
             ) : jobs.length === 0 ? (
               <div className="portal-empty-state job-costing-empty">
-                <strong>No structured jobs yet.</strong>
-                <p className="muted">Create or convert a job first, then open costing to track profitability.</p>
+                <strong>No operational jobs yet.</strong>
+                <p className="muted">Create or convert an operational job first, then open costing to track profitability.</p>
               </div>
             ) : (
               <div className="table-wrap">

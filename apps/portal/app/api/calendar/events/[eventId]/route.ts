@@ -20,6 +20,7 @@ import {
 import { localDateFromUtc, parseUtcDateTime } from "@/lib/calendar/dates";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
 import { syncLeadBookingState } from "@/lib/lead-booking";
+import { resolveWorkspaceUserIds } from "@/lib/workspace-users";
 
 export const dynamic = "force-dynamic";
 
@@ -92,14 +93,11 @@ async function resolveEditableWorkerIds(input: {
   orgId: string;
   requestedWorkerIds: string[];
 }) {
-  const users = await prisma.user.findMany({
-    where: {
-      id: { in: input.requestedWorkerIds },
-      OR: [{ orgId: input.orgId }, { role: "INTERNAL" }],
-    },
-    select: { id: true },
+  const ids = await resolveWorkspaceUserIds({
+    organizationId: input.orgId,
+    requestedUserIds: input.requestedWorkerIds,
+    includeInternal: true,
   });
-  const ids = users.map((item) => item.id);
   if (ids.length !== input.requestedWorkerIds.length) {
     throw new CalendarApiError("One or more workers are invalid for this organization.", 400);
   }
@@ -289,16 +287,24 @@ export async function PATCH(req: Request, { params }: RouteContext) {
         select: calendarEventSelect,
       });
 
-      await syncLeadBookingState(tx, {
+      const linkedJobId = await syncLeadBookingState(tx, {
+        orgId: nextEvent.orgId,
         leadId: nextEvent.leadId,
         eventId: nextEvent.id,
         type: nextEvent.type,
         status: nextEvent.status,
         startAt: nextEvent.startAt,
         endAt: nextEvent.endAt,
+        title: nextEvent.title,
+        customerName: nextEvent.customerName,
+        addressLine: nextEvent.addressLine,
+        createdByUserId: nextEvent.createdByUserId,
       });
 
-      return nextEvent;
+      return {
+        ...nextEvent,
+        jobId: linkedJobId ?? nextEvent.jobId,
+      };
     });
 
     if (reassigned && existing.googleEventId && existing.googleCalendarId) {

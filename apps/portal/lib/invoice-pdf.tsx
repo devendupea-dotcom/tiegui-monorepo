@@ -11,7 +11,14 @@ import {
   View,
   renderToBuffer,
 } from "@react-pdf/renderer";
-import { DEFAULT_INVOICE_TERMS, formatCurrency, normalizeInvoiceTerms, taxRateToPercent, toMoneyDecimal } from "@/lib/invoices";
+import {
+  DEFAULT_INVOICE_TERMS,
+  formatCurrency,
+  normalizeInvoiceTerms,
+  shouldRenderInvoicePaidIndicator,
+  taxRateToPercent,
+  toMoneyDecimal,
+} from "@/lib/invoices";
 
 export type InvoicePdfImageSource = string | { data: Buffer; format: "png" | "jpg" };
 
@@ -596,7 +603,7 @@ function InvoicePdfPage(props: {
 }
 
 function InvoicePdfDocument(props: { input: InvoicePdfV2Input; pages: PdfLineItem[][] }) {
-  const paid = props.input.status === "PAID" || toMoneyDecimal(props.input.balanceDue).lte(0);
+  const paid = shouldRenderInvoicePaidIndicator({ status: props.input.status });
   const totalPages = props.pages.length;
 
   return (

@@ -4,6 +4,7 @@ import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { prisma } from "@/lib/prisma";
 import { normalizeLeadCity } from "@/lib/lead-location";
 import { normalizeE164 } from "@/lib/phone";
+import { resolveWorkspaceUserIds } from "@/lib/workspace-users";
 import {
   AppApiError,
   assertCanMutateLeadJob,
@@ -183,14 +184,12 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
       const assignedToUserId = payload.assignedToUserId || null;
       if (assignedToUserId) {
-        const assignedUser = await prisma.user.findFirst({
-          where: {
-            id: assignedToUserId,
-            OR: [{ orgId: lead.orgId }, { role: "INTERNAL" }],
-          },
-          select: { id: true },
+        const assignedUserIds = await resolveWorkspaceUserIds({
+          organizationId: lead.orgId,
+          requestedUserIds: [assignedToUserId],
+          includeInternal: true,
         });
-        if (!assignedUser) {
+        if (assignedUserIds.length !== 1) {
           throw new AppApiError("Assigned user is invalid for this organization.", 400);
         }
       }

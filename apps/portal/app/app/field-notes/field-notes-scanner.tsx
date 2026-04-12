@@ -779,7 +779,7 @@ export default function FieldNotesScanner({
                 </div>
                 <div className="portal-empty-actions" style={{ marginTop: 12 }}>
                   <Link className="btn primary" href={savedRedirectTo}>
-                    Open Job Folder
+                    Open CRM Folder
                   </Link>
                   <button
                     className="btn secondary"

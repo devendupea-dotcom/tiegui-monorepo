@@ -8,6 +8,7 @@ import {
   validateTwilioVoiceWebhookRequest,
 } from "@/lib/twilio-voice-webhook";
 import { normalizeEnvValue } from "@/lib/env";
+import { assessInboundCallRisk } from "@/lib/inbound-call-risk";
 import { buildVoicemailFallbackTwiml } from "@/lib/twilio-voice-copy";
 import { getBaseUrlFromRequest } from "@/lib/urls";
 
@@ -64,6 +65,14 @@ export async function POST(req: Request) {
     return new Response(validation.error, { status: validation.status });
   }
 
+  const riskAssessment = await assessInboundCallRisk({
+    orgId: context.organization.id,
+    fromNumber: asTwilioString(form.get("From")),
+    stirVerstat: asTwilioString(form.get("StirVerstat")),
+    excludeCallSid: callSid === "unknown" ? null : callSid,
+  });
+  const suppressLeadCreation = riskAssessment.disposition === "VOICEMAIL_ONLY";
+
   const shouldOfferVoicemailFallback =
     !voicemailFallbackStage &&
     !hasRecording &&
@@ -75,6 +84,9 @@ export async function POST(req: Request) {
       context,
       form,
       voicemailFallbackStage: false,
+      riskAssessment,
+      allowLeadCreation: !suppressLeadCreation,
+      skipMissedCallRecovery: suppressLeadCreation,
     });
     await recordVoiceVoicemailReached({
       context,
@@ -83,6 +95,7 @@ export async function POST(req: Request) {
       contactId: interimOutcome.contactId,
       callId: interimOutcome.callId,
       reason: dialStatus,
+      riskAssessment,
     });
     console.info(
       `[after-call] no-answer fallback to voicemail callSid=${callSid} orgId=${context.organization.id} fallbackUrl=${fallbackUrl}`,
@@ -97,10 +110,13 @@ export async function POST(req: Request) {
     context,
     form,
     voicemailFallbackStage,
+    riskAssessment,
+    allowLeadCreation: !suppressLeadCreation,
+    skipMissedCallRecovery: suppressLeadCreation,
   });
 
   console.info(
-    `[after-call] processed callSid=${callSid} status=${outcome.status} leadId=${outcome.leadId || "none"} orgId=${context.organization.id}`,
+    `[after-call] processed callSid=${callSid} status=${outcome.status} leadId=${outcome.leadId || "none"} orgId=${context.organization.id} risk=${riskAssessment.disposition}:${riskAssessment.score}`,
   );
   return emptyTwimlResponse();
 }

@@ -11,6 +11,10 @@ import {
 } from "@/lib/calendar/dates";
 import { getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { prisma } from "@/lib/prisma";
+import {
+  listWorkspaceUsers,
+  sortWorkspaceUsersByCalendarRoleThenCreatedAt,
+} from "@/lib/workspace-users";
 
 export type AnalyticsRange = "7d" | "30d" | "month";
 
@@ -164,7 +168,7 @@ function buildEventScope(viewer: AnalyticsViewer):
 function buildInvoiceScope(viewer: AnalyticsViewer): PrismaNamespace.InvoiceWhereInput | undefined {
   if (!isWorkerScoped(viewer)) return undefined;
   return {
-    job: {
+    legacyLead: {
       OR: [
         { assignedToUserId: viewer.id },
         { createdByUserId: viewer.id },
@@ -319,6 +323,7 @@ async function getRevenueByChannelForRange(input: {
       ) AS "cents"
     FROM "InvoicePayment"
     INNER JOIN "Invoice" ON "Invoice"."id" = "InvoicePayment"."invoiceId"
+    -- Legacy compatibility: Invoice.jobId is the CRM lead link, not an operational job reference.
     LEFT JOIN "Lead" ON "Lead"."id" = "Invoice"."jobId"
     WHERE "Invoice"."orgId" = ${input.orgId}
       AND "InvoicePayment"."date" >= ${input.start}
@@ -341,7 +346,7 @@ async function getRevenueByChannelForRange(input: {
     },
     select: {
       amountPaid: true,
-      job: {
+      legacyLead: {
         select: {
           sourceChannel: true,
         },
@@ -350,7 +355,7 @@ async function getRevenueByChannelForRange(input: {
   });
 
   for (const row of fallbackRows) {
-    totals[toAnalyticsChannel(row.job?.sourceChannel)] += decimalToCents(row.amountPaid);
+    totals[toAnalyticsChannel(row.legacyLead?.sourceChannel)] += decimalToCents(row.amountPaid);
   }
 
   return totals;
@@ -426,6 +431,7 @@ async function getGrossRevenueForRange(input: {
         SUM(CAST(ROUND(CAST("Invoice"."total" AS numeric) * 100) AS bigint)) AS "cents"
       FROM "Invoice"
       WHERE "Invoice"."orgId" = ${input.orgId}
+        -- Legacy compatibility: Invoice.jobId is still the CRM lead foreign key for older invoices.
         AND "Invoice"."jobId" IS NOT NULL
       GROUP BY "Invoice"."jobId"
     )
@@ -529,19 +535,17 @@ async function getRecoveredMissedCallsCount(input: {
 }
 
 async function resolveAnalyticsWorkers(viewer: AnalyticsViewer) {
-  return prisma.user.findMany({
-    where: {
-      orgId: viewer.orgId,
-      calendarAccessRole: { not: "READ_ONLY" },
-      ...(isWorkerScoped(viewer) ? { id: viewer.id } : {}),
-    },
-    select: {
-      id: true,
-      timezone: true,
-      calendarAccessRole: true,
-    },
-    orderBy: [{ calendarAccessRole: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-  });
+  return sortWorkspaceUsersByCalendarRoleThenCreatedAt(
+    await listWorkspaceUsers({
+      organizationId: viewer.orgId,
+      excludeReadOnly: true,
+      userIds: isWorkerScoped(viewer) ? [viewer.id] : undefined,
+    }),
+  ).map((worker) => ({
+    id: worker.id,
+    timezone: worker.timezone,
+    calendarAccessRole: worker.calendarAccessRole,
+  }));
 }
 
 function mergeIntervals(intervals: Array<{ startMinute: number; endMinute: number }>) {
@@ -1152,7 +1156,7 @@ export async function getPortalAdsMetrics(input: {
         amount: true,
         invoice: {
           select: {
-            job: {
+            legacyLead: {
               select: {
                 sourceChannel: true,
               },
@@ -1185,7 +1189,13 @@ export async function getPortalAdsMetrics(input: {
   }
   for (const row of paymentRows) {
     const weekStart = startOfWeek(new Date(row.date), { weekStartsOn: 1 });
-    addWeeklyValue(weekly, toAnalyticsChannel(row.invoice.job?.sourceChannel), weekStart, "revenueCents", decimalToCents(row.amount));
+    addWeeklyValue(
+      weekly,
+      toAnalyticsChannel(row.invoice.legacyLead?.sourceChannel),
+      weekStart,
+      "revenueCents",
+      decimalToCents(row.amount),
+    );
   }
 
   const channels: ChannelMetrics[] = DISPLAY_CHANNELS.map((channel) => {

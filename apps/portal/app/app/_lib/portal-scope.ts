@@ -1,12 +1,21 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session";
+import {
+  AppApiError,
+  requireAppApiActor,
+  resolveActorOrgId,
+  type AppApiActor,
+} from "@/lib/app-api-permissions";
 
 export type AppScope = {
   orgId: string;
   orgName: string;
   internalUser: boolean;
   onboardingComplete: boolean;
+};
+
+export type AppScopeActor = AppApiActor & {
+  orgId: string;
 };
 
 export function getParam(value: string | string[] | undefined): string {
@@ -28,6 +37,64 @@ export function isOpenJobStatus(status: string): boolean {
   return status !== "NOT_INTERESTED" && status !== "DNC";
 }
 
+function redirectToLogin(nextPath: string): never {
+  redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+}
+
+function handlePortalScopeResolutionError(input: {
+  error: unknown;
+  nextPath: string;
+  internalUser: boolean;
+}): never {
+  const { error, nextPath, internalUser } = input;
+
+  if (error instanceof AppApiError) {
+    if (error.status === 401) {
+      redirectToLogin(nextPath);
+    }
+
+    if (internalUser) {
+      redirect("/hq/businesses");
+    }
+
+    if (nextPath !== "/app") {
+      redirect("/app");
+    }
+
+    throw new Error(error.message);
+  }
+
+  throw error;
+}
+
+export async function requireAppOrgActor(nextPath: string, orgId: string): Promise<AppScopeActor> {
+  let actor: AppApiActor;
+  try {
+    actor = await requireAppApiActor();
+  } catch (error) {
+    handlePortalScopeResolutionError({
+      error,
+      nextPath,
+      internalUser: false,
+    });
+  }
+
+  try {
+    await resolveActorOrgId({
+      actor,
+      requestedOrgId: orgId,
+    });
+  } catch (error) {
+    handlePortalScopeResolutionError({
+      error,
+      nextPath,
+      internalUser: actor.internalUser,
+    });
+  }
+
+  return actor as AppScopeActor;
+}
+
 export async function resolveAppScope({
   nextPath,
   requestedOrgId,
@@ -35,86 +102,64 @@ export async function resolveAppScope({
   nextPath: string;
   requestedOrgId?: string;
 }): Promise<AppScope> {
-  const user = await requireSessionUser(nextPath);
-  const internalUser = isInternalRole(user.role);
-
-  if (!internalUser) {
-    if (!user.orgId) {
-      redirect("/login?next=/app");
-    }
-
-    const org = await prisma.organization.findUnique({
-      where: { id: user.orgId },
-      select: {
-        id: true,
-        name: true,
-        onboardingCompletedAt: true,
-      },
-    });
-
-    if (!org) {
-      redirect("/app");
-    }
-
-    const onboardingIncomplete = !org.onboardingCompletedAt;
-    const onboardingPath = nextPath.startsWith("/app/onboarding");
-    if (onboardingIncomplete && !onboardingPath) {
-      const onboardingUrl = new URL("/app/onboarding", "http://localhost");
-      onboardingUrl.searchParams.set("step", "1");
-      redirect(`${onboardingUrl.pathname}${onboardingUrl.search}`);
-    }
-
-    return {
-      orgId: org.id,
-      orgName: org.name,
+  let actor: AppApiActor;
+  try {
+    actor = await requireAppApiActor();
+  } catch (error) {
+    handlePortalScopeResolutionError({
+      error,
+      nextPath,
       internalUser: false,
-      onboardingComplete: !onboardingIncomplete,
-    };
-  }
-
-  const requested = getParam(requestedOrgId);
-  if (requested) {
-    const org = await prisma.organization.findUnique({
-      where: { id: requested },
-      select: { id: true, name: true },
     });
-
-    if (!org) {
-      redirect("/hq/businesses");
-    }
-
-    return {
-      orgId: org.id,
-      orgName: org.name,
-      internalUser: true,
-      onboardingComplete: true,
-    };
   }
 
-  const firstOrg = await prisma.organization.findFirst({
-    select: { id: true, name: true },
-    orderBy: { name: "asc" },
+  let resolvedOrgId: string;
+  try {
+    resolvedOrgId = await resolveActorOrgId({
+      actor,
+      requestedOrgId,
+    });
+  } catch (error) {
+    handlePortalScopeResolutionError({
+      error,
+      nextPath,
+      internalUser: actor.internalUser,
+    });
+  }
+
+  const org = await prisma.organization.findUnique({
+    where: { id: resolvedOrgId },
+    select: {
+      id: true,
+      name: true,
+      onboardingCompletedAt: true,
+    },
   });
 
-  if (!firstOrg) {
-    redirect("/hq/businesses");
+  if (!org) {
+    if (actor.internalUser) {
+      redirect("/hq/businesses");
+    }
+    redirect("/app");
+  }
+
+  const onboardingIncomplete = !org.onboardingCompletedAt;
+  const onboardingPath = nextPath.startsWith("/app/onboarding");
+  if (!actor.internalUser && onboardingIncomplete && !onboardingPath) {
+    const onboardingUrl = new URL("/app/onboarding", "http://localhost");
+    onboardingUrl.searchParams.set("step", "1");
+    redirect(withOrgQuery(`${onboardingUrl.pathname}${onboardingUrl.search}`, org.id, actor.internalUser));
   }
 
   return {
-    orgId: firstOrg.id,
-    orgName: firstOrg.name,
-    internalUser: true,
-    onboardingComplete: true,
+    orgId: org.id,
+    orgName: org.name,
+    internalUser: actor.internalUser,
+    onboardingComplete: !onboardingIncomplete,
   };
 }
 
 export async function requireAppOrgAccess(nextPath: string, orgId: string): Promise<{ internalUser: boolean }> {
-  const user = await requireSessionUser(nextPath);
-  const internalUser = isInternalRole(user.role);
-
-  if (!canAccessOrg(user, orgId)) {
-    redirect("/app");
-  }
-
-  return { internalUser };
+  const actor = await requireAppOrgActor(nextPath, orgId);
+  return { internalUser: actor.internalUser };
 }

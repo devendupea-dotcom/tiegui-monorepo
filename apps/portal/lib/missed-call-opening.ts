@@ -2,8 +2,8 @@ import { ensureSmsA2POpenerDisclosure } from "@/lib/sms-compliance";
 import { renderSmsTemplate } from "@/lib/conversational-sms-templates";
 
 const DEFAULT_MISSED_CALL_FAST_INTRO = {
-  EN: "Hey! This is {bizName} — sorry we missed ya. What kind of work are you looking to get done?",
-  ES: "Hola, habla {bizName} — perdón que no contestamos. ¿Qué trabajo necesitas?",
+  EN: "Hi, this is {bizName}. Sorry we missed your call. What kind of work do you need help with?",
+  ES: "Hola, habla {bizName}. Perdón que no contestamos. ¿Qué trabajo necesitas?",
 } as const;
 
 type MissedCallOpeningOrg = {

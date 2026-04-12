@@ -4,9 +4,9 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { endOfToday, formatDateTime, isOverdueFollowUp, startOfToday } from "@/lib/hq";
 import { buildMapsHrefFromLocation, normalizeLeadCity, resolveLeadLocationLabel } from "@/lib/lead-location";
-import { requireSessionUser } from "@/lib/session";
 import { KpiCard, PanelCard, StatusPill } from "../dashboard-ui";
 import { getParam, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
+import { requireAppPageViewer } from "../_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -91,21 +91,16 @@ export default async function AppTodayMobilePage({
     redirect(withOrgQuery("/app/calendar", scope.orgId, true));
   }
 
-  const sessionUser = await requireSessionUser("/app/today");
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
+  const viewer = await requireAppPageViewer({
+    nextPath: "/app/today",
+    orgId: scope.orgId,
+  });
 
   const workerId =
-    !scope.internalUser &&
-    currentUser &&
-    currentUser.calendarAccessRole !== "OWNER" &&
-    currentUser.calendarAccessRole !== "ADMIN"
-      ? currentUser.id
+    !viewer.internalUser &&
+    viewer.calendarAccessRole !== "OWNER" &&
+    viewer.calendarAccessRole !== "ADMIN"
+      ? viewer.id
       : null;
   const now = new Date();
   const todayStart = startOfToday(now);

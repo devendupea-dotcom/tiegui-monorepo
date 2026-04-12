@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CalendarAccessRole } from "@prisma/client";
+import { normalizeE164 } from "@/lib/phone";
 
 type QuickAddLeadButtonProps = {
   defaultOrgId: string | null;
@@ -78,9 +79,6 @@ export default function QuickAddLeadButton({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const canOpen =
-    internalUser || calendarAccessRole === "OWNER" || calendarAccessRole === "ADMIN" || calendarAccessRole === "WORKER";
-
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,6 +110,10 @@ export default function QuickAddLeadButton({
     if (queryOrgId) return queryOrgId;
     return defaultOrgId || "";
   }, [defaultOrgId, searchParams]);
+
+  const canOpen =
+    Boolean(resolvedOrgId)
+    && (internalUser || calendarAccessRole === "OWNER" || calendarAccessRole === "ADMIN" || calendarAccessRole === "WORKER");
 
   function clearQuickAddParams() {
     const params = new URLSearchParams(searchParams.toString());
@@ -202,6 +204,11 @@ export default function QuickAddLeadButton({
     const timer = setTimeout(() => setToast(null), 7000);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  const normalizedPhone = normalizeE164(phone);
+  const duplicateConfirmationRequired = possibleMatches.length > 0 && forceCreateDuplicate && !confirmDuplicateCreate;
+  const canSaveLead = Boolean(name.trim() && normalizedPhone) && !duplicateConfirmationRequired;
+  const canSaveAndScheduleLead = canSaveLead && scheduleNow && Boolean(startLocal);
 
   useEffect(() => {
     if (!open) {
@@ -321,7 +328,7 @@ export default function QuickAddLeadButton({
       const payload: Record<string, unknown> = {
         orgId: resolvedOrgId || undefined,
         name: name.trim(),
-        phone: phone.trim(),
+        phone: normalizedPhone || phone.trim(),
         email: email.trim() || undefined,
         address: address.trim() || undefined,
         note: note.trim() || undefined,
@@ -437,6 +444,8 @@ export default function QuickAddLeadButton({
                 <input
                   required
                   value={phone}
+                  type="tel"
+                  inputMode="tel"
                   onChange={(event) => setPhone(event.target.value)}
                   placeholder="+12065550100"
                 />
@@ -608,13 +617,13 @@ export default function QuickAddLeadButton({
                   <button type="button" className="btn secondary" onClick={closeModal} disabled={submitting}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn secondary" disabled={submitting}>
+                  <button type="submit" className="btn secondary" disabled={submitting || !canSaveLead}>
                     {submitting ? "Saving..." : "Save Lead"}
                   </button>
                   <button
                     type="button"
                     className="btn primary"
-                    disabled={submitting}
+                    disabled={submitting || !canSaveAndScheduleLead}
                     onClick={() => void submitLead("schedule")}
                   >
                     {submitting ? "Saving..." : "Save + Schedule"}

@@ -4,7 +4,7 @@ const OPT_OUT_HINT_EN = "Reply STOP to opt out.";
 const OPT_OUT_HINT_ES = "Responde STOP para dejar de recibir mensajes.";
 const A2P_OPENER_DISCLOSURE_EN = "Reply STOP to unsubscribe.";
 const A2P_OPENER_DISCLOSURE_BILINGUAL = "Reply STOP to unsubscribe / Responde STOP para cancelar.";
-const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
+const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT", "REVOKE"]);
 const START_KEYWORDS = new Set(["START", "UNSTOP"]);
 const HELP_KEYWORDS = new Set(["HELP"]);
 

@@ -5,12 +5,12 @@ import { formatInTimeZone } from "date-fns-tz";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { sendOutboundSms } from "@/lib/sms";
-import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { ensureTimeZone, isValidTimeZone, toUtcFromLocalDateTime } from "@/lib/calendar/dates";
 import { getPhotoStorageReadiness } from "@/lib/storage";
 import { trackPortalEvent } from "@/lib/telemetry";
-import { getParam, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
+import { createProvisionedPortalUser, syncClientUserOrganizationAccess } from "@/lib/user-provisioning";
+import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
 import OnboardingTeamBuilder from "./onboarding-team-builder";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +26,16 @@ const ONBOARDING_STEPS: Array<{ value: VisibleOnboardingStep; label: string }> =
 ];
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+type OnboardingWorker = {
+  id: string;
+  name: string | null;
+  email: string;
+  phoneE164: string | null;
+  timezone: string | null;
+  calendarAccessRole: "OWNER" | "ADMIN" | "WORKER" | "READ_ONLY";
+  createdAt: Date;
+};
 
 function formatWorkingDaysSummary(days: number[]): string {
   const uniqueDays = [...new Set(days)].filter((day) => day >= 0 && day <= 6).sort((a, b) => a - b);
@@ -66,39 +76,83 @@ function onboardingUrl(orgId: string, internalUser: boolean, step: OnboardingSte
 }
 
 async function requireOnboardingEditor(orgId: string) {
-  const user = await requireSessionUser("/app/onboarding");
-  if (!canAccessOrg(user, orgId)) {
-    redirect("/app");
-  }
-
-  const dbUser = user.id
-    ? await prisma.user.findUnique({
-        where: { id: user.id },
-        select: {
-          id: true,
-          role: true,
-          orgId: true,
-          calendarAccessRole: true,
-        },
-      })
-    : null;
-
-  if (!dbUser) {
-    redirect("/app");
-  }
-
-  const internalUser = isInternalRole(dbUser.role);
-  const canEdit = internalUser || dbUser.calendarAccessRole === "OWNER" || dbUser.calendarAccessRole === "ADMIN";
+  const actor = await requireAppOrgActor("/app/onboarding", orgId);
+  const canEdit =
+    actor.internalUser || actor.calendarAccessRole === "OWNER" || actor.calendarAccessRole === "ADMIN";
   if (!canEdit) {
     redirect("/app");
   }
 
   return {
-    id: dbUser.id,
-    internalUser,
-    orgId: internalUser ? orgId : dbUser.orgId || orgId,
-    calendarAccessRole: dbUser.calendarAccessRole,
+    id: actor.id,
+    internalUser: actor.internalUser,
+    orgId: actor.orgId,
+    calendarAccessRole: actor.calendarAccessRole,
   };
+}
+
+async function listOrganizationWorkers(orgId: string): Promise<OnboardingWorker[]> {
+  const rows = await prisma.organizationMembership.findMany({
+    where: {
+      organizationId: orgId,
+      status: "ACTIVE",
+      user: {
+        role: "CLIENT",
+      },
+    },
+    select: {
+      userId: true,
+      role: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phoneE164: true,
+          timezone: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+
+  return rows
+    .map((row) => ({
+      id: row.user.id,
+      name: row.user.name,
+      email: row.user.email,
+      phoneE164: row.user.phoneE164,
+      timezone: row.user.timezone,
+      calendarAccessRole: row.role,
+      createdAt: row.user.createdAt,
+    }))
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+    .slice(0, 50);
+}
+
+async function listSchedulableWorkerIds(orgId: string): Promise<string[]> {
+  const rows = await prisma.organizationMembership.findMany({
+    where: {
+      organizationId: orgId,
+      status: "ACTIVE",
+      role: { not: "READ_ONLY" },
+      user: {
+        role: "CLIENT",
+      },
+    },
+    select: {
+      userId: true,
+      user: {
+        select: {
+          createdAt: true,
+        },
+      },
+    },
+  });
+
+  return rows
+    .sort((left, right) => left.user.createdAt.getTime() - right.user.createdAt.getTime())
+    .map((row) => row.userId);
 }
 
 async function saveBasicsAction(formData: FormData) {
@@ -138,23 +192,15 @@ async function saveBasicsAction(formData: FormData) {
   }
 
   const timeZone = ensureTimeZone(timezoneRaw);
-  const workers = await prisma.user.findMany({
-    where: {
-      orgId,
-      role: "CLIENT",
-      calendarAccessRole: { not: "READ_ONLY" },
-    },
-    select: { id: true },
-    orderBy: [{ createdAt: "asc" }],
-  });
+  const workerIds = await listSchedulableWorkerIds(orgId);
 
-  const workingHoursWrites = workers.flatMap((worker) =>
+  const workingHoursWrites = workerIds.flatMap((workerUserId) =>
     Array.from({ length: 7 }, (_, dayOfWeek) =>
       prisma.workingHours.upsert({
         where: {
           orgId_workerUserId_dayOfWeek: {
             orgId,
-            workerUserId: worker.id,
+            workerUserId,
             dayOfWeek,
           },
         },
@@ -166,7 +212,7 @@ async function saveBasicsAction(formData: FormData) {
         },
         create: {
           orgId,
-          workerUserId: worker.id,
+          workerUserId,
           dayOfWeek,
           isWorking: selectedWorkingDays.has(dayOfWeek),
           startMinute,
@@ -239,18 +285,44 @@ async function saveTeamAction(formData: FormData) {
     const timezoneRaw = existingTimezones[index] || fallbackTimezone;
     const timezone = isValidTimeZone(timezoneRaw) ? ensureTimeZone(timezoneRaw) : fallbackTimezone;
     const phoneNormalized = normalizeE164(existingPhones[index] || null);
-
-    await prisma.user.updateMany({
+    const existingWorker = await prisma.user.findFirst({
       where: {
         id: workerId,
-        orgId,
         role: "CLIENT",
+        OR: [
+          { orgId },
+          {
+            organizationMemberships: {
+              some: {
+                organizationId: orgId,
+                status: "ACTIVE",
+              },
+            },
+          },
+        ],
       },
-      data: {
-        calendarAccessRole: nextRole,
-        timezone,
-        phoneE164: phoneNormalized,
-      },
+      select: { id: true },
+    });
+
+    if (!existingWorker) {
+      redirect(onboardingUrl(orgId, actor.internalUser, 2, { error: "worker" }));
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await syncClientUserOrganizationAccess({
+        tx,
+        userId: workerId,
+        organizationId: orgId,
+        role: nextRole,
+      });
+
+      await tx.user.update({
+        where: { id: workerId },
+        data: {
+          timezone,
+          phoneE164: phoneNormalized,
+        },
+      });
     });
   }
 
@@ -275,50 +347,81 @@ async function saveTeamAction(formData: FormData) {
 
     const existing = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, orgId: true },
+      select: {
+        id: true,
+        role: true,
+        orgId: true,
+        organizationMemberships: {
+          where: {
+            organizationId: orgId,
+            status: "ACTIVE",
+          },
+          select: {
+            organizationId: true,
+          },
+        },
+      },
     });
 
-    if (existing && existing.orgId !== orgId) {
+    const existingHasTargetMembership = Boolean(existing?.organizationMemberships?.[0]);
+    if (existing && (existing.role !== "CLIENT" || (!existingHasTargetMembership && existing.orgId !== orgId))) {
       redirect(onboardingUrl(orgId, actor.internalUser, 2, { error: "email" }));
     }
 
     if (existing) {
-      await prisma.user.update({
-        where: { id: existing.id },
-        data: {
-          name: name || undefined,
-          calendarAccessRole: role,
-          timezone,
-          phoneE164,
-        },
+      await prisma.$transaction(async (tx) => {
+        await syncClientUserOrganizationAccess({
+          tx,
+          userId: existing.id,
+          organizationId: orgId,
+          role,
+        });
+
+        await tx.user.update({
+          where: { id: existing.id },
+          data: {
+            name: name || undefined,
+            timezone,
+            phoneE164,
+          },
+        });
       });
     } else {
-      await prisma.user.create({
-        data: {
-          orgId,
-          role: "CLIENT",
-          calendarAccessRole: role,
-          name: name || "Worker",
+      await prisma.$transaction(async (tx) => {
+        await createProvisionedPortalUser({
+          tx,
           email,
+          name: name || "Worker",
+          role: "CLIENT",
+          orgId,
+          calendarAccessRole: role,
           phoneE164,
           timezone,
-        },
+          mustChangePassword: false,
+        });
       });
     }
   }
 
-  const workerCount = await prisma.user.count({
+  const workerCount = await prisma.organizationMembership.count({
     where: {
-      orgId,
-      role: "CLIENT",
-      calendarAccessRole: { in: ["OWNER", "WORKER", "ADMIN"] },
+      organizationId: orgId,
+      status: "ACTIVE",
+      role: { in: ["OWNER", "WORKER", "ADMIN"] },
+      user: {
+        role: "CLIENT",
+      },
     },
   });
 
-  if (workerCount === 0) {
-    await prisma.user.update({
-      where: { id: actor.id },
-      data: { calendarAccessRole: "OWNER" },
+  if (workerCount === 0 && !actor.internalUser) {
+    await prisma.$transaction(async (tx) => {
+      await syncClientUserOrganizationAccess({
+        tx,
+        userId: actor.id,
+        organizationId: orgId,
+        role: "OWNER",
+      });
     });
   }
 
@@ -354,16 +457,8 @@ async function saveCalendarRulesAction(formData: FormData) {
   const timeOffWorkerId = String(formData.get("timeOffWorkerId") || "").trim();
 
   const settings = await getOrgCalendarSettings(orgId);
-  const workers = await prisma.user.findMany({
-    where: {
-      orgId,
-      role: "CLIENT",
-      calendarAccessRole: { not: "READ_ONLY" },
-    },
-    select: { id: true },
-    orderBy: [{ createdAt: "asc" }],
-  });
-  const roundRobinLastWorkerId = roundRobinEnabled ? workers[0]?.id || null : null;
+  const workerIds = await listSchedulableWorkerIds(orgId);
+  const roundRobinLastWorkerId = roundRobinEnabled ? workerIds[0] || null : null;
 
   await prisma.orgDashboardConfig.upsert({
     where: { orgId },
@@ -541,24 +636,7 @@ export default async function AppOnboardingPage({
 }) {
   const requestedOrgId = getParam(searchParams?.orgId);
   const scope = await resolveAppScope({ nextPath: "/app/onboarding", requestedOrgId });
-  const user = await requireSessionUser("/app/onboarding");
-  const dbUser = user.id
-    ? await prisma.user.findUnique({
-        where: { id: user.id },
-        select: {
-          role: true,
-          calendarAccessRole: true,
-          orgId: true,
-        },
-      })
-    : null;
-
-  const canEdit = dbUser
-    ? isInternalRole(dbUser.role) || dbUser.calendarAccessRole === "OWNER" || dbUser.calendarAccessRole === "ADMIN"
-    : false;
-  if (!canEdit) {
-    redirect(withOrgQuery("/app", scope.orgId, scope.internalUser));
-  }
+  await requireOnboardingEditor(scope.orgId);
 
   const step = clampStep(getParam(searchParams?.step) || "1");
   const activeStep: VisibleOnboardingStep = step === 5 ? 4 : step;
@@ -585,22 +663,7 @@ export default async function AppOnboardingPage({
       },
     }),
     getOrgCalendarSettings(scope.orgId),
-    prisma.user.findMany({
-      where: {
-        orgId: scope.orgId,
-        role: "CLIENT",
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phoneE164: true,
-        calendarAccessRole: true,
-        timezone: true,
-      },
-      orderBy: [{ createdAt: "asc" }],
-      take: 50,
-    }),
+    listOrganizationWorkers(scope.orgId),
     prisma.workingHours.findMany({
       where: {
         orgId: scope.orgId,

@@ -3,8 +3,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { CalendarAccessRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session";
-import { getParam, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
 import OrgLogoUploader from "./org-logo-uploader";
 
 export const dynamic = "force-dynamic";
@@ -23,25 +22,13 @@ function normalizeInvoicePrefix(value: string): string | null {
 }
 
 async function requireBrandingWriteAccess(orgId: string): Promise<{ internalUser: boolean; calendarAccessRole: CalendarAccessRole | null }> {
-  const user = await requireSessionUser("/app/settings/branding");
-  const internalUser = isInternalRole(user.role);
+  const actor = await requireAppOrgActor("/app/settings/branding", orgId);
 
-  if (!canAccessOrg(user, orgId)) {
-    redirect("/app");
-  }
-
-  if (internalUser) {
+  if (actor.internalUser) {
     return { internalUser: true, calendarAccessRole: null };
   }
 
-  const dbUser = user.id
-    ? await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { calendarAccessRole: true },
-      })
-    : null;
-
-  const role = dbUser?.calendarAccessRole || null;
+  const role = actor.calendarAccessRole;
   if (role !== "OWNER" && role !== "ADMIN") {
     redirect(withOrgQuery("/app/settings?error=forbidden", orgId, false));
   }

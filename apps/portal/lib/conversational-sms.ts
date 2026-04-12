@@ -1,165 +1,74 @@
 import { addDays, addMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { Prisma } from "@prisma/client";
-import type { ConversationStage, ConversationTimeframe, LeadIntakeStage, MessageStatus } from "@prisma/client";
-import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
+import type { ConversationStage, MessageStatus } from "@prisma/client";
 import { buildMissedCallOpeningMessages } from "@/lib/missed-call-opening";
 import { prisma } from "@/lib/prisma";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
-import { containsLikelyWorkSummaryText } from "@/lib/lead-display";
-import { normalizeLeadCity } from "@/lib/lead-location";
-import { resolveMessageLocale } from "@/lib/message-language";
+import { syncLeadBookingState } from "@/lib/lead-booking";
 import {
   ACTIVE_CONVERSATION_FOLLOW_UP_STAGES,
+  getAutomatedFollowUpThrottleUntil,
   shouldSkipQueuedFollowUp,
   shouldSuppressMissedCallKickoff,
 } from "@/lib/sms-automation-guards";
 import { ensureSmsOptOutHint } from "@/lib/sms-compliance";
-import { sendOutboundSms } from "@/lib/sms";
 import { queueSmsDispatch } from "@/lib/sms-dispatch-queue";
-import {
-  getSmsToneTemplates,
-  normalizeCustomTemplates,
-  renderSmsTemplate,
-  resolveTemplate,
-  type SmsToneCustomTemplates,
-} from "@/lib/conversational-sms-templates";
+import { renderSmsTemplate } from "@/lib/conversational-sms-templates";
 import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
-
-const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
-const START_KEYWORDS = new Set(["START", "UNSTOP"]);
-
-const TAKEOVER_PATTERN =
-  /\b(call me|can you call|talk to someone|i have questions|phone call|call back|ll[aá]mame|pueden llamar|quiero hablar)\b/i;
-
-const ADDRESS_PATTERN =
-  /\b\d{1,6}\s+[a-z0-9.\-'\s]{2,}\b(st|street|ave|avenue|rd|road|dr|drive|ln|lane|way|blvd|boulevard|ct|court|pl|place|pkwy|parkway)\b/i;
-const CROSS_STREET_PATTERN = /\b[a-z]+(?:\s+[a-z]+)?\s+(?:and|&|y)\s+[a-z]+(?:\s+[a-z]+)?\b/i;
-const ZIP_PATTERN = /\b\d{5}(?:-\d{4})?\b/;
-const CITY_PATTERN = /^[a-zA-ZÀ-ÿ.\-\s]{2,60}$/;
-const AMBIGUOUS_TIME_PATTERN =
-  /\b(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|noon|afternoon|morning|\d{1,2}(?::\d{2})?\s?(am|pm)?)\b/i;
-const COMMON_WORK_LOCATION_COLLISION_TERMS = new Set([
-  "cleanup",
-  "concrete",
-  "deck",
-  "driveway",
-  "fence",
-  "flooring",
-  "gutter",
-  "gutters",
-  "hardscape",
-  "irrigation",
-  "landscape",
-  "landscaping",
-  "lawn",
-  "mowing",
-  "mulch",
-  "paint",
-  "painting",
-  "patio",
-  "paver",
-  "paving",
-  "roof",
-  "roofing",
-  "siding",
-  "sod",
-  "sprinkler",
-  "sprinklers",
-  "stump",
-  "tree",
-  "trees",
-  "wall",
-  "windows",
-]);
+import {
+  TAKEOVER_PATTERN,
+  buildSlotList,
+  buildSlotTemplateContext,
+  buildTemplateBundle,
+  formatMissingField,
+  formatSlotLabel,
+  getFollowUpCadenceMinutes,
+  hasStartKeyword,
+  hasStopKeyword,
+  isAmbiguousTimeSelection,
+  parseAddress,
+  parseBookingSelection,
+  parseTimeframe,
+  parseWorkAndLocation,
+  sanitizeMessageBody,
+  type ConversationLead,
+  type ConversationOrgConfig,
+  type SlotOption,
+  type TemplateBundle,
+  withSignature,
+} from "@/lib/conversational-sms-core";
+import {
+  getConversationalSmsLlmReplyBody,
+  hasConversationalSmsLlmExtractionConfidence,
+  hasConversationalSmsLlmHandoffConfidence,
+} from "@/lib/conversational-sms-llm-contract";
+import { maybeInterpretConversationalSmsTurn } from "@/lib/conversational-sms-llm";
+import {
+  auditConversation,
+  cancelQueuedAutomation,
+  claimDueConversationFollowUp,
+  getConversationLead,
+  getConversationOrgConfig,
+  getLiveConversationFollowUpState,
+  getOrCreateConversationState,
+  queueConversationReply,
+  sendConversationMessage,
+  setConversationStage,
+  setNextFollowUp,
+} from "@/lib/conversational-sms-state";
+import { listWorkspaceUsers, sortWorkspaceUsersByCalendarRoleThenLabel } from "@/lib/workspace-users";
 
 const OFFERED_SLOT_COUNT = 3;
 const OFFERED_SLOT_LOOKAHEAD_DAYS = 10;
 const OFFER_HOLD_MINUTES = 10;
 const TAKEOVER_PAUSE_HOURS = 24;
-const HUMANIZED_REPLY_DELAY_MINUTES = 2;
-const MAX_HUMANIZED_REPLY_DELAY_MINUTES = 3;
 const MISSED_CALL_FOLLOW_UP_DELAY_MINUTES = 2;
-const FOLLOW_UP_CLAIM_HOLD_MINUTES = 5;
 
-type ConversationOrgConfig = {
-  id: string;
-  name: string;
-  messageLanguage: "EN" | "ES" | "AUTO";
-  smsTone: "FRIENDLY" | "PROFESSIONAL" | "DIRECT" | "SALES" | "PREMIUM" | "BILINGUAL" | "CUSTOM";
-  autoReplyEnabled: boolean;
-  followUpsEnabled: boolean;
-  autoBookingEnabled: boolean;
-  smsFromNumberE164: string | null;
-  smsQuietHoursStartMinute: number;
-  smsQuietHoursEndMinute: number;
-  slotDurationMinutes: number;
-  bufferMinutes: number;
-  daysAhead: number;
-  messagingTimezone: string;
-  customTemplates: SmsToneCustomTemplates;
-  smsGreetingLine: string | null;
-  smsWorkingHoursText: string | null;
-  smsWebsiteSignature: string | null;
-  missedCallAutoReplyBody: string | null;
-  missedCallAutoReplyBodyEn: string | null;
-  missedCallAutoReplyBodyEs: string | null;
-  intakeAskLocationBody: string | null;
-  intakeAskLocationBodyEn: string | null;
-  intakeAskLocationBodyEs: string | null;
-  intakeAskWorkTypeBody: string | null;
-  intakeAskWorkTypeBodyEn: string | null;
-  intakeAskWorkTypeBodyEs: string | null;
-  intakeAskCallbackBody: string | null;
-  intakeAskCallbackBodyEn: string | null;
-  intakeAskCallbackBodyEs: string | null;
-  intakeCompletionBody: string | null;
-  intakeCompletionBodyEn: string | null;
-  intakeCompletionBodyEs: string | null;
-  dashboardConfig: {
-    calendarTimezone: string;
-    defaultSlotMinutes: number;
-  } | null;
-};
-
-type ConversationLead = {
-  id: string;
-  orgId: string;
-  customerId: string | null;
-  phoneE164: string;
-  status: "NEW" | "CALLED_NO_ANSWER" | "VOICEMAIL" | "INTERESTED" | "FOLLOW_UP" | "BOOKED" | "NOT_INTERESTED" | "DNC";
-  preferredLanguage: "EN" | "ES" | null;
-  businessName: string | null;
-  contactName: string | null;
-  nextFollowUpAt: Date | null;
-};
-
-type SlotOption = {
-  id: "A" | "B" | "C";
-  holdId: string;
-  startAtIso: string;
-  endAtIso: string;
-  workerUserId: string;
-  label: string;
-  matchText: string;
-};
-
-type TemplateBundle = {
-  locale: "EN" | "ES";
-  initial: string;
-  askAddress: string;
-  askCity: string;
-  askTimeframe: string;
-  offerBooking: string;
-  followUp1: string;
-  followUp2: string;
-  followUp3: string;
-  bookingConfirmation: string;
-  clarification: string;
-  optOutConfirmation: string;
-  humanAck: string;
-};
+function preferLlmReplyBody(fallbackBody: string, replyBody: string | null): string {
+  return replyBody || fallbackBody;
+}
 
 type HandleInboundResult = {
   stage: ConversationStage;
@@ -173,789 +82,33 @@ type HandleInboundResult = {
     | "NOOP";
 };
 
-function normalizeInboundKeyword(body: string): string {
-  return body.trim().toUpperCase().split(/\s+/)[0] || "";
-}
-
-function hasStopKeyword(body: string): boolean {
-  return STOP_KEYWORDS.has(normalizeInboundKeyword(body));
-}
-
-function hasStartKeyword(body: string): boolean {
-  return START_KEYWORDS.has(normalizeInboundKeyword(body));
-}
-
-function mapStageToLeadIntake(stage: ConversationStage): LeadIntakeStage {
-  switch (stage) {
-    case "NEW":
-      return "NONE";
-    case "ASKED_WORK":
-      return "INTRO_SENT";
-    case "ASKED_ADDRESS":
-      return "WAITING_LOCATION";
-    case "ASKED_TIMEFRAME":
-      return "WAITING_WORK_TYPE";
-    case "OFFERED_BOOKING":
-      return "WAITING_CALLBACK";
-    case "BOOKED":
-    case "HUMAN_TAKEOVER":
-    case "CLOSED":
-      return "COMPLETED";
-    default:
-      return "NONE";
-  }
-}
-
-function getFollowUpCadenceMinutes(stage: ConversationStage): number[] {
-  switch (stage) {
-    case "ASKED_WORK":
-    case "ASKED_ADDRESS":
-      return [10, 24 * 60, 72 * 60];
-    case "ASKED_TIMEFRAME":
-      return [15, 24 * 60];
-    case "OFFERED_BOOKING":
-      return [30, 48 * 60];
-    default:
-      return [];
-  }
-}
-
-function formatMissingField(stage: ConversationStage, locale: "EN" | "ES"): string {
-  if (locale === "ES") {
-    if (stage === "ASKED_WORK") return "el tipo de trabajo";
-    if (stage === "ASKED_ADDRESS") return "la dirección";
-    if (stage === "ASKED_TIMEFRAME") return "el plazo";
-    if (stage === "OFFERED_BOOKING") return "la opción (A/B/C)";
-    return "los datos";
-  }
-
-  if (stage === "ASKED_WORK") return "the work needed";
-  if (stage === "ASKED_ADDRESS") return "the property address";
-  if (stage === "ASKED_TIMEFRAME") return "your timeframe";
-  if (stage === "OFFERED_BOOKING") return "the booking option (A/B/C)";
-  return "the missing details";
-}
-
-function sanitizeMessageBody(body: string): string {
-  return body.replace(/\s+/g, " ").trim();
-}
-
-function withSignature(input: { body: string; websiteSignature: string | null }): string {
-  const body = sanitizeMessageBody(input.body);
-  if (!input.websiteSignature) return body;
-  const signature = sanitizeMessageBody(input.websiteSignature);
-  if (!signature) return body;
-  return `${body}\n\n${signature}`;
-}
-
-function parseTimeframe(value: string): ConversationTimeframe | null {
-  const normalized = value.toLowerCase();
-  if (/\b(asap|urgent|today|now|right away|de inmediato|urgente|hoy|ahora)\b/.test(normalized)) return "ASAP";
-  if (/\b(this week|soon|few days|esta semana|pronto|estos dias|estos días)\b/.test(normalized)) return "THIS_WEEK";
-  if (/\b(next week|weekend|la próxima semana|proxima semana|fin de semana)\b/.test(normalized)) return "NEXT_WEEK";
-  if (/\b(quote|estimate|just looking|cotizaci[oó]n|presupuesto|solo cotizar)\b/.test(normalized)) return "QUOTE_ONLY";
-  return null;
-}
-
-function parseAddress(value: string): { kind: "ADDRESS" | "CITY" | "UNKNOWN"; addressText?: string; city?: string } {
-  const trimmed = sanitizeMessageBody(value);
-  if (!trimmed) return { kind: "UNKNOWN" };
-  const lower = trimmed.toLowerCase();
-
-  if (ADDRESS_PATTERN.test(lower) || CROSS_STREET_PATTERN.test(lower) || ZIP_PATTERN.test(lower)) {
-    return { kind: "ADDRESS", addressText: trimmed };
-  }
-
-  const words = trimmed.split(/\s+/);
-  const normalizedCity = normalizeLeadCity(trimmed);
-  if (
-    !/\d/.test(trimmed) &&
-    normalizedCity &&
-    !containsLikelyWorkSummaryText(normalizedCity) &&
-    normalizedCity.split(/\s+/).length <= 5 &&
-    CITY_PATTERN.test(normalizedCity)
-  ) {
-    return { kind: "CITY", city: normalizedCity };
-  }
-
-  if (/\d/.test(trimmed) && words.length >= 3) {
-    return { kind: "ADDRESS", addressText: trimmed };
-  }
-
-  return { kind: "UNKNOWN" };
-}
-
-function looksLikeWorkSummary(value: string): boolean {
-  const normalized = sanitizeMessageBody(value);
-  if (!normalized) return false;
-  if (hasStopKeyword(normalized) || hasStartKeyword(normalized)) return false;
-  if (TAKEOVER_PATTERN.test(normalized)) return false;
-  if (parseTimeframe(normalized)) return false;
-  return /[a-zA-ZÀ-ÿ]/.test(normalized);
-}
-
-function looksLikeLocationPhrase(value: string): boolean {
-  const normalized = sanitizeMessageBody(value);
-  if (!normalized) return false;
-  const words = normalized
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.some((word) => COMMON_WORK_LOCATION_COLLISION_TERMS.has(word))) {
-    return false;
-  }
-  if (containsLikelyWorkSummaryText(normalized)) {
-    return false;
-  }
-  const parsed = parseAddress(normalized);
-  return parsed.kind === "CITY" || parsed.kind === "ADDRESS";
-}
-
-function parseWorkAndLocation(value: string): {
-  workSummary: string;
-  addressText: string | null;
-  addressCity: string | null;
-} | null {
-  const trimmed = sanitizeMessageBody(value);
-  if (!trimmed) return null;
-
-  const explicitSplit = trimmed.match(/^(.*?)(?:\s+|,\s*)(?:in|at|near|around)\s+(.+)$/i);
-  if (explicitSplit) {
-    const workSummary = sanitizeMessageBody(explicitSplit[1] || "");
-    const locationSummary = sanitizeMessageBody(explicitSplit[2] || "");
-    const parsedLocation = parseAddress(locationSummary);
-    if (
-      looksLikeWorkSummary(workSummary) &&
-      (parsedLocation.kind === "ADDRESS" || parsedLocation.kind === "CITY")
-    ) {
-      return {
-        workSummary,
-        addressText: parsedLocation.kind === "ADDRESS" ? parsedLocation.addressText || locationSummary : null,
-        addressCity: parsedLocation.kind === "CITY" ? parsedLocation.city || locationSummary : null,
-      };
+export type MissedCallKickoffDispatchResult =
+  | {
+      outcome: "sent";
+      messageStatus: MessageStatus;
+      notice?: string;
     }
-  }
-
-  const words = trimmed.split(/\s+/);
-  if (words.length < 3 || /\d/.test(trimmed)) {
-    const parsedWhole = parseAddress(trimmed);
-    if (parsedWhole.kind === "ADDRESS" || parsedWhole.kind === "CITY") {
-      return null;
+  | {
+      outcome: "queued";
+      queueId: string;
+      created: boolean;
     }
-    return null;
-  }
-
-  for (let cityWordCount = Math.min(2, words.length - 1); cityWordCount >= 1; cityWordCount -= 1) {
-    const workCandidate = sanitizeMessageBody(words.slice(0, -cityWordCount).join(" "));
-    const cityCandidate = sanitizeMessageBody(words.slice(-cityWordCount).join(" "));
-    if (!looksLikeWorkSummary(workCandidate)) {
-      continue;
+  | {
+      outcome: "skipped";
+      reason: string;
     }
-    if (looksLikeLocationPhrase(cityCandidate)) {
-      return {
-        workSummary: workCandidate,
-        addressText: null,
-        addressCity: cityCandidate,
-      };
-    }
-  }
-
-  const parsedWhole = parseAddress(trimmed);
-  if (parsedWhole.kind === "ADDRESS" || parsedWhole.kind === "CITY") {
-    return null;
-  }
-
-  return null;
-}
-
-function parseBookingSelection(input: { inboundBody: string; options: SlotOption[] }): SlotOption | null {
-  const text = input.inboundBody.trim().toLowerCase();
-  if (!text) return null;
-
-  const directMatch = text.match(/\b([abc]|[123])\b/);
-  if (directMatch?.[1]) {
-    const key = directMatch[1];
-    const normalizedId = key === "1" ? "A" : key === "2" ? "B" : key === "3" ? "C" : key.toUpperCase();
-    return input.options.find((option) => option.id === normalizedId) || null;
-  }
-
-  for (const option of input.options) {
-    if (text.includes(option.matchText)) {
-      return option;
-    }
-  }
-
-  return null;
-}
-
-function isAmbiguousTimeSelection(text: string): boolean {
-  return AMBIGUOUS_TIME_PATTERN.test(text.toLowerCase());
-}
-
-async function getConversationOrgConfig(orgId: string): Promise<ConversationOrgConfig | null> {
-  const org = await prisma.organization.findUnique({
-    where: { id: orgId },
-    select: {
-      id: true,
-      name: true,
-      messageLanguage: true,
-      smsTone: true,
-      autoReplyEnabled: true,
-      followUpsEnabled: true,
-      autoBookingEnabled: true,
-      smsFromNumberE164: true,
-      smsQuietHoursStartMinute: true,
-      smsQuietHoursEndMinute: true,
-      smsGreetingLine: true,
-      smsWorkingHoursText: true,
-      smsWebsiteSignature: true,
-      missedCallAutoReplyBody: true,
-      missedCallAutoReplyBodyEn: true,
-      missedCallAutoReplyBodyEs: true,
-      intakeAskLocationBody: true,
-      intakeAskLocationBodyEn: true,
-      intakeAskLocationBodyEs: true,
-      intakeAskWorkTypeBody: true,
-      intakeAskWorkTypeBodyEn: true,
-      intakeAskWorkTypeBodyEs: true,
-      intakeAskCallbackBody: true,
-      intakeAskCallbackBodyEn: true,
-      intakeAskCallbackBodyEs: true,
-      intakeCompletionBody: true,
-      intakeCompletionBodyEn: true,
-      intakeCompletionBodyEs: true,
-      dashboardConfig: {
-        select: {
-          calendarTimezone: true,
-          defaultSlotMinutes: true,
-        },
-      },
-      messagingSettings: {
-        select: {
-          smsTone: true,
-          autoReplyEnabled: true,
-          followUpsEnabled: true,
-          autoBookingEnabled: true,
-          workingHoursStart: true,
-          workingHoursEnd: true,
-          slotDurationMinutes: true,
-          bufferMinutes: true,
-          daysAhead: true,
-          timezone: true,
-          customTemplates: true,
-        },
-      },
-    },
-  });
-
-  if (!org) return null;
-
-  const messaging = org.messagingSettings;
-  const customTemplates = normalizeCustomTemplates(messaging?.customTemplates);
-
-  return {
-    id: org.id,
-    name: org.name,
-    messageLanguage: org.messageLanguage,
-    smsTone: messaging?.smsTone || org.smsTone,
-    autoReplyEnabled: messaging?.autoReplyEnabled ?? org.autoReplyEnabled,
-    followUpsEnabled: messaging?.followUpsEnabled ?? org.followUpsEnabled,
-    autoBookingEnabled: messaging?.autoBookingEnabled ?? org.autoBookingEnabled,
-    smsFromNumberE164: org.smsFromNumberE164,
-    smsQuietHoursStartMinute: org.smsQuietHoursStartMinute,
-    smsQuietHoursEndMinute: org.smsQuietHoursEndMinute,
-    slotDurationMinutes: Math.max(15, Math.min(180, messaging?.slotDurationMinutes || org.dashboardConfig?.defaultSlotMinutes || 60)),
-    bufferMinutes: Math.max(0, Math.min(120, messaging?.bufferMinutes || 15)),
-    daysAhead: Math.max(1, Math.min(14, messaging?.daysAhead || 3)),
-    messagingTimezone: messaging?.timezone || org.dashboardConfig?.calendarTimezone || "America/Los_Angeles",
-    customTemplates,
-    smsGreetingLine: org.smsGreetingLine,
-    smsWorkingHoursText: org.smsWorkingHoursText || (messaging ? `${messaging.workingHoursStart}-${messaging.workingHoursEnd}` : null),
-    smsWebsiteSignature: org.smsWebsiteSignature,
-    missedCallAutoReplyBody: org.missedCallAutoReplyBody,
-    missedCallAutoReplyBodyEn: org.missedCallAutoReplyBodyEn,
-    missedCallAutoReplyBodyEs: org.missedCallAutoReplyBodyEs,
-    intakeAskLocationBody: org.intakeAskLocationBody,
-    intakeAskLocationBodyEn: org.intakeAskLocationBodyEn,
-    intakeAskLocationBodyEs: org.intakeAskLocationBodyEs,
-    intakeAskWorkTypeBody: org.intakeAskWorkTypeBody,
-    intakeAskWorkTypeBodyEn: org.intakeAskWorkTypeBodyEn,
-    intakeAskWorkTypeBodyEs: org.intakeAskWorkTypeBodyEs,
-    intakeAskCallbackBody: org.intakeAskCallbackBody,
-    intakeAskCallbackBodyEn: org.intakeAskCallbackBodyEn,
-    intakeAskCallbackBodyEs: org.intakeAskCallbackBodyEs,
-    intakeCompletionBody: org.intakeCompletionBody,
-    intakeCompletionBodyEn: org.intakeCompletionBodyEn,
-    intakeCompletionBodyEs: org.intakeCompletionBodyEs,
-    dashboardConfig: org.dashboardConfig,
-  };
-}
-
-async function getConversationLead(leadId: string): Promise<ConversationLead | null> {
-  return prisma.lead.findUnique({
-    where: { id: leadId },
-    select: {
-      id: true,
-      orgId: true,
-      customerId: true,
-      phoneE164: true,
-      status: true,
-      preferredLanguage: true,
-      businessName: true,
-      contactName: true,
-      nextFollowUpAt: true,
-    },
-  });
-}
-
-async function getOrCreateConversationState(lead: ConversationLead) {
-  return prisma.leadConversationState.upsert({
-    where: { leadId: lead.id },
-    create: {
-      orgId: lead.orgId,
-      leadId: lead.id,
-      stage: "NEW",
-      followUpStep: 0,
-    },
-    update: {},
-  });
-}
-
-async function auditConversation(input: {
-  orgId: string;
-  leadId: string;
-  conversationStateId?: string | null;
-  action: "AUTO_MESSAGE_SENT" | "STAGE_CHANGED" | "FOLLOWUP_SCHEDULED" | "TAKEOVER_TRIGGERED" | "OPT_OUT" | "BOOKED_CREATED";
-  metadataJson?: Prisma.InputJsonValue;
-}) {
-  await prisma.leadConversationAuditEvent.create({
-    data: {
-      orgId: input.orgId,
-      leadId: input.leadId,
-      conversationStateId: input.conversationStateId || null,
-      action: input.action,
-      metadataJson: input.metadataJson,
-    },
-  });
-}
-
-async function cancelQueuedAutomation(input: { orgId: string; leadId: string; reason: string }) {
-  await prisma.smsDispatchQueue.updateMany({
-    where: {
-      orgId: input.orgId,
-      leadId: input.leadId,
-      status: "QUEUED",
-    },
-    data: {
-      status: "FAILED",
-      lastError: input.reason,
-    },
-  });
-}
-
-function buildTemplateBundle(input: {
-  organization: ConversationOrgConfig;
-  lead: ConversationLead;
-}): TemplateBundle {
-  const locale = resolveMessageLocale({
-    organizationLanguage: input.organization.messageLanguage,
-    leadPreferredLanguage: input.lead.preferredLanguage,
-  });
-
-  const base = getSmsToneTemplates({
-    tone: input.organization.smsTone,
-    locale,
-  });
-
-  const customInitial =
-    locale === "ES"
-      ? input.organization.missedCallAutoReplyBodyEs || input.organization.missedCallAutoReplyBodyEn || input.organization.missedCallAutoReplyBody
-      : input.organization.missedCallAutoReplyBodyEn || input.organization.missedCallAutoReplyBodyEs || input.organization.missedCallAutoReplyBody;
-  const customAskAddress =
-    locale === "ES"
-      ? input.organization.intakeAskLocationBodyEs || input.organization.intakeAskLocationBodyEn || input.organization.intakeAskLocationBody
-      : input.organization.intakeAskLocationBodyEn || input.organization.intakeAskLocationBodyEs || input.organization.intakeAskLocationBody;
-  const customAskTimeframe =
-    locale === "ES"
-      ? input.organization.intakeAskWorkTypeBodyEs ||
-        input.organization.intakeAskWorkTypeBodyEn ||
-        input.organization.intakeAskWorkTypeBody
-      : input.organization.intakeAskWorkTypeBodyEn ||
-        input.organization.intakeAskWorkTypeBodyEs ||
-        input.organization.intakeAskWorkTypeBody;
-  const customOffer =
-    locale === "ES"
-      ? input.organization.intakeAskCallbackBodyEs || input.organization.intakeAskCallbackBodyEn || input.organization.intakeAskCallbackBody
-      : input.organization.intakeAskCallbackBodyEn || input.organization.intakeAskCallbackBodyEs || input.organization.intakeAskCallbackBody;
-  const customBooked =
-    locale === "ES"
-      ? input.organization.intakeCompletionBodyEs || input.organization.intakeCompletionBodyEn || input.organization.intakeCompletionBody
-      : input.organization.intakeCompletionBodyEn || input.organization.intakeCompletionBodyEs || input.organization.intakeCompletionBody;
-
-  const resolved = {
-    initial: resolveTemplate({
-      tone: input.organization.smsTone,
-      locale,
-      key: "initial",
-      customTemplates: input.organization.customTemplates,
-    }),
-    askAddress: resolveTemplate({
-      tone: input.organization.smsTone,
-      locale,
-      key: "askAddress",
-      customTemplates: input.organization.customTemplates,
-    }),
-    askTimeframe: resolveTemplate({
-      tone: input.organization.smsTone,
-      locale,
-      key: "askTimeframe",
-      customTemplates: input.organization.customTemplates,
-    }),
-    offerBooking: resolveTemplate({
-      tone: input.organization.smsTone,
-      locale,
-      key: "offerBooking",
-      customTemplates: input.organization.customTemplates,
-    }),
-    bookingConfirmation: resolveTemplate({
-      tone: input.organization.smsTone,
-      locale,
-      key: "bookingConfirmation",
-      customTemplates: input.organization.customTemplates,
-    }),
-    followUp1: resolveTemplate({
-      tone: input.organization.smsTone,
-      locale,
-      key: "followUp1",
-      customTemplates: input.organization.customTemplates,
-    }),
-    followUp2: resolveTemplate({
-      tone: input.organization.smsTone,
-      locale,
-      key: "followUp2",
-      customTemplates: input.organization.customTemplates,
-    }),
-    followUp3: resolveTemplate({
-      tone: input.organization.smsTone,
-      locale,
-      key: "followUp3",
-      customTemplates: input.organization.customTemplates,
-    }),
-  };
-
-  return {
-    locale,
-    ...base,
-    initial: customInitial?.trim() || resolved.initial || base.initial,
-    askAddress: customAskAddress?.trim() || resolved.askAddress || base.askAddress,
-    askTimeframe: customAskTimeframe?.trim() || resolved.askTimeframe || base.askTimeframe,
-    offerBooking: customOffer?.trim() || resolved.offerBooking || base.offerBooking,
-    bookingConfirmation: customBooked?.trim() || resolved.bookingConfirmation || base.bookingConfirmation,
-    followUp1: resolved.followUp1 || base.followUp1,
-    followUp2: resolved.followUp2 || base.followUp2,
-    followUp3: resolved.followUp3 || base.followUp3,
-  };
-}
-
-async function sendConversationMessage(input: {
-  organization: ConversationOrgConfig;
-  lead: ConversationLead;
-  stateId: string;
-  body: string;
-  messageType: "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
-  allowWhenStopped?: boolean;
-  allowPendingA2P?: boolean;
-}) {
-  if (!input.allowWhenStopped && input.lead.status === "DNC") {
-    return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Lead is opted out." };
-  }
-
-  const text = sanitizeMessageBody(input.body);
-  if (!text) {
-    return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Message body is empty." };
-  }
-
-  const outbound = await sendOutboundSms({
-    orgId: input.organization.id,
-    fromNumberE164: input.organization.smsFromNumberE164 || null,
-    toNumberE164: input.lead.phoneE164,
-    body: text,
-    allowPendingA2P: input.allowPendingA2P,
-  });
-
-  if (outbound.suppressed) {
-    return {
-      ok: false as const,
-      status: outbound.status,
-      notice: outbound.notice || "Suppressed outbound SMS because the contact is opted out.",
+  | {
+      outcome: "failed";
+      reason: string;
     };
-  }
-
-  if (outbound.status === "FAILED") {
-    console.warn(
-      `[sms:auto] outbound send failed orgId=${input.organization.id} leadId=${input.lead.id} type=${input.messageType} reason=${outbound.notice || "unknown"}`,
-    );
-  }
-
-  const resolvedFrom = outbound.resolvedFromNumberE164 || input.organization.smsFromNumberE164;
-  if (!resolvedFrom) {
-    return {
-      ok: false as const,
-      status: "FAILED" as MessageStatus,
-      notice: outbound.notice || "No sender number configured.",
-    };
-  }
-
-  const now = new Date();
-  await prisma.$transaction(async (tx) => {
-    const message = await tx.message.create({
-      data: {
-        orgId: input.organization.id,
-        leadId: input.lead.id,
-        direction: "OUTBOUND",
-        type: input.messageType,
-        fromNumberE164: resolvedFrom,
-        toNumberE164: input.lead.phoneE164,
-        body: text,
-        provider: "TWILIO",
-        providerMessageSid: outbound.providerMessageSid,
-        status: outbound.status,
-      },
-      select: {
-        id: true,
-        createdAt: true,
-      },
-    });
-
-    await recordOutboundSmsCommunicationEvent(tx, {
-      orgId: input.organization.id,
-      leadId: input.lead.id,
-      contactId: input.lead.customerId,
-      conversationId: input.stateId,
-      messageId: message.id,
-      body: text,
-      fromNumberE164: resolvedFrom,
-      toNumberE164: input.lead.phoneE164,
-      providerMessageSid: outbound.providerMessageSid,
-      status: outbound.status,
-      occurredAt: message.createdAt,
-    });
-
-    await tx.lead.update({
-      where: { id: input.lead.id },
-      data: {
-        lastOutboundAt: now,
-        lastContactedAt: now,
-      },
-    });
-
-    await tx.leadConversationState.update({
-      where: { id: input.stateId },
-      data: {
-        lastOutboundAt: now,
-      },
-    });
-  });
-
-  await auditConversation({
-    orgId: input.organization.id,
-    leadId: input.lead.id,
-    conversationStateId: input.stateId,
-    action: "AUTO_MESSAGE_SENT",
-    metadataJson: {
-      messageType: input.messageType,
-      status: outbound.status,
-    },
-  });
-
-  return { ok: outbound.status !== "FAILED", status: outbound.status, notice: outbound.notice };
-}
-
-async function queueConversationReply(input: {
-  organization: ConversationOrgConfig;
-  lead: ConversationLead;
-  stateId: string;
-  body: string;
-  messageType: "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
-  fallbackFromNumberE164?: string | null;
-  delayMinutes?: number;
-  sendAfterAt?: Date;
-}) {
-  if (input.lead.status === "DNC") {
-    return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Lead is opted out." };
-  }
-
-  const text = sanitizeMessageBody(input.body);
-  if (!text) {
-    return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Message body is empty." };
-  }
-
-  const fromNumberE164 = input.organization.smsFromNumberE164 || input.fallbackFromNumberE164 || null;
-  if (!fromNumberE164) {
-    return {
-      ok: false as const,
-      status: "FAILED" as MessageStatus,
-      notice: "No sender number configured for delayed SMS reply.",
-    };
-  }
-
-  const sendAfterAt =
-    input.sendAfterAt ||
-    addMinutes(
-      new Date(),
-      Math.max(1, Math.min(MAX_HUMANIZED_REPLY_DELAY_MINUTES, input.delayMinutes ?? HUMANIZED_REPLY_DELAY_MINUTES)),
-    );
-  await queueSmsDispatch({
-    orgId: input.organization.id,
-    leadId: input.lead.id,
-    kind: "AUTOMATION_GENERIC",
-    messageType: input.messageType,
-    fromNumberE164,
-    toNumberE164: input.lead.phoneE164,
-    body: text,
-    sendAfterAt,
-  });
-
-  return { ok: true as const, status: "QUEUED" as MessageStatus, sendAfterAt };
-}
-
-async function setConversationStage(input: {
-  orgId: string;
-  leadId: string;
-  stateId: string;
-  previousStage: ConversationStage;
-  stage: ConversationStage;
-  data?: Prisma.LeadConversationStateUpdateInput;
-  leadData?: Prisma.LeadUpdateInput;
-}) {
-  await prisma.$transaction(async (tx) => {
-    await tx.leadConversationState.update({
-      where: { id: input.stateId },
-      data: {
-        stage: input.stage,
-        ...(input.data || {}),
-      },
-    });
-    await tx.lead.update({
-      where: { id: input.leadId },
-      data: {
-        intakeStage: mapStageToLeadIntake(input.stage),
-        ...(input.leadData || {}),
-      },
-    });
-  });
-
-  await auditConversation({
-    orgId: input.orgId,
-    leadId: input.leadId,
-    conversationStateId: input.stateId,
-    action: "STAGE_CHANGED",
-    metadataJson: {
-      previousStage: input.previousStage,
-      nextStage: input.stage,
-    },
-  });
-}
-
-async function setNextFollowUp(input: {
-  organization: ConversationOrgConfig;
-  leadId: string;
-  stateId: string;
-  stage: ConversationStage;
-  sentFollowUpCount: number;
-  fromAt?: Date;
-}) {
-  const cadence = getFollowUpCadenceMinutes(input.stage);
-  const nextMinutes = cadence[input.sentFollowUpCount];
-  if (!input.organization.followUpsEnabled || !nextMinutes) {
-    await prisma.$transaction([
-      prisma.leadConversationState.update({
-        where: { id: input.stateId },
-        data: {
-          nextFollowUpAt: null,
-          followUpStep: input.sentFollowUpCount,
-        },
-      }),
-      prisma.lead.update({
-        where: { id: input.leadId },
-        data: { nextFollowUpAt: null },
-      }),
-    ]);
-    return;
-  }
-
-  const nextFollowUpAt = addMinutes(input.fromAt || new Date(), nextMinutes);
-  await prisma.$transaction([
-    prisma.leadConversationState.update({
-      where: { id: input.stateId },
-      data: {
-        nextFollowUpAt,
-        followUpStep: input.sentFollowUpCount,
-      },
-    }),
-    prisma.lead.update({
-      where: { id: input.leadId },
-      data: { nextFollowUpAt },
-    }),
-  ]);
-
-  await auditConversation({
-    orgId: input.organization.id,
-    leadId: input.leadId,
-    conversationStateId: input.stateId,
-    action: "FOLLOWUP_SCHEDULED",
-    metadataJson: {
-      stage: input.stage,
-      sentFollowUpCount: input.sentFollowUpCount,
-      nextFollowUpAt: nextFollowUpAt.toISOString(),
-      nextMinutes,
-    },
-  });
-}
-
-function formatSlotLabel(input: { startAt: Date; timeZone: string; locale: "EN" | "ES" }): string {
-  const todayKey = formatInTimeZone(new Date(), input.timeZone, "yyyy-MM-dd");
-  const tomorrowKey = formatInTimeZone(addDays(new Date(), 1), input.timeZone, "yyyy-MM-dd");
-  const slotKey = formatInTimeZone(input.startAt, input.timeZone, "yyyy-MM-dd");
-  const timeLabel = formatInTimeZone(input.startAt, input.timeZone, "h:mmaaa").toLowerCase();
-
-  if (slotKey === todayKey) {
-    return input.locale === "ES" ? `Hoy ${timeLabel}` : `Today ${timeLabel}`;
-  }
-  if (slotKey === tomorrowKey) {
-    return input.locale === "ES" ? `Mañana ${timeLabel}` : `Tomorrow ${timeLabel}`;
-  }
-  const dayLabel = formatInTimeZone(input.startAt, input.timeZone, "EEE");
-  return `${dayLabel} ${timeLabel}`;
-}
 
 async function getWorkerCandidates(orgId: string) {
-  const workers = await prisma.user.findMany({
-    where: {
-      orgId,
-      calendarAccessRole: { not: "READ_ONLY" },
-    },
-    select: {
-      id: true,
-      calendarAccessRole: true,
-      name: true,
-      email: true,
-    },
-    take: 60,
+  const workers = await listWorkspaceUsers({
+    organizationId: orgId,
+    excludeReadOnly: true,
   });
 
-  const rank: Record<string, number> = {
-    OWNER: 0,
-    ADMIN: 1,
-    WORKER: 2,
-    READ_ONLY: 3,
-  };
-
-  return workers.sort((a, b) => {
-    const diff = (rank[a.calendarAccessRole] ?? 99) - (rank[b.calendarAccessRole] ?? 99);
-    if (diff !== 0) return diff;
-    return (a.name || a.email).localeCompare(b.name || b.email);
-  });
+  return sortWorkspaceUsersByCalendarRoleThenLabel(workers).slice(0, 60);
 }
 
 async function createBookingOptions(input: {
@@ -1069,20 +222,6 @@ async function createBookingOptions(input: {
   return options;
 }
 
-function buildSlotList(options: SlotOption[]): string {
-  return options.map((option) => `${option.id}) ${option.label}`).join("  ");
-}
-
-function buildSlotTemplateContext(options: SlotOption[]) {
-  const [slot1 = "", slot2 = "", slot3 = ""] = options.map((option) => `${option.id}) ${option.label}`);
-  return {
-    slotList: buildSlotList(options),
-    slot1,
-    slot2,
-    slot3,
-  };
-}
-
 async function bookFromSelectedOption(input: {
   organization: ConversationOrgConfig;
   lead: ConversationLead;
@@ -1103,45 +242,36 @@ async function bookFromSelectedOption(input: {
   });
   if (!hold) return false;
 
-  const event = await prisma.event.create({
-    data: {
-      orgId: input.organization.id,
-      leadId: input.lead.id,
-      type: "ESTIMATE",
-      status: "CONFIRMED",
-      busy: true,
-      title: `${input.organization.name} Estimate`,
-      description: "Booked from conversational SMS flow.",
-      customerName: input.lead.contactName || input.lead.businessName || null,
-      addressLine: input.stateAddress,
-      startAt: hold.startAt,
-      endAt: hold.endAt,
-      assignedToUserId: hold.workerUserId,
-      workerAssignments: {
-        create: [
-          {
-            orgId: input.organization.id,
-            workerUserId: hold.workerUserId,
-          },
-        ],
+  const event = await prisma.$transaction(async (tx) => {
+    const nextEvent = await tx.event.create({
+      data: {
+        orgId: input.organization.id,
+        leadId: input.lead.id,
+        type: "ESTIMATE",
+        status: "CONFIRMED",
+        busy: true,
+        title: `${input.organization.name} Estimate`,
+        description: "Booked from conversational SMS flow.",
+        customerName: input.lead.contactName || input.lead.businessName || null,
+        addressLine: input.stateAddress,
+        startAt: hold.startAt,
+        endAt: hold.endAt,
+        assignedToUserId: hold.workerUserId,
+        workerAssignments: {
+          create: [
+            {
+              orgId: input.organization.id,
+              workerUserId: hold.workerUserId,
+            },
+          ],
+        },
       },
-    },
-    select: {
-      id: true,
-      assignedToUserId: true,
-    },
-  });
-
-  if (event.assignedToUserId) {
-    void enqueueGoogleSyncJob({
-      orgId: input.organization.id,
-      userId: event.assignedToUserId,
-      eventId: event.id,
-      action: "UPSERT_EVENT",
+      select: {
+        id: true,
+        assignedToUserId: true,
+      },
     });
-  }
 
-  await prisma.$transaction(async (tx) => {
     await tx.calendarHold.updateMany({
       where: {
         orgId: input.organization.id,
@@ -1167,19 +297,35 @@ async function bookFromSelectedOption(input: {
         bookingOptions: Prisma.DbNull,
         bookedStartAt: hold.startAt,
         bookedEndAt: hold.endAt,
-        bookedCalendarEventId: event.id,
+        bookedCalendarEventId: nextEvent.id,
       },
     });
 
-    await tx.lead.update({
-      where: { id: input.lead.id },
-      data: {
-        status: "BOOKED",
-        nextFollowUpAt: null,
-        intakeStage: "COMPLETED",
-      },
+    await syncLeadBookingState(tx, {
+      orgId: input.organization.id,
+      leadId: input.lead.id,
+      eventId: nextEvent.id,
+      type: "ESTIMATE",
+      status: "CONFIRMED",
+      startAt: hold.startAt,
+      endAt: hold.endAt,
+      title: `${input.organization.name} Estimate`,
+      customerName: input.lead.contactName || input.lead.businessName || null,
+      addressLine: input.stateAddress,
+      createdByUserId: null,
     });
+
+    return nextEvent;
   });
+
+  if (event.assignedToUserId) {
+    void enqueueGoogleSyncJob({
+      orgId: input.organization.id,
+      userId: event.assignedToUserId,
+      eventId: event.id,
+      action: "UPSERT_EVENT",
+    });
+  }
 
   await auditConversation({
     orgId: input.organization.id,
@@ -1278,16 +424,26 @@ export async function startConversationalSmsFromMissedCall(input: {
   orgId: string;
   leadId: string;
   toNumberE164: string;
-}) {
+}): Promise<MissedCallKickoffDispatchResult> {
   const now = new Date();
   const [organization, lead] = await Promise.all([
     getConversationOrgConfig(input.orgId),
     getConversationLead(input.leadId),
   ]);
-  if (!organization || !lead || lead.status === "DNC" || !organization.autoReplyEnabled) return;
+  if (!organization || !lead) {
+    return { outcome: "skipped", reason: "missing_context" };
+  }
+  if (lead.status === "DNC") {
+    return { outcome: "skipped", reason: "lead_dnc" };
+  }
+  if (!organization.autoReplyEnabled) {
+    return { outcome: "skipped", reason: "auto_reply_disabled" };
+  }
 
   const state = await getOrCreateConversationState(lead);
-  if (shouldSuppressMissedCallKickoff({ state, now })) return;
+  if (shouldSuppressMissedCallKickoff({ state, now })) {
+    return { outcome: "skipped", reason: "conversation_in_progress" };
+  }
 
   const templates = buildTemplateBundle({ organization, lead });
   const kickoff = buildMissedCallOpeningMessages({
@@ -1304,7 +460,14 @@ export async function startConversationalSmsFromMissedCall(input: {
     allowPendingA2P: true,
   });
 
-  if (initialSend.status !== "FAILED" && kickoff.delayedPromptBody) {
+  if (!initialSend.ok) {
+    return {
+      outcome: "failed",
+      reason: initialSend.notice || "Missed-call opener failed to send.",
+    };
+  }
+
+  if (kickoff.delayedPromptBody) {
     await queueConversationReply({
       organization,
       lead,
@@ -1336,8 +499,14 @@ export async function startConversationalSmsFromMissedCall(input: {
     stateId: state.id,
     stage: "ASKED_WORK",
     sentFollowUpCount: 0,
-    fromAt: initialSend.status === "FAILED" ? undefined : new Date(),
+    fromAt: new Date(),
   });
+
+  return {
+    outcome: "sent",
+    messageStatus: initialSend.status,
+    notice: initialSend.notice,
+  };
 }
 
 export async function queueConversationalIntroForQuietHours(input: {
@@ -1345,19 +514,25 @@ export async function queueConversationalIntroForQuietHours(input: {
   leadId: string;
   toNumberE164: string;
   sendAfterAt: Date;
-}) {
+}): Promise<MissedCallKickoffDispatchResult> {
   const now = new Date();
   const [organization, lead] = await Promise.all([
     getConversationOrgConfig(input.orgId),
     getConversationLead(input.leadId),
   ]);
-  if (!organization || !lead || lead.status === "DNC" || !organization.autoReplyEnabled) {
-    return { queued: false as const };
+  if (!organization || !lead) {
+    return { outcome: "skipped", reason: "missing_context" };
+  }
+  if (lead.status === "DNC") {
+    return { outcome: "skipped", reason: "lead_dnc" };
+  }
+  if (!organization.autoReplyEnabled) {
+    return { outcome: "skipped", reason: "auto_reply_disabled" };
   }
 
   const state = await getOrCreateConversationState(lead);
   if (shouldSuppressMissedCallKickoff({ state, now })) {
-    return { queued: false as const };
+    return { outcome: "skipped", reason: "conversation_in_progress" };
   }
   const templates = buildTemplateBundle({ organization, lead });
   const kickoff = buildMissedCallOpeningMessages({
@@ -1408,7 +583,7 @@ export async function queueConversationalIntroForQuietHours(input: {
   const firstFollowUp = addMinutes(
     input.sendAfterAt,
     (kickoff.delayedPromptBody ? MISSED_CALL_FOLLOW_UP_DELAY_MINUTES : 0) +
-      (getFollowUpCadenceMinutes("ASKED_WORK")[0] || 10),
+      (getFollowUpCadenceMinutes("ASKED_WORK", ACTIVE_CONVERSATION_FOLLOW_UP_STAGES)[0] || 10),
   );
   await prisma.$transaction([
     prisma.leadConversationState.update({
@@ -1426,7 +601,7 @@ export async function queueConversationalIntroForQuietHours(input: {
     }),
   ]);
 
-  return { queued: true as const, queueId: queued.id, created: queued.created };
+  return { outcome: "queued", queueId: queued.id, created: queued.created };
 }
 
 export async function handleConversationalSmsInbound(input: {
@@ -1591,6 +766,25 @@ export async function handleConversationalSmsInbound(input: {
   let addressCity = state.addressCity || null;
   let timeframe = state.timeframe || null;
   let bookingOptions = (Array.isArray(state.bookingOptions) ? (state.bookingOptions as unknown as SlotOption[]) : null) || [];
+  let llmDecisionPromise: Promise<Awaited<ReturnType<typeof maybeInterpretConversationalSmsTurn>>> | null = null;
+
+  const getLlmDecision = async () => {
+    if (!llmDecisionPromise) {
+      llmDecisionPromise = maybeInterpretConversationalSmsTurn({
+        organization,
+        lead,
+        stage: currentStage === "NEW" ? "ASKED_WORK" : currentStage,
+        inboundBody: body,
+        workSummary,
+        addressText,
+        addressCity,
+        timeframe,
+        bookingOptions,
+      });
+    }
+
+    return llmDecisionPromise;
+  };
 
   if (currentStage === "NEW") {
     currentStage = "ASKED_WORK";
@@ -1610,6 +804,28 @@ export async function handleConversationalSmsInbound(input: {
         addressCity = standaloneLocation.city || body;
       } else {
         workSummary = body;
+      }
+    }
+
+    if (!workSummary || (!addressText && !addressCity)) {
+      const llmDecision = await getLlmDecision();
+      if (llmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
+        await activateHumanTakeover({
+          organization,
+          lead,
+          stateId: state.id,
+          currentStage: currentStage,
+          reason: "Lead asked for help that needs a human follow-up",
+          inboundBody: body,
+          templates,
+        });
+        return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
+      }
+
+      if (hasConversationalSmsLlmExtractionConfidence(llmDecision)) {
+        workSummary = workSummary || llmDecision?.workSummary || null;
+        addressText = addressText || llmDecision?.addressText || null;
+        addressCity = addressCity || llmDecision?.addressCity || null;
       }
     }
 
@@ -1636,6 +852,7 @@ export async function handleConversationalSmsInbound(input: {
           intakeLocationText: addressText || addressCity,
         },
       });
+      const llmDecision = await getLlmDecision();
       const askTimeframe = renderSmsTemplate(templates.askTimeframe, {
         bizName: organization.name,
         workingHours: organization.smsWorkingHoursText || "",
@@ -1644,7 +861,10 @@ export async function handleConversationalSmsInbound(input: {
         organization,
         lead,
         stateId: state.id,
-        body: withSignature({ body: askTimeframe, websiteSignature: organization.smsWebsiteSignature }),
+        body: withSignature({
+          body: preferLlmReplyBody(askTimeframe, getConversationalSmsLlmReplyBody(llmDecision)),
+          websiteSignature: organization.smsWebsiteSignature,
+        }),
         messageType: "AUTOMATION",
         fallbackFromNumberE164: input.toNumberE164,
       });
@@ -1659,6 +879,7 @@ export async function handleConversationalSmsInbound(input: {
     }
 
     if (!workSummary && (addressText || addressCity)) {
+      const llmDecision = await getLlmDecision();
       await prisma.$transaction([
         prisma.leadConversationState.update({
           where: { id: state.id },
@@ -1682,10 +903,13 @@ export async function handleConversationalSmsInbound(input: {
         lead,
         stateId: state.id,
         body: withSignature({
-          body: renderSmsTemplate(templates.clarification, {
-            bizName: organization.name,
-            missingField: formatMissingField("ASKED_WORK", templates.locale),
-          }),
+          body: preferLlmReplyBody(
+            renderSmsTemplate(templates.clarification, {
+              bizName: organization.name,
+              missingField: formatMissingField("ASKED_WORK", templates.locale),
+            }),
+            getConversationalSmsLlmReplyBody(llmDecision),
+          ),
           websiteSignature: organization.smsWebsiteSignature,
         }),
         messageType: "AUTOMATION",
@@ -1721,12 +945,16 @@ export async function handleConversationalSmsInbound(input: {
         intakeWorkTypeText: workSummary,
       },
     });
+    const llmDecision = await getLlmDecision();
     await queueConversationReply({
       organization,
       lead,
       stateId: state.id,
       body: withSignature({
-        body: renderSmsTemplate(templates.askAddress, { bizName: organization.name }),
+        body: preferLlmReplyBody(
+          renderSmsTemplate(templates.askAddress, { bizName: organization.name }),
+          getConversationalSmsLlmReplyBody(llmDecision),
+        ),
         websiteSignature: organization.smsWebsiteSignature,
       }),
       messageType: "AUTOMATION",
@@ -1752,9 +980,37 @@ export async function handleConversationalSmsInbound(input: {
           ? { kind: "CITY" as const, city: inferred.addressCity }
           : parseAddress(body)
       : parseAddress(body);
-    if (parsed.kind === "ADDRESS" || parsed.kind === "CITY") {
-      addressText = parsed.kind === "ADDRESS" ? parsed.addressText || null : null;
-      addressCity = parsed.kind === "CITY" ? parsed.city || body : addressCity;
+    if (parsed.kind !== "ADDRESS" && parsed.kind !== "CITY") {
+      const llmDecision = await getLlmDecision();
+      if (llmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
+        await activateHumanTakeover({
+          organization,
+          lead,
+          stateId: state.id,
+          currentStage: currentStage,
+          reason: "Lead asked for help that needs a human follow-up",
+          inboundBody: body,
+          templates,
+        });
+        return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
+      }
+
+      if (hasConversationalSmsLlmExtractionConfidence(llmDecision)) {
+        workSummary = workSummary || llmDecision?.workSummary || null;
+        addressText = addressText || llmDecision?.addressText || null;
+        addressCity = addressCity || llmDecision?.addressCity || null;
+      }
+    }
+
+    const resolvedParsed =
+      addressText || addressCity
+        ? addressText
+          ? { kind: "ADDRESS" as const, addressText }
+          : { kind: "CITY" as const, city: addressCity || body }
+        : parsed;
+    if (resolvedParsed.kind === "ADDRESS" || resolvedParsed.kind === "CITY") {
+      addressText = resolvedParsed.kind === "ADDRESS" ? resolvedParsed.addressText || null : addressText;
+      addressCity = resolvedParsed.kind === "CITY" ? resolvedParsed.city || body : addressCity;
       currentStage = "ASKED_TIMEFRAME";
       await setConversationStage({
         orgId: organization.id,
@@ -1777,15 +1033,19 @@ export async function handleConversationalSmsInbound(input: {
           intakeLocationText: addressText || addressCity,
         },
       });
+      const llmDecision = await getLlmDecision();
       await queueConversationReply({
         organization,
         lead,
         stateId: state.id,
         body: withSignature({
-          body: renderSmsTemplate(templates.askTimeframe, {
-            bizName: organization.name,
-            workingHours: organization.smsWorkingHoursText || "",
-          }),
+          body: preferLlmReplyBody(
+            renderSmsTemplate(templates.askTimeframe, {
+              bizName: organization.name,
+              workingHours: organization.smsWorkingHoursText || "",
+            }),
+            getConversationalSmsLlmReplyBody(llmDecision),
+          ),
           websiteSignature: organization.smsWebsiteSignature,
         }),
         messageType: "AUTOMATION",
@@ -1801,12 +1061,19 @@ export async function handleConversationalSmsInbound(input: {
       return { stage: "ASKED_TIMEFRAME", action: "ADVANCED" };
     }
 
+    const llmDecision = await getLlmDecision();
     const prompt = addressText || addressCity
-      ? renderSmsTemplate(templates.clarification, {
-          bizName: organization.name,
-          missingField: formatMissingField("ASKED_ADDRESS", templates.locale),
-        })
-      : renderSmsTemplate(templates.askAddress, { bizName: organization.name });
+      ? preferLlmReplyBody(
+          renderSmsTemplate(templates.clarification, {
+            bizName: organization.name,
+            missingField: formatMissingField("ASKED_ADDRESS", templates.locale),
+          }),
+          getConversationalSmsLlmReplyBody(llmDecision),
+        )
+      : preferLlmReplyBody(
+          renderSmsTemplate(templates.askAddress, { bizName: organization.name }),
+          getConversationalSmsLlmReplyBody(llmDecision),
+        );
     await queueConversationReply({
       organization,
       lead,
@@ -1828,15 +1095,39 @@ export async function handleConversationalSmsInbound(input: {
   if (currentStage === "ASKED_TIMEFRAME") {
     timeframe = parseTimeframe(body);
     if (!timeframe) {
+      const llmDecision = await getLlmDecision();
+      if (llmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
+        await activateHumanTakeover({
+          organization,
+          lead,
+          stateId: state.id,
+          currentStage: currentStage,
+          reason: "Lead asked for help that needs a human follow-up",
+          inboundBody: body,
+          templates,
+        });
+        return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
+      }
+
+      if (hasConversationalSmsLlmExtractionConfidence(llmDecision)) {
+        timeframe = llmDecision?.timeframe || null;
+      }
+    }
+
+    if (!timeframe) {
+      const llmDecision = await getLlmDecision();
       await queueConversationReply({
         organization,
         lead,
         stateId: state.id,
         body: withSignature({
-          body: renderSmsTemplate(templates.clarification, {
-            bizName: organization.name,
-            missingField: formatMissingField("ASKED_TIMEFRAME", templates.locale),
-          }),
+          body: preferLlmReplyBody(
+            renderSmsTemplate(templates.clarification, {
+              bizName: organization.name,
+              missingField: formatMissingField("ASKED_TIMEFRAME", templates.locale),
+            }),
+            getConversationalSmsLlmReplyBody(llmDecision),
+          ),
           websiteSignature: organization.smsWebsiteSignature,
         }),
         messageType: "AUTOMATION",
@@ -1897,6 +1188,7 @@ export async function handleConversationalSmsInbound(input: {
     });
 
     if (options.length === 0) {
+      const llmDecision = await getLlmDecision();
       const fallback = templates.locale === "ES"
         ? "No vemos horarios abiertos ahora mismo. Te enviaremos nuevas opciones en breve."
         : "I don't have open slots right now. I'll send fresh options shortly.";
@@ -1904,11 +1196,15 @@ export async function handleConversationalSmsInbound(input: {
         organization,
         lead,
         stateId: state.id,
-        body: withSignature({ body: fallback, websiteSignature: organization.smsWebsiteSignature }),
+        body: withSignature({
+          body: preferLlmReplyBody(fallback, getConversationalSmsLlmReplyBody(llmDecision)),
+          websiteSignature: organization.smsWebsiteSignature,
+        }),
         messageType: "AUTOMATION",
         fallbackFromNumberE164: input.toNumberE164,
       });
     } else {
+      const llmDecision = await getLlmDecision();
       const offer = renderSmsTemplate(templates.offerBooking, {
         bizName: organization.name,
         ...buildSlotTemplateContext(options),
@@ -1918,7 +1214,10 @@ export async function handleConversationalSmsInbound(input: {
         organization,
         lead,
         stateId: state.id,
-        body: withSignature({ body: offer, websiteSignature: organization.smsWebsiteSignature }),
+        body: withSignature({
+          body: preferLlmReplyBody(offer, getConversationalSmsLlmReplyBody(llmDecision)),
+          websiteSignature: organization.smsWebsiteSignature,
+        }),
         messageType: "AUTOMATION",
         fallbackFromNumberE164: input.toNumberE164,
       });
@@ -1949,18 +1248,40 @@ export async function handleConversationalSmsInbound(input: {
           followUpStep: 0,
         },
       });
+      llmDecisionPromise = null;
     }
 
     const selected = parseBookingSelection({
       inboundBody: body,
       options: bookingOptions,
     });
-    if (selected) {
+    let selectedOption = selected;
+    if (!selectedOption) {
+      const llmDecision = await getLlmDecision();
+      if (llmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
+        await activateHumanTakeover({
+          organization,
+          lead,
+          stateId: state.id,
+          currentStage: currentStage,
+          reason: "Lead needs a custom scheduling follow-up",
+          inboundBody: body,
+          templates,
+        });
+        return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
+      }
+
+      if (hasConversationalSmsLlmExtractionConfidence(llmDecision) && llmDecision?.selectedSlotId) {
+        selectedOption = bookingOptions.find((option) => option.id === llmDecision.selectedSlotId) || null;
+      }
+    }
+
+    if (selectedOption) {
       const booked = await bookFromSelectedOption({
         organization,
         lead,
         stateId: state.id,
-        option: selected,
+        option: selectedOption,
         templates,
         stateAddress: addressText || addressCity || null,
       });
@@ -1982,6 +1303,7 @@ export async function handleConversationalSmsInbound(input: {
       return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
     }
 
+    const llmDecision = await getLlmDecision();
     const prompt = renderSmsTemplate(templates.clarification, {
       bizName: organization.name,
       missingField: formatMissingField("OFFERED_BOOKING", templates.locale),
@@ -1992,7 +1314,7 @@ export async function handleConversationalSmsInbound(input: {
       lead,
       stateId: state.id,
       body: withSignature({
-        body: `${prompt}${slotList}`,
+        body: preferLlmReplyBody(`${prompt}${slotList}`, getConversationalSmsLlmReplyBody(llmDecision)),
         websiteSignature: organization.smsWebsiteSignature,
       }),
       messageType: "AUTOMATION",
@@ -2009,62 +1331,6 @@ export async function handleConversationalSmsInbound(input: {
   }
 
   return { stage: currentStage, action: "IGNORED" };
-}
-
-async function claimDueConversationFollowUp(input: {
-  stateId: string;
-  stage: ConversationStage;
-  followUpStep: number;
-  nextFollowUpAt: Date;
-}) {
-  const holdUntil = addMinutes(new Date(), FOLLOW_UP_CLAIM_HOLD_MINUTES);
-  const claim = await prisma.leadConversationState.updateMany({
-    where: {
-      id: input.stateId,
-      stage: input.stage,
-      followUpStep: input.followUpStep,
-      nextFollowUpAt: input.nextFollowUpAt,
-    },
-    data: {
-      nextFollowUpAt: holdUntil,
-    },
-  });
-
-  return claim.count > 0;
-}
-
-async function getLiveConversationFollowUpState(stateId: string) {
-  return prisma.leadConversationState.findUnique({
-    where: { id: stateId },
-    select: {
-      id: true,
-      orgId: true,
-      leadId: true,
-      stage: true,
-      followUpStep: true,
-      workSummary: true,
-      addressText: true,
-      addressCity: true,
-      timeframe: true,
-      bookingOptions: true,
-      lastInboundAt: true,
-      nextFollowUpAt: true,
-      pausedUntil: true,
-      stoppedAt: true,
-      lead: {
-        select: {
-          id: true,
-          orgId: true,
-          phoneE164: true,
-          status: true,
-          preferredLanguage: true,
-          businessName: true,
-          contactName: true,
-          nextFollowUpAt: true,
-        },
-      },
-    },
-  });
 }
 
 export async function processDueConversationalFollowUps(input?: { maxLeads?: number }) {
@@ -2150,6 +1416,25 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
     }
 
     const lead = liveState.lead as ConversationLead;
+    const throttledUntil = getAutomatedFollowUpThrottleUntil({
+      lastOutboundAt: liveState.lead.lastOutboundAt,
+      now,
+    });
+    if (throttledUntil) {
+      await prisma.$transaction([
+        prisma.leadConversationState.update({
+          where: { id: liveState.id },
+          data: { nextFollowUpAt: throttledUntil },
+        }),
+        prisma.lead.update({
+          where: { id: lead.id },
+          data: { nextFollowUpAt: throttledUntil },
+        }),
+      ]);
+      skipped += 1;
+      continue;
+    }
+
     let org = orgCache.get(item.orgId) ?? null;
     if (!orgCache.has(item.orgId)) {
       org = await getConversationOrgConfig(item.orgId);
@@ -2217,11 +1502,25 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       organization: org,
       lead,
     });
+    const cadence = getFollowUpCadenceMinutes(liveState.stage, ACTIVE_CONVERSATION_FOLLOW_UP_STAGES);
+    if (cadence.length === 0 || liveState.followUpStep >= cadence.length) {
+      skipped += 1;
+      await prisma.$transaction([
+        prisma.leadConversationState.update({
+          where: { id: liveState.id },
+          data: { nextFollowUpAt: null },
+        }),
+        prisma.lead.update({
+          where: { id: lead.id },
+          data: { nextFollowUpAt: null },
+        }),
+      ]);
+      continue;
+    }
+
     const missingField = formatMissingField(liveState.stage, templates.locale);
     const template =
-      liveState.followUpStep >= 2
-        ? templates.followUp3
-        : liveState.followUpStep >= 1
+      liveState.followUpStep >= 1
           ? templates.followUp2
           : templates.followUp1;
 
@@ -2231,13 +1530,7 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       websiteSignature: org.smsWebsiteSignature || "",
     });
 
-    if (liveState.stage === "ASKED_WORK") {
-      body = `${body}\n\n${renderSmsTemplate(templates.initial, { bizName: org.name })}`;
-    } else if (liveState.stage === "ASKED_ADDRESS") {
-      body = `${body}\n\n${renderSmsTemplate(templates.askAddress, { bizName: org.name })}`;
-    } else if (liveState.stage === "ASKED_TIMEFRAME") {
-      body = `${body}\n\n${renderSmsTemplate(templates.askTimeframe, { bizName: org.name })}`;
-    } else if (liveState.stage === "OFFERED_BOOKING") {
+    if (liveState.stage === "OFFERED_BOOKING") {
       const options = await createBookingOptions({
         organization: org,
         lead,
@@ -2248,10 +1541,10 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
         data: { bookingOptions: options as unknown as Prisma.InputJsonValue },
       });
       if (options.length > 0) {
-        body = renderSmsTemplate(templates.offerBooking, {
+        body = `${body}\n\n${renderSmsTemplate(templates.offerBooking, {
           bizName: org.name,
           ...buildSlotTemplateContext(options),
-        });
+        })}`;
       } else {
         body =
           templates.locale === "ES"

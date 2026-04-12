@@ -21,6 +21,7 @@ import { runProviderImport } from "@/lib/integrations/import";
 import { getIntegrationProviderConfiguration } from "@/lib/integrations/provider-config";
 import { formatDateTime } from "@/lib/hq";
 import { getParam, requireAppOrgAccess, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import { requireAppPageViewer } from "../../_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -422,6 +423,10 @@ export default async function IntegrationsSettingsPage({
   const scope = await resolveAppScope({ nextPath: "/app/settings/integrations", requestedOrgId });
   const saved = getParam(searchParams?.saved);
   const error = getParam(searchParams?.error);
+  const viewer = await requireAppPageViewer({
+    nextPath: "/app/settings/integrations",
+    orgId: scope.orgId,
+  });
   const sessionUser = await requireSessionUser("/app/settings/integrations");
   const {
     jobberConfigured,
@@ -453,7 +458,7 @@ export default async function IntegrationsSettingsPage({
         error: "Session user is missing id.",
       };
 
-  const [organization, accounts, runs, currentUser] = await Promise.all([
+  const [organization, accounts, runs] = await Promise.all([
     prisma.organization.findUnique({
       where: { id: scope.orgId },
       select: { id: true, name: true },
@@ -467,12 +472,6 @@ export default async function IntegrationsSettingsPage({
       orderBy: { startedAt: "desc" },
       take: 12,
     }),
-    sessionUser.id
-      ? prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { calendarAccessRole: true },
-        })
-      : Promise.resolve(null),
   ]);
 
   if (!organization) {
@@ -489,7 +488,7 @@ export default async function IntegrationsSettingsPage({
   const googleHasWriteScope = googleAccount ? hasWritePermissionFromScopes(googleAccount.scopes) : false;
   const googleLoadError = "error" in googleResult ? String(googleResult.error || "") : "";
   const providerConfigurationError = error && isProviderConfigurationError(error) ? formatIntegrationErrorMessage(error) : null;
-  const canViewMissingKeyDetails = scope.internalUser || currentUser?.calendarAccessRole === "OWNER";
+  const canViewMissingKeyDetails = viewer.internalUser || viewer.calendarAccessRole === "OWNER";
   const healthItems: IntegrationHealthItem[] = [
     {
       label: "Jobber",

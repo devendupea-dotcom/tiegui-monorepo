@@ -35,6 +35,8 @@ test("ensureSmsA2POpenerDisclosure uses the bilingual disclosure when required",
 
 test("parseSmsComplianceKeyword recognizes STOP, START/UNSTOP, and HELP", () => {
   assert.equal(parseSmsComplianceKeyword("stop please"), "STOP");
+  assert.equal(parseSmsComplianceKeyword("optout"), "STOP");
+  assert.equal(parseSmsComplianceKeyword("revoke"), "STOP");
   assert.equal(parseSmsComplianceKeyword("UNSTOP"), "START");
   assert.equal(parseSmsComplianceKeyword("help"), "HELP");
   assert.equal(parseSmsComplianceKeyword("hello there"), null);

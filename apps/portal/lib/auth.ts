@@ -161,6 +161,7 @@ export const authOptions: NextAuthOptions = {
           name: user.name,
           email: user.email,
           role: user.role,
+          defaultOrgId: user.orgId,
           orgId: user.orgId,
           mustChangePassword: user.mustChangePassword,
         } as any;
@@ -179,6 +180,7 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.role = (user as any).role;
+        (token as any).defaultOrgId = (user as any).defaultOrgId ?? (user as any).orgId ?? null;
         token.orgId = (user as any).orgId ?? null;
         token.mustChangePassword = (user as any).mustChangePassword ?? false;
         token.name = (user as any).name ?? token.name ?? null;
@@ -195,6 +197,7 @@ export const authOptions: NextAuthOptions = {
         if (dbUser) {
           token.name = dbUser.name ?? token.name ?? null;
           token.role = dbUser.role;
+          (token as any).defaultOrgId = dbUser.orgId ?? null;
           token.orgId = dbUser.orgId ?? null;
           (token as any).mustChangePassword = dbUser.mustChangePassword;
         }
@@ -206,6 +209,7 @@ export const authOptions: NextAuthOptions = {
         session.user.name = (typeof token.name === "string" ? token.name : session.user.name) ?? null;
         (session.user as any).id = token.sub;
         (session.user as any).role = token.role;
+        (session.user as any).defaultOrgId = (token as any).defaultOrgId ?? token.orgId ?? null;
         (session.user as any).orgId = token.orgId ?? null;
         (session.user as any).mustChangePassword = (token as any).mustChangePassword ?? false;
       }

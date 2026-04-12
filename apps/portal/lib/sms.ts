@@ -1,4 +1,4 @@
-import type { MessageStatus } from "@prisma/client";
+import { Prisma, type MessageStatus } from "@prisma/client";
 import { normalizeEnvValue } from "./env";
 import { prisma } from "@/lib/prisma";
 import { startOfUtcMonth } from "@/lib/usage";
@@ -6,6 +6,8 @@ import { maybeSendSmsQuotaAlerts } from "@/lib/usage-alerts";
 import { checkSlidingWindowLimit } from "@/lib/rate-limit";
 import { normalizeE164 } from "@/lib/phone";
 import { getTwilioOrgRuntimeConfigByOrgId, sendTwilioMessageWithConfig } from "@/lib/twilio-org";
+import { getConfiguredBaseUrl } from "@/lib/urls";
+import { mapTwilioLifecycleStatus, shouldAdvanceOutboundSmsLifecycle } from "@/lib/sms-lifecycle";
 
 type SendSmsInput = {
   orgId: string;
@@ -23,7 +25,7 @@ type SendSmsResult = {
   suppressed?: boolean;
 };
 
-function mapTwilioStatus(value: string | null | undefined): MessageStatus {
+function mapTwilioSendStatus(value: string | null | undefined): MessageStatus {
   switch ((value || "").toLowerCase()) {
     case "queued":
       return "QUEUED";
@@ -37,6 +39,141 @@ function mapTwilioStatus(value: string | null | undefined): MessageStatus {
     default:
       return "SENT";
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function recordString(record: Record<string, unknown> | null, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function buildSmsFailureReason(input: {
+  providerStatus: string;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}): string | null {
+  if (input.errorMessage?.trim()) {
+    return input.errorMessage.trim();
+  }
+
+  if (input.errorCode?.trim()) {
+    return `Twilio error ${input.errorCode.trim()}.`;
+  }
+
+  const normalizedStatus = input.providerStatus.trim().toLowerCase();
+  if (!normalizedStatus) {
+    return null;
+  }
+
+  return `Twilio reported ${normalizedStatus}.`;
+}
+
+export async function reconcileOutboundSmsProviderStatus(input: {
+  orgId: string;
+  providerMessageSid: string;
+  providerStatus: string;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  occurredAt?: Date;
+}): Promise<{ updatedMessages: number; updatedEvents: number }> {
+  const normalizedProviderStatus = input.providerStatus.trim().toLowerCase();
+  const nextLifecycle = mapTwilioLifecycleStatus(normalizedProviderStatus);
+  if (!normalizedProviderStatus || !nextLifecycle) {
+    return {
+      updatedMessages: 0,
+      updatedEvents: 0,
+    };
+  }
+
+  const [message, communicationEvents] = await Promise.all([
+    prisma.message.findFirst({
+      where: {
+        orgId: input.orgId,
+        providerMessageSid: input.providerMessageSid,
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    }),
+    prisma.communicationEvent.findMany({
+      where: {
+        orgId: input.orgId,
+        providerMessageSid: input.providerMessageSid,
+      },
+      select: {
+        id: true,
+        providerStatus: true,
+        metadataJson: true,
+      },
+    }),
+  ]);
+
+  let updatedMessages = 0;
+  if (message && shouldAdvanceOutboundSmsLifecycle(message.status, nextLifecycle)) {
+    await prisma.message.update({
+      where: {
+        id: message.id,
+      },
+      data: {
+        status: nextLifecycle,
+      },
+    });
+    updatedMessages = 1;
+  }
+
+  let updatedEvents = 0;
+  for (const event of communicationEvents) {
+    const metadata = asRecord(event.metadataJson);
+    const currentLifecycle = mapTwilioLifecycleStatus(recordString(metadata, "status") || event.providerStatus || null);
+    if (!shouldAdvanceOutboundSmsLifecycle(currentLifecycle, nextLifecycle)) {
+      continue;
+    }
+
+    const hasDispatchContext = Boolean(recordString(metadata, "dispatchJobId"));
+    const nextMetadata: Record<string, unknown> = {
+      ...(metadata || {}),
+      status: nextLifecycle,
+      providerStatus: normalizedProviderStatus,
+      providerStatusUpdatedAt: (input.occurredAt || new Date()).toISOString(),
+      providerErrorCode: input.errorCode?.trim() || null,
+      providerErrorMessage: input.errorMessage?.trim() || null,
+    };
+
+    if (hasDispatchContext) {
+      nextMetadata.dispatchDeliveryState = normalizedProviderStatus;
+      nextMetadata.dispatchFailureReason =
+        nextLifecycle === "FAILED"
+          ? buildSmsFailureReason({
+              providerStatus: normalizedProviderStatus,
+              errorCode: input.errorCode || null,
+              errorMessage: input.errorMessage || null,
+            })
+          : null;
+    }
+
+    await prisma.communicationEvent.update({
+      where: {
+        id: event.id,
+      },
+      data: {
+        providerStatus: normalizedProviderStatus,
+        metadataJson: nextMetadata as Prisma.InputJsonValue,
+      },
+    });
+    updatedEvents += 1;
+  }
+
+  return {
+    updatedMessages,
+    updatedEvents,
+  };
 }
 
 function isTwilioSendEnabled(): boolean {
@@ -215,6 +352,10 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     },
     toNumberE164: input.toNumberE164,
     body: input.body,
+    statusCallbackUrl: (() => {
+      const baseUrl = getConfiguredBaseUrl();
+      return baseUrl ? `${baseUrl}/api/webhooks/twilio/sms/status` : null;
+    })(),
   });
 
   if (!providerResponse.ok) {
@@ -228,7 +369,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
 
   return {
     providerMessageSid: providerResponse.providerMessageSid,
-    status: mapTwilioStatus(providerResponse.providerStatus),
+    status: mapTwilioSendStatus(providerResponse.providerStatus),
     resolvedFromNumberE164,
   };
 }

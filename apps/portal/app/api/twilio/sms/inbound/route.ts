@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { findBlockedCallerByPhone } from "@/lib/blocked-callers";
 import { handleConversationalSmsInbound } from "@/lib/conversational-sms";
 import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
 import { buildCommunicationIdempotencyKey, upsertCommunicationEvent } from "@/lib/communication-events";
@@ -41,6 +42,14 @@ function twimlMessage(body: string) {
 
 function asString(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function parseTwilioOptOutType(value: string): "STOP" | "START" | "HELP" | null {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "STOP") return "STOP";
+  if (normalized === "START") return "START";
+  if (normalized === "HELP") return "HELP";
+  return null;
 }
 
 async function recordComplianceAutoReply(input: {
@@ -199,6 +208,7 @@ export async function POST(req: Request) {
   const toNumber = normalizeE164(asString(form.get("To"))) || normalizeE164(twilioConfig.phoneNumber);
   const body = asString(form.get("Body"));
   const messageSid = asString(form.get("MessageSid")) || null;
+  const optOutType = parseTwilioOptOutType(asString(form.get("OptOutType")));
 
   if (!fromNumber || !toNumber || !body) {
     return twimlOk();
@@ -221,6 +231,18 @@ export async function POST(req: Request) {
   });
 
   if (!organization) {
+    return twimlOk();
+  }
+
+  const blockedCaller = await findBlockedCallerByPhone({
+    orgId: organization.id,
+    phone: fromNumber,
+  });
+
+  if (blockedCaller) {
+    console.info(
+      `[twilio:sms] ignored inbound sms from blocked caller orgId=${organization.id} phone=${fromNumber} blockId=${blockedCaller.id}`,
+    );
     return twimlOk();
   }
 
@@ -255,7 +277,7 @@ export async function POST(req: Request) {
   if (!lead) {
     return twimlOk();
   }
-  const complianceKeyword = parseSmsComplianceKeyword(body);
+  const complianceKeyword = optOutType || parseSmsComplianceKeyword(body);
 
   let shouldAdvanceConversation = false;
   if (messageSid) {
@@ -395,15 +417,17 @@ export async function POST(req: Request) {
           occurredAt: now,
           wasOptedOut: lead.status === "DNC",
         });
-        await recordComplianceAutoReply({
-          orgId: organization.id,
-          leadId: lead.id,
-          contactId: lead.customerId,
-          conversationId: lead.conversationState?.id || null,
-          fromNumberE164: toNumber,
-          toNumberE164: fromNumber,
-          body: complianceReply,
-        });
+        if (!optOutType) {
+          await recordComplianceAutoReply({
+            orgId: organization.id,
+            leadId: lead.id,
+            contactId: lead.customerId,
+            conversationId: lead.conversationState?.id || null,
+            fromNumberE164: toNumber,
+            toNumberE164: fromNumber,
+            body: complianceReply,
+          });
+        }
       } catch (error) {
         console.error("[twilio:sms] compliance keyword handler failed", {
           orgId: organization.id,
@@ -412,6 +436,10 @@ export async function POST(req: Request) {
           error: error instanceof Error ? error.message : "unknown",
         });
       }
+    }
+
+    if (optOutType) {
+      return twimlOk();
     }
 
     return twimlMessage(complianceReply);

@@ -4,6 +4,11 @@ import { NextIntlClientProvider, createTranslator } from "next-intl";
 import type { CalendarAccessRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { isInternalRole, requireSessionUser } from "@/lib/session";
+import {
+  AppApiError,
+  requireAppApiActor,
+  resolveActorOrgId,
+} from "@/lib/app-api-permissions";
 import { getRequestI18nContext } from "@/lib/i18n";
 import ClientPortalNav from "./client-portal-nav";
 import LogoutButton from "./logout-button";
@@ -28,34 +33,22 @@ export default async function ClientPortalLayout({
   const displayName = user.name?.trim()
     ? user.name.trim().split(/\s+/)[0] || user.name.trim()
     : user.email?.split("@")[0] || "Contractor";
-  let firstOrg: { id: string } | null = null;
-  if (internalUser) {
+  let defaultOrgId: string | null = null;
+  let calendarAccessRole: CalendarAccessRole = internalUser ? "OWNER" : "WORKER";
+  try {
+    const actor = await requireAppApiActor();
     try {
-      firstOrg = await prisma.organization.findFirst({
-        select: { id: true },
-        orderBy: { name: "asc" },
-      });
+      defaultOrgId = await resolveActorOrgId({ actor });
+      calendarAccessRole = actor.calendarAccessRole;
     } catch (error) {
-      console.error("ClientPortalLayout failed to resolve first org for INTERNAL user.", error);
-    }
-  }
-
-  let calendarAccessRole: CalendarAccessRole = "WORKER";
-  if (!internalUser && user.id) {
-    try {
-      const userAccess = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { calendarAccessRole: true },
-      });
-      if (userAccess?.calendarAccessRole) {
-        calendarAccessRole = userAccess.calendarAccessRole;
+      if (!(error instanceof AppApiError) || (error.status !== 400 && error.status !== 404)) {
+        console.error("ClientPortalLayout failed to resolve active workspace context.", error);
       }
-    } catch (error) {
-      console.error("ClientPortalLayout failed to load calendar access role. Falling back to WORKER.", error);
     }
+  } catch (error) {
+    console.error("ClientPortalLayout failed to load workspace actor.", error);
   }
 
-  const defaultOrgId = internalUser ? firstOrg?.id || null : user.orgId || null;
   const onboardingOrg = !internalUser && defaultOrgId
     ? await prisma.organization.findUnique({
         where: { id: defaultOrgId },

@@ -97,6 +97,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
           },
           select: {
             id: true,
+            jobId: true,
             assignedToUserId: true,
             workerAssignments: {
               select: { workerUserId: true },
@@ -110,11 +111,12 @@ export async function PATCH(req: Request, { params }: RouteContext) {
             type: { in: JOB_EVENT_TYPES },
           },
           orderBy: [{ startAt: "desc" }, { createdAt: "desc" }],
-          select: {
-            id: true,
-            assignedToUserId: true,
-            workerAssignments: {
-              select: { workerUserId: true },
+            select: {
+              id: true,
+              jobId: true,
+              assignedToUserId: true,
+              workerAssignments: {
+                select: { workerUserId: true },
             },
           },
         });
@@ -140,6 +142,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
             select: {
               id: true,
               leadId: true,
+              jobId: true,
               type: true,
               status: true,
               startAt: true,
@@ -169,6 +172,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
             select: {
               id: true,
               leadId: true,
+              jobId: true,
               type: true,
               status: true,
               startAt: true,
@@ -187,16 +191,21 @@ export async function PATCH(req: Request, { params }: RouteContext) {
         },
       });
 
-      await syncLeadBookingState(tx, {
+      const linkedJobId = await syncLeadBookingState(tx, {
+        orgId: lead.orgId,
         leadId: nextEvent.leadId,
         eventId: nextEvent.id,
         type: nextEvent.type,
         status: nextEvent.status,
         startAt: nextEvent.startAt,
         endAt: nextEvent.endAt,
+        createdByUserId: actor.id,
       });
 
-      return nextEvent;
+      return {
+        ...nextEvent,
+        jobId: linkedJobId ?? nextEvent.jobId,
+      };
     });
 
     const responsePayload = { ok: true, event };

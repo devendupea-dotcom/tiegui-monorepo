@@ -123,31 +123,54 @@ export function buildEstimateShareEmailDraft(input: {
   shareUrl: string;
   recipientName?: string | null;
   senderName?: string | null;
+  senderPhone?: string | null;
+  senderEmail?: string | null;
+  senderWebsite?: string | null;
 }): {
   subject: string;
   body: string;
 } {
   const recipient = input.recipientName?.trim() || input.estimate.customerName || "there";
   const senderName = input.senderName?.trim() || "TieGui";
+  const projectLabel = input.estimate.title.trim() || "your project";
+  const contactLines = [
+    input.senderPhone?.trim() || "",
+    input.senderEmail?.trim() || "",
+    input.senderWebsite?.trim() || "",
+  ].filter(Boolean);
   const lines = [
     `Hi ${recipient},`,
     "",
-    `${senderName} shared estimate ${input.estimate.estimateNumber} with you.`,
+    `${senderName} prepared your estimate for ${projectLabel}.`,
     "",
-    `Project: ${input.estimate.title}`,
-    ...(input.estimate.siteAddress ? [`Site: ${input.estimate.siteAddress}`] : []),
-    ...(input.estimate.projectType ? [`Type: ${input.estimate.projectType}`] : []),
-    `Total: $${input.estimate.total.toFixed(2)}`,
-    ...(input.estimate.validUntil ? [`Valid until: ${new Date(input.estimate.validUntil).toLocaleDateString("en-US")}`] : []),
+    "Project overview",
+    `- Estimate: ${input.estimate.estimateNumber}`,
+    `- Project: ${projectLabel}`,
+    ...(input.estimate.siteAddress ? [`- Property: ${input.estimate.siteAddress}`] : []),
+    ...(input.estimate.projectType ? [`- Service: ${input.estimate.projectType}`] : []),
     "",
-    "Review and respond here:",
+    "Total investment",
+    `$${input.estimate.total.toFixed(2)}`,
+    ...(input.estimate.validUntil ? [`Pricing valid through ${new Date(input.estimate.validUntil).toLocaleDateString("en-US")}.`] : []),
+    "",
+    "What to do next",
+    "Review and approve your estimate here:",
     input.shareUrl,
     "",
-    "You can approve or decline the estimate from that link.",
+    `Once you approve it, ${senderName} will follow up to confirm scheduling and next steps.`,
+    "",
+    "If you'd like anything adjusted first, use the same link to request changes or ask a question.",
+    ...(contactLines.length > 0
+      ? [
+          "",
+          `Questions? Reach ${senderName}:`,
+          ...contactLines,
+        ]
+      : []),
   ];
 
   return {
-    subject: `${input.estimate.estimateNumber} • ${input.estimate.title}`,
+    subject: `Your estimate from ${senderName}${projectLabel ? ` • ${projectLabel}` : ""}`,
     body: lines.join("\n"),
   };
 }

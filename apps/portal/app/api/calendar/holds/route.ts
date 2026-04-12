@@ -2,7 +2,13 @@ import { addMinutes } from "date-fns";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { detectWorkerConflicts, getOrgCalendarSettings } from "@/lib/calendar/availability";
-import { CalendarApiError, assertOrgReadAccess, assertOrgWriteAccess, requireCalendarActor } from "@/lib/calendar/permissions";
+import {
+  CalendarApiError,
+  assertOrgReadAccess,
+  assertOrgWriteAccess,
+  requireCalendarActor,
+  resolveCalendarOrgId,
+} from "@/lib/calendar/permissions";
 import { getUtcRangeForDate, localDateFromUtc, parseUtcDateTime } from "@/lib/calendar/dates";
 
 export const dynamic = "force-dynamic";
@@ -72,11 +78,11 @@ export async function GET(req: Request) {
   try {
     const actor = await requireCalendarActor();
     const url = new URL(req.url);
-    const orgId = url.searchParams.get("orgId")?.trim() || actor.orgId;
-    if (!orgId) {
-      throw new CalendarApiError("orgId is required for internal users.", 400);
-    }
-
+    const orgId = await resolveCalendarOrgId({
+      actor,
+      req,
+      requestedOrgId: url.searchParams.get("orgId"),
+    });
     assertOrgReadAccess(actor, orgId);
 
     const workerUserId = url.searchParams.get("workerId")?.trim() || undefined;
@@ -128,11 +134,11 @@ export async function POST(req: Request) {
       throw new CalendarApiError("Invalid JSON payload.", 400);
     }
 
-    const orgId = (body.orgId || "").trim() || actor.orgId;
-    if (!orgId) {
-      throw new CalendarApiError("orgId is required for internal users.", 400);
-    }
-
+    const orgId = await resolveCalendarOrgId({
+      actor,
+      body,
+      requestedOrgId: body.orgId,
+    });
     assertOrgWriteAccess(actor, orgId);
 
     const workerUserId = (body.workerUserId || "").trim();

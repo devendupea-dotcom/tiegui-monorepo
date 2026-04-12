@@ -11,6 +11,8 @@ import {
 import {
   buildJobTrackingProgressSteps,
   createJobTrackingToken,
+  describeJobTrackingStatusChange,
+  formatOperationalJobStatusLabel,
   formatJobTrackingStatusLabel,
   type CustomerJobTrackingDetail,
   type JobTrackingTimelineItem,
@@ -148,6 +150,78 @@ function buildEventScheduleSummary(metadata: Record<string, unknown> | null): st
   });
 }
 
+function buildManualFollowThroughDetail(metadata: Record<string, unknown> | null): {
+  title: string;
+  detail: string;
+} | null {
+  if (metadata?.dispatchManualFollowThrough !== true) {
+    return null;
+  }
+
+  const state = recordString(metadata, "dispatchManualFollowThroughState");
+  const actionId = recordString(metadata, "dispatchManualFollowThroughActionId");
+  const actionLabel =
+    actionId === "open-inbox" ? "Open Inbox Thread"
+    : actionId === "open-crm" ? "Open CRM Folder"
+    : actionId === "edit-phone" ? "Edit Phone"
+    : actionId === "call-customer" ? "Call Customer"
+    : actionId === "open-settings" ? "Open Settings"
+    : actionId === "open-integrations" ? "Open Integrations"
+    : actionId === "mark-handled" ? "Mark Handled Manually"
+    : null;
+
+  if (state === "handled") {
+    return {
+      title: "Handled manually",
+      detail: actionLabel && actionLabel !== "Mark Handled Manually"
+        ? `Manual follow-up was handled after ${actionLabel}.`
+        : "Manual follow-up was marked handled.",
+    };
+  }
+
+  if (state === "started") {
+    return {
+      title: "Manual follow-up started",
+      detail: actionLabel ? `Started from ${actionLabel}.` : "Manual follow-up started.",
+    };
+  }
+
+  return null;
+}
+
+function buildManualContactOutcomeDetail(metadata: Record<string, unknown> | null): {
+  title: string;
+  detail: string;
+} | null {
+  if (metadata?.dispatchManualContactOutcome !== true) {
+    return null;
+  }
+
+  const outcome = recordString(metadata, "dispatchManualContactOutcomeValue");
+  if (outcome === "confirmed_schedule") {
+    return {
+      title: "Confirmed schedule",
+      detail: "Manual contact confirmed the current timing.",
+    };
+  }
+
+  if (outcome === "reschedule_needed") {
+    return {
+      title: "Reschedule needed",
+      detail: "Manual contact confirmed the schedule still needs to change.",
+    };
+  }
+
+  if (outcome === "no_response") {
+    return {
+      title: "No response",
+      detail: "Manual contact was attempted, but the customer did not respond.",
+    };
+  }
+
+  return null;
+}
+
 function mapJobEventToTimelineItem(input: {
   event: {
     id: string;
@@ -157,7 +231,12 @@ function mapJobEventToTimelineItem(input: {
     metadata: Prisma.JsonValue | null;
     createdAt: Date;
   };
-  job: PublicTrackingRecord["job"];
+  job: {
+    id: string;
+    scheduledDate: Date | null;
+    scheduledStartTime: string | null;
+    scheduledEndTime: string | null;
+  };
 }): JobTrackingTimelineItem | null {
   const metadata = asRecord(input.event.metadata);
 
@@ -200,15 +279,21 @@ function mapJobEventToTimelineItem(input: {
         : null;
     const statusLabel =
       (nextStatus ? formatJobTrackingStatusLabel(nextStatus) : null) ||
+      (typeof input.event.toValue === "string" ? formatOperationalJobStatusLabel(input.event.toValue) : null) ||
       recordString(metadata, "toStatusLabel") ||
       recordString(metadata, "statusLabel") ||
       "Updated";
+    const statusKind = recordString(metadata, "statusKind");
+    const statusCopy = describeJobTrackingStatusChange({
+      statusKind,
+      nextStatusLabel: statusLabel,
+    });
 
     return {
       id: input.event.id,
       kind: "job_event",
-      title: "Status updated",
-      detail: `Current status: ${statusLabel}.`,
+      title: statusCopy.title,
+      detail: statusCopy.detail,
       occurredAt: input.event.createdAt.toISOString(),
     };
   }
@@ -218,6 +303,27 @@ function mapJobEventToTimelineItem(input: {
   }
 
   const changes = recordChanges(metadata);
+  const manualContactOutcome = buildManualContactOutcomeDetail(metadata);
+  if (manualContactOutcome) {
+    return {
+      id: input.event.id,
+      kind: "job_event",
+      title: manualContactOutcome.title,
+      detail: manualContactOutcome.detail,
+      occurredAt: input.event.createdAt.toISOString(),
+    };
+  }
+  const manualFollowThrough = buildManualFollowThroughDetail(metadata);
+  if (manualFollowThrough) {
+    return {
+      id: input.event.id,
+      kind: "job_event",
+      title: manualFollowThrough.title,
+      detail: manualFollowThrough.detail,
+      occurredAt: input.event.createdAt.toISOString(),
+    };
+  }
+
   const scheduleChanged = changes.some((change) =>
     change.field === "scheduledDate" ||
     change.field === "scheduledStartTime" ||
@@ -279,6 +385,77 @@ async function getPublicTrackingRecordOrThrow(token: string): Promise<PublicTrac
   }
 
   return record;
+}
+
+export type OperationalJobTimelineSource = {
+  id: string;
+  orgId: string;
+  customerId: string | null;
+  leadId: string | null;
+  scheduledDate: Date | null;
+  scheduledStartTime: string | null;
+  scheduledEndTime: string | null;
+};
+
+export async function getOperationalJobTimeline(input: {
+  job: OperationalJobTimelineSource;
+  limit?: number;
+}): Promise<JobTrackingTimelineItem[]> {
+  const limit = Math.max(1, Math.min(32, input.limit || 16));
+
+  const [jobEvents, communicationEvents] = await Promise.all([
+    prisma.jobEvent.findMany({
+      where: {
+        jobId: input.job.id,
+      },
+      select: {
+        id: true,
+        eventType: true,
+        fromValue: true,
+        toValue: true,
+        metadata: true,
+        createdAt: true,
+      },
+      orderBy: [{ createdAt: "desc" }],
+      take: Math.max(limit * 2, 24),
+    }),
+    input.job.customerId || input.job.leadId
+      ? prisma.communicationEvent.findMany({
+          where: {
+            orgId: input.job.orgId,
+            OR: [
+              ...(input.job.customerId ? [{ contactId: input.job.customerId }] : []),
+              ...(input.job.leadId ? [{ leadId: input.job.leadId }] : []),
+            ],
+          },
+          select: {
+            id: true,
+            summary: true,
+            occurredAt: true,
+            metadataJson: true,
+          },
+          orderBy: [{ occurredAt: "desc" }],
+          take: Math.max(limit * 2, 24),
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const jobTimeline = jobEvents
+    .map((event) =>
+      mapJobEventToTimelineItem({
+        event,
+        job: input.job,
+      }),
+    )
+    .filter((event): event is JobTrackingTimelineItem => Boolean(event));
+
+  const communicationTimeline = communicationEvents
+    .filter((event) => recordString(asRecord(event.metadataJson), "dispatchJobId") === input.job.id)
+    .map((event) => mapCommunicationEventToTimelineItem(event));
+
+  return [...jobTimeline, ...communicationTimeline]
+    .sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt))
+    .slice(0, limit);
 }
 
 export async function createJobTrackingLink(input: {

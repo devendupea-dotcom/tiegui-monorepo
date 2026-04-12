@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { formatCurrency } from "@/lib/invoices";
 import type { JobListItem } from "@/lib/job-records";
 import {
@@ -125,6 +126,7 @@ export default function BusinessExpensesManager({
   canManage,
   initialJobId,
 }: BusinessExpensesManagerProps) {
+  const router = useRouter();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [expenses, setExpenses] = useState<BusinessExpenseListItem[]>([]);
   const [jobs, setJobs] = useState<JobListItem[]>([]);
@@ -147,6 +149,12 @@ export default function BusinessExpensesManager({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const currentOperationalJobId = selectedExpenseId ? form.jobId || "" : jobFilter || form.jobId || "";
+  const selectedOperationalJobHref = currentOperationalJobId
+    ? internalUser
+      ? `/app/jobs/records/${currentOperationalJobId}?orgId=${orgId}`
+      : `/app/jobs/records/${currentOperationalJobId}`
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -466,9 +474,19 @@ export default function BusinessExpensesManager({
             <p className="muted">
               Track receipts, supplier spend, fuel, permits, and job-level expenses for {orgName} in one folder.
             </p>
+            <p className="muted">Use the Operational Job page for dispatch, schedule, tracking, and customer communication.</p>
           </div>
           <div className="portal-empty-actions">
-            <button className="btn secondary" type="button" onClick={beginCreate}>
+            {selectedOperationalJobHref ? (
+              <button className="btn primary" type="button" onClick={() => router.push(selectedOperationalJobHref)}>
+                Open Operational Job
+              </button>
+            ) : null}
+            <button
+              className={selectedOperationalJobHref ? "btn secondary" : "btn primary"}
+              type="button"
+              onClick={beginCreate}
+            >
               New Expense
             </button>
           </div>
@@ -497,8 +515,8 @@ export default function BusinessExpensesManager({
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>Expense Folder</h3>
-              <p className="muted">Search expenses, filter by job or category, and open receipt attachments.</p>
+              <h3>Expense Lookup</h3>
+              <p className="muted">Find job-linked spend when you need receipts, PO linkage, or cost detail.</p>
             </div>
           </div>
 

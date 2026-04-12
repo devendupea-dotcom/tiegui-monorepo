@@ -143,6 +143,11 @@ export default function JobRecordsManager({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const selectedOperationalJobHref = selectedJobId
+    ? internalUser
+      ? `/app/jobs/records/${selectedJobId}?orgId=${orgId}`
+      : `/app/jobs/records/${selectedJobId}`
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -468,19 +473,29 @@ export default function JobRecordsManager({
       <section className="card">
         <div className="invoice-header-row">
           <div className="stack-cell">
-            <h2>Structured Job Records</h2>
+            <h2>Operational Records</h2>
             <p className="muted">
-              Organize contractor job data for {orgName} with measurements, materials, labor, attached estimates, and job
-              notes.
+              Specialized deep-work records for sold jobs in {orgName}: measurements, materials, labor, linked estimates,
+              and operational notes.
             </p>
+            <p className="muted">Use the Operational Job page for dispatch, schedule, tracking, and customer communication.</p>
           </div>
           <div className="portal-empty-actions">
+            {selectedOperationalJobHref ? (
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => router.push(selectedOperationalJobHref)}
+              >
+                Open Operational Job
+              </button>
+            ) : null}
             <button
               className="btn secondary"
               type="button"
               onClick={() => router.push(internalUser ? `/app/jobs/records/costing?orgId=${orgId}` : "/app/jobs/records/costing")}
             >
-              Job Costing
+              Costing Workspace
             </button>
             <button
               className="btn secondary"
@@ -508,8 +523,12 @@ export default function JobRecordsManager({
             >
               Expenses
             </button>
-            <button className="btn primary" type="button" onClick={beginCreateJob}>
-              New Job
+            <button
+              className={selectedOperationalJobHref ? "btn secondary" : "btn primary"}
+              type="button"
+              onClick={beginCreateJob}
+            >
+              New Operational Record
             </button>
           </div>
         </div>
@@ -522,8 +541,8 @@ export default function JobRecordsManager({
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>Jobs</h3>
-              <p className="muted">List jobs, open a record, or filter by status.</p>
+              <h3>Operational Record Lookup</h3>
+              <p className="muted">Find a sold job when you need records, costing, or other structured deep-work detail.</p>
             </div>
           </div>
 
@@ -556,8 +575,8 @@ export default function JobRecordsManager({
             </div>
           ) : jobs.length === 0 ? (
             <div className="portal-empty-state job-records-empty">
-              <strong>No structured jobs yet.</strong>
-              <p className="muted">Create your first job record to track measurements, materials, labor, and estimate links.</p>
+              <strong>No operational records yet.</strong>
+              <p className="muted">Create your first operational job record to track measurements, materials, labor, and estimate links.</p>
             </div>
           ) : (
             <div className="job-records-list">
@@ -593,8 +612,8 @@ export default function JobRecordsManager({
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>{selectedJobId ? "Job Details" : "New Job"}</h3>
-              <p className="muted">Edit job info, attach an estimate, and maintain notes plus structured production data.</p>
+              <h3>{selectedJobId ? "Operational Record" : "New Operational Job"}</h3>
+              <p className="muted">Edit job info, attach an estimate, and maintain structured production data when you need it.</p>
             </div>
           </div>
 

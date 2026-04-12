@@ -7,6 +7,7 @@ import {
 } from "@/lib/app-api-permissions";
 import { buildEstimateShareEmailDraft } from "@/lib/estimate-share";
 import { createEstimateShareLink } from "@/lib/estimate-share-store";
+import { getEstimateCustomerFacingIssues } from "@/lib/estimates";
 import { markEstimateSent } from "@/lib/estimates-store";
 import { getDecryptedAccessToken } from "@/lib/integrations/account-store";
 import { refreshOutlookTokens, sendOutlookMail } from "@/lib/integrations/outlookClient";
@@ -43,9 +44,24 @@ async function getScopedEstimateOrThrow(estimateId: string) {
       projectType: true,
       total: true,
       validUntil: true,
+      lead: {
+        select: {
+          contactName: true,
+          businessName: true,
+          phoneE164: true,
+        },
+      },
       org: {
         select: {
           name: true,
+          phone: true,
+          email: true,
+          website: true,
+        },
+      },
+      _count: {
+        select: {
+          lineItems: true,
         },
       },
       shareLinks: {
@@ -72,6 +88,17 @@ export async function POST(req: Request, { params }: RouteContext) {
     const actor = await requireAppApiActor();
     const scoped = await getScopedEstimateOrThrow(params.estimateId);
     assertOrgWriteAccess(actor, scoped.orgId);
+
+    const sendIssues = getEstimateCustomerFacingIssues({
+      title: scoped.title,
+      customerName: scoped.customerName,
+      leadLabel: scoped.lead?.contactName || scoped.lead?.businessName || scoped.lead?.phoneE164 || "",
+      lineItemCount: scoped._count.lineItems,
+      total: Number(scoped.total),
+    });
+    if (sendIssues.length > 0) {
+      throw new AppApiError(`Estimate is not ready to send. ${sendIssues.join(" ")}`, 400);
+    }
 
     const payload = (await req.json().catch(() => null)) as SendEstimatePayload | null;
     const latestShare = scoped.shareLinks[0] || null;
@@ -144,6 +171,9 @@ export async function POST(req: Request, { params }: RouteContext) {
         shareUrl: share.shareUrl,
         recipientName,
         senderName: scoped.org.name,
+        senderPhone: scoped.org.phone,
+        senderEmail: scoped.org.email,
+        senderWebsite: scoped.org.website,
       });
 
       await sendOutlookMail({

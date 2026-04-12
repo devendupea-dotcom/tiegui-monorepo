@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeEnvValue } from "../lib/env.ts";
-import { getBaseUrlFromRequest } from "../lib/urls.ts";
+import { getBaseUrlFromRequest, getConfiguredBaseUrl } from "../lib/urls.ts";
 
 function withEnv(overrides, fn) {
   const previous = new Map();
@@ -96,6 +96,32 @@ test("getBaseUrlFromRequest falls back to localhost when no host information exi
     () => {
       const req = new Request("https://ignored.example.com/api/test");
       assert.equal(getBaseUrlFromRequest(req), "http://localhost:3001");
+    },
+  );
+});
+
+test("getConfiguredBaseUrl prefers NEXTAUTH_URL and normalizes trailing slash", () => {
+  withEnv(
+    {
+      NEXTAUTH_URL: "https://app.tieguisolutions.com/",
+      VERCEL_PROJECT_PRODUCTION_URL: "prod.example.com",
+      VERCEL_URL: "preview.example.com",
+    },
+    () => {
+      assert.equal(getConfiguredBaseUrl(), "https://app.tieguisolutions.com");
+    },
+  );
+});
+
+test("getConfiguredBaseUrl falls back to Vercel host when NEXTAUTH_URL is absent", () => {
+  withEnv(
+    {
+      NEXTAUTH_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      VERCEL_URL: "preview-branch.example.vercel.app",
+    },
+    () => {
+      assert.equal(getConfiguredBaseUrl(), "https://preview-branch.example.vercel.app");
     },
   );
 });

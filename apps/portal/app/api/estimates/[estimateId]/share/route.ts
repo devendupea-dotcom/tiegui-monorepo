@@ -6,6 +6,7 @@ import {
   requireAppApiActor,
 } from "@/lib/app-api-permissions";
 import { createEstimateShareLink } from "@/lib/estimate-share-store";
+import { getEstimateCustomerFacingIssues } from "@/lib/estimates";
 import { capturePortalError } from "@/lib/telemetry";
 import { getBaseUrlFromRequest } from "@/lib/urls";
 
@@ -31,6 +32,21 @@ async function getScopedEstimateOrThrow(estimateId: string) {
     select: {
       id: true,
       orgId: true,
+      title: true,
+      customerName: true,
+      total: true,
+      lead: {
+        select: {
+          contactName: true,
+          businessName: true,
+          phoneE164: true,
+        },
+      },
+      _count: {
+        select: {
+          lineItems: true,
+        },
+      },
     },
   });
 
@@ -46,6 +62,17 @@ export async function POST(req: Request, { params }: RouteContext) {
     const actor = await requireAppApiActor();
     const scoped = await getScopedEstimateOrThrow(params.estimateId);
     assertOrgWriteAccess(actor, scoped.orgId);
+
+    const shareIssues = getEstimateCustomerFacingIssues({
+      title: scoped.title,
+      customerName: scoped.customerName,
+      leadLabel: scoped.lead?.contactName || scoped.lead?.businessName || scoped.lead?.phoneE164 || "",
+      lineItemCount: scoped._count.lineItems,
+      total: Number(scoped.total),
+    });
+    if (shareIssues.length > 0) {
+      throw new AppApiError(`Estimate is not ready to share. ${shareIssues.join(" ")}`, 400);
+    }
 
     const payload = (await req.json().catch(() => null)) as ShareEstimatePayload | null;
     const share = await createEstimateShareLink({

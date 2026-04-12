@@ -10,7 +10,14 @@ import {
   canManageAnyOrgJobs,
   requireAppApiActor,
 } from "@/lib/app-api-permissions";
-import { DEFAULT_INVOICE_TERMS, formatInvoiceNumber, normalizeInvoiceTerms } from "@/lib/invoices";
+import {
+  buildInvoiceWorkerLeadAccessWhere,
+  DEFAULT_INVOICE_TERMS,
+  formatInvoiceNumber,
+  getInvoiceActionContext,
+  getInvoiceReadJobContext,
+  normalizeInvoiceTerms,
+} from "@/lib/invoices";
 import { buildInvoicePdfV2, type InvoicePdfImageSource } from "@/lib/invoice-pdf";
 import { getPhotoStorageRecord } from "@/lib/photo-storage";
 import { isR2Configured, requireR2 } from "@/lib/r2";
@@ -174,23 +181,20 @@ async function assertWorkerCanViewInvoice(input: {
   actorId: string;
   orgId: string;
   invoiceId: string;
-  jobId: string | null;
+  leadId: string | null;
 }) {
-  if (!input.jobId) {
+  if (!input.leadId) {
     throw new AppApiError("Workers can only access invoices linked to assigned jobs.", 403);
   }
 
   const allowed = await prisma.lead.findFirst({
     where: {
-      id: input.jobId,
+      id: input.leadId,
       orgId: input.orgId,
-      OR: [
-        { assignedToUserId: input.actorId },
-        { createdByUserId: input.actorId },
-        { events: { some: { assignedToUserId: input.actorId } } },
-        { events: { some: { workerAssignments: { some: { workerUserId: input.actorId } } } } },
-        { invoices: { some: { id: input.invoiceId } } },
-      ],
+      ...buildInvoiceWorkerLeadAccessWhere({
+        actorId: input.actorId,
+        invoiceId: input.invoiceId,
+      }),
     },
     select: { id: true },
   });
@@ -211,7 +215,8 @@ export async function GET(req: Request, { params }: RouteContext) {
       select: {
         id: true,
         orgId: true,
-        jobId: true,
+        legacyLeadId: true,
+        sourceJobId: true,
         invoiceNumber: true,
         status: true,
         subtotal: true,
@@ -250,13 +255,22 @@ export async function GET(req: Request, { params }: RouteContext) {
             addressLine: true,
           },
         },
-        job: {
+        legacyLead: {
           select: {
             id: true,
             contactName: true,
             businessName: true,
             phoneE164: true,
             city: true,
+          },
+        },
+        sourceJob: {
+          select: {
+            id: true,
+            leadId: true,
+            customerName: true,
+            serviceType: true,
+            projectType: true,
           },
         },
         lineItems: {
@@ -276,6 +290,11 @@ export async function GET(req: Request, { params }: RouteContext) {
     }
 
     const terms = await resolveInvoiceTerms(invoice.id);
+    const invoiceActionContext = getInvoiceActionContext({
+      legacyLeadId: invoice.legacyLeadId,
+      sourceJobId: invoice.sourceJobId,
+      sourceJob: invoice.sourceJob,
+    });
 
     assertOrgReadAccess(actor, invoice.orgId);
 
@@ -284,13 +303,17 @@ export async function GET(req: Request, { params }: RouteContext) {
         actorId: actor.id,
         orgId: invoice.orgId,
         invoiceId: invoice.id,
-        jobId: invoice.jobId,
+        leadId: invoiceActionContext.leadId,
       });
     }
 
-    const jobLabel = invoice.job
-      ? invoice.job.contactName || invoice.job.businessName || invoice.job.phoneE164
-      : null;
+    const jobContext = getInvoiceReadJobContext({
+      legacyLeadId: invoice.legacyLeadId,
+      sourceJobId: invoice.sourceJobId,
+      legacyLead: invoice.legacyLead,
+      sourceJob: invoice.sourceJob,
+    });
+    const jobLabel = jobContext.primaryLabel;
 
     let logo: InvoicePdfImageSource | null = null;
     if (invoice.org.logoPhotoId) {

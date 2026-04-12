@@ -45,6 +45,14 @@ export const dispatchPriorityValues = ["low", "medium", "high", "urgent"] as con
 
 export type DispatchPriorityValue = (typeof dispatchPriorityValues)[number];
 
+export const dispatchScheduleChangeFields = [
+  "scheduledDate",
+  "scheduledStartTime",
+  "scheduledEndTime",
+] as const;
+
+export type DispatchScheduleChangeField = (typeof dispatchScheduleChangeFields)[number];
+
 export const dispatchPriorityLabels: Record<DispatchPriorityValue, string> = {
   low: "Low",
   medium: "Medium",
@@ -80,6 +88,21 @@ export type DispatchNotificationSettings = {
   notifyRescheduled: boolean;
   notifyCompleted: boolean;
   canSend: boolean;
+};
+
+export type DispatchSmsDeliveryState = "queued" | "sent" | "delivered" | "failed" | "suppressed";
+
+export type DispatchSmsRemediationKind =
+  | "retry_later"
+  | "check_phone"
+  | "opted_out"
+  | "check_twilio"
+  | "call_customer";
+
+export type DispatchSmsRemediation = {
+  kind: DispatchSmsRemediationKind;
+  title: string;
+  detail: string;
 };
 
 export type DispatchCustomerLookupItem = {
@@ -240,6 +263,53 @@ export function formatDispatchScheduledWindow(startTime: string | null, endTime:
   return "Any time";
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function recordString(record: Record<string, unknown> | null, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function normalizeDispatchIssueText(value: string | null | undefined): string {
+  return (value || "").trim().toLowerCase();
+}
+
+function dispatchIssueMentions(value: string, patterns: string[]): boolean {
+  return patterns.some((pattern) => value.includes(pattern));
+}
+
+export function getDispatchScheduleChangeFields(metadata: unknown): DispatchScheduleChangeField[] {
+  const record = asRecord(metadata);
+  const rawChanges = record?.changes;
+  if (!Array.isArray(rawChanges)) {
+    return [];
+  }
+
+  const fields = new Set<DispatchScheduleChangeField>();
+  for (const change of rawChanges) {
+    const changeRecord = asRecord(change);
+    const field = recordString(changeRecord, "field");
+    if (
+      field &&
+      dispatchScheduleChangeFields.some((candidate) => candidate === field)
+    ) {
+      fields.add(field as DispatchScheduleChangeField);
+    }
+  }
+
+  return [...fields];
+}
+
+export function isMeaningfulDispatchScheduleChange(metadata: unknown): boolean {
+  return getDispatchScheduleChangeFields(metadata).length > 0;
+}
+
 export function compareDispatchJobs(
   left: Pick<DispatchJobSummary, "crewOrder" | "scheduledStartTime" | "customerName" | "id">,
   right: Pick<DispatchJobSummary, "crewOrder" | "scheduledStartTime" | "customerName" | "id">,
@@ -358,4 +428,260 @@ export function shouldSendDispatchStatusNotification(
     default:
       return false;
   }
+}
+
+export function getDispatchSmsDeliveryState(value: string | null | undefined): DispatchSmsDeliveryState | null {
+  switch ((value || "").trim().toLowerCase()) {
+    case "queued":
+      return "queued";
+    case "sent":
+      return "sent";
+    case "delivered":
+      return "delivered";
+    case "failed":
+    case "undelivered":
+      return "failed";
+    case "suppressed":
+      return "suppressed";
+    default:
+      return null;
+  }
+}
+
+export function formatDispatchSmsDeliveryStateLabel(state: DispatchSmsDeliveryState): string {
+  switch (state) {
+    case "queued":
+      return "Queued";
+    case "sent":
+      return "Sent";
+    case "delivered":
+      return "Delivered";
+    case "failed":
+      return "Failed";
+    case "suppressed":
+      return "Suppressed";
+    default:
+      return state;
+  }
+}
+
+export function describeDispatchNotificationBlockedReason(input: {
+  smsEnabled: boolean;
+  canSend: boolean;
+  notificationTypeEnabled: boolean;
+  hasCustomerPhone: boolean;
+  hasScheduledDate: boolean;
+  optedOut: boolean;
+  withinSendWindow: boolean;
+}): string | null {
+  if (!input.smsEnabled) {
+    return "Dispatch SMS is disabled for this workspace.";
+  }
+
+  if (!input.canSend) {
+    return "Dispatch SMS is not ready because Twilio is missing or paused.";
+  }
+
+  if (!input.notificationTypeEnabled) {
+    return "This dispatch update type is disabled for customer SMS.";
+  }
+
+  if (!input.hasCustomerPhone) {
+    return "Customer phone is missing.";
+  }
+
+  if (!input.hasScheduledDate) {
+    return "Scheduled date is missing.";
+  }
+
+  if (input.optedOut) {
+    return "Customer has opted out of SMS.";
+  }
+
+  if (!input.withinSendWindow) {
+    return "Outside SMS send hours.";
+  }
+
+  return null;
+}
+
+export function describeDispatchSmsOperatorIssue(input: {
+  deliveryState: DispatchSmsDeliveryState | null;
+  providerStatus: string | null;
+  blockedReason: string | null;
+  failureReason: string | null;
+  providerErrorCode?: string | null;
+  providerErrorMessage?: string | null;
+}): string | null {
+  if (input.blockedReason) {
+    return input.blockedReason;
+  }
+
+  const combinedText = [
+    input.failureReason,
+    input.providerErrorMessage,
+    input.providerErrorCode ? `error ${input.providerErrorCode}` : null,
+    input.providerStatus,
+  ]
+    .map((value) => normalizeDispatchIssueText(value))
+    .filter(Boolean)
+    .join(" ");
+
+  if (
+    dispatchIssueMentions(combinedText, [
+      "opted out",
+      "unsubscribed",
+      "stop",
+      "do not contact",
+      "dnc",
+    ])
+  ) {
+    return "Customer opted out of SMS.";
+  }
+
+  if (
+    dispatchIssueMentions(combinedText, [
+      "invalid",
+      "not a valid phone number",
+      "phone number",
+      "landline",
+      "unreachable destination handset",
+      "unknown destination handset",
+      "unavailable handset",
+      "cannot route to this number",
+      "not routable",
+    ])
+  ) {
+    return "Customer phone number needs attention.";
+  }
+
+  if (
+    dispatchIssueMentions(combinedText, [
+      "twilio",
+      "messaging service",
+      "a2p",
+      "auth token",
+      "account",
+      "workspace",
+      "paused",
+      "not configured",
+    ])
+  ) {
+    return "Twilio or workspace SMS needs attention.";
+  }
+
+  if (input.deliveryState === "suppressed") {
+    return "Customer update was suppressed before send.";
+  }
+
+  if (normalizeDispatchIssueText(input.providerStatus) === "undelivered") {
+    return "Carrier could not deliver the customer update.";
+  }
+
+  if (input.deliveryState === "failed") {
+    return "Customer update failed to send.";
+  }
+
+  return null;
+}
+
+export function getDispatchSmsRemediation(input: {
+  deliveryState: DispatchSmsDeliveryState | null;
+  providerStatus: string | null;
+  blockedReason: string | null;
+  failureReason: string | null;
+  providerErrorCode?: string | null;
+  providerErrorMessage?: string | null;
+}): DispatchSmsRemediation | null {
+  const combinedText = [
+    input.blockedReason,
+    input.failureReason,
+    input.providerErrorMessage,
+    input.providerErrorCode ? `error ${input.providerErrorCode}` : null,
+    input.providerStatus,
+  ]
+    .map((value) => normalizeDispatchIssueText(value))
+    .filter(Boolean)
+    .join(" ");
+
+  if (
+    dispatchIssueMentions(combinedText, [
+      "opted out",
+      "unsubscribed",
+      "stop",
+      "do not contact",
+      "dnc",
+    ])
+  ) {
+    return {
+      kind: "opted_out",
+      title: "Customer opted out",
+      detail: "Do not retry by SMS. Call the customer instead if this update is important.",
+    };
+  }
+
+  if (
+    dispatchIssueMentions(combinedText, [
+      "invalid",
+      "not a valid phone number",
+      "phone number",
+      "landline",
+      "unreachable destination handset",
+      "unknown destination handset",
+      "unavailable handset",
+      "cannot route to this number",
+      "not routable",
+    ])
+  ) {
+    return {
+      kind: "check_phone",
+      title: "Check customer phone number",
+      detail: "Verify or correct the number before retrying. If timing is urgent, call the customer.",
+    };
+  }
+
+  if (
+    dispatchIssueMentions(combinedText, [
+      "twilio",
+      "messaging service",
+      "a2p",
+      "auth token",
+      "account",
+      "workspace",
+      "paused",
+      "not configured",
+    ])
+  ) {
+    return {
+      kind: "check_twilio",
+      title: "Check Twilio or workspace SMS",
+      detail: "Fix the workspace SMS setup before retrying this customer update.",
+    };
+  }
+
+  if (normalizeDispatchIssueText(input.blockedReason) === "outside sms send hours.") {
+    return {
+      kind: "retry_later",
+      title: "Retry during send hours",
+      detail: "Wait until the workspace send window opens, or call the customer if the timing is urgent.",
+    };
+  }
+
+  if (normalizeDispatchIssueText(input.providerStatus) === "undelivered") {
+    return {
+      kind: "call_customer",
+      title: "Call customer instead",
+      detail: "The carrier could not deliver this text. Calling is safer than repeating the same SMS.",
+    };
+  }
+
+  if (input.deliveryState === "failed" || input.deliveryState === "suppressed") {
+    return {
+      kind: "retry_later",
+      title: "Retry later",
+      detail: "Retry once later if the issue clears, or call the customer if the update is time-sensitive.",
+    };
+  }
+
+  return null;
 }

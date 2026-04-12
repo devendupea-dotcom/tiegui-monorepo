@@ -7,6 +7,7 @@ import { pickLocalizedTemplate, resolveMessageLocale } from "./message-language"
 import { ensureSmsA2POpenerDisclosure } from "./sms-compliance";
 import { sendOutboundSms } from "./sms";
 import { queueSmsDispatch } from "./sms-dispatch-queue";
+import { listWorkspaceUsers, sortWorkspaceUsersByCalendarRoleThenLabel } from "./workspace-users";
 
 export type IntakeOrganizationSettings = {
   id: string;
@@ -390,35 +391,12 @@ function callbackInvalidChoicePrefix(locale: "EN" | "ES"): string {
 }
 
 async function getIntakeWorkerCandidates(orgId: string) {
-  const workers = await prisma.user.findMany({
-    where: {
-      orgId,
-      calendarAccessRole: { not: "READ_ONLY" },
-    },
-    select: {
-      id: true,
-      calendarAccessRole: true,
-      name: true,
-      email: true,
-    },
-    take: 50,
+  const workers = await listWorkspaceUsers({
+    organizationId: orgId,
+    excludeReadOnly: true,
   });
 
-  const roleRank: Record<string, number> = {
-    OWNER: 0,
-    ADMIN: 1,
-    WORKER: 2,
-    READ_ONLY: 3,
-  };
-
-  return workers.sort((a, b) => {
-    const rankA = roleRank[a.calendarAccessRole] ?? 99;
-    const rankB = roleRank[b.calendarAccessRole] ?? 99;
-    if (rankA !== rankB) return rankA - rankB;
-    const labelA = (a.name || a.email).toLowerCase();
-    const labelB = (b.name || b.email).toLowerCase();
-    return labelA.localeCompare(labelB);
-  });
+  return sortWorkspaceUsersByCalendarRoleThenLabel(workers).slice(0, 50);
 }
 
 async function createIntakeCallbackOptionHolds(input: {

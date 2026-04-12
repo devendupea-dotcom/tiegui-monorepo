@@ -127,6 +127,8 @@ export async function upsertCommunicationEvent(
     idempotencyKey: string;
   },
 ) {
+  // CommunicationEvent is the audit/history source of truth. Message/Call remain
+  // provider transport records, while LeadConversationState is automation state.
   const refs = await resolveCommunicationRefs(tx, {
     leadId: input.leadId,
     contactId: input.contactId,

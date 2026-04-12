@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { formatInTimeZone } from "date-fns-tz";
 import { prisma } from "@/lib/prisma";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
-import { requireCalendarActor, CalendarApiError } from "@/lib/calendar/permissions";
+import { requireCalendarActor, resolveCalendarOrgId, CalendarApiError } from "@/lib/calendar/permissions";
+import { listWorkspaceUsers, sortWorkspaceUsersByCalendarRoleThenLabel } from "@/lib/workspace-users";
 
 export const dynamic = "force-dynamic";
 
@@ -66,10 +67,16 @@ export async function POST(req: Request) {
       throw new CalendarApiError("Invalid JSON payload.", 400);
     }
 
-    const orgId = (body.orgId || "").trim();
-    if (!orgId) {
+    const requestedOrgId = (body.orgId || "").trim();
+    if (!requestedOrgId) {
       throw new CalendarApiError("orgId is required.", 400);
     }
+
+    const orgId = await resolveCalendarOrgId({
+      actor,
+      body,
+      requestedOrgId,
+    });
 
     const settings = await getOrgCalendarSettings(orgId);
     const iterations = parseIntSafe(body.iterations, 6, 1, 30);
@@ -79,21 +86,13 @@ export async function POST(req: Request) {
     const startDateKey = (typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : defaultDate);
     const explicitWorkerIds = normalizeWorkerIds(body.workerIds);
 
-    const workers = await prisma.user.findMany({
-      where: {
-        orgId,
-        calendarAccessRole: { not: "READ_ONLY" },
-        ...(explicitWorkerIds.length > 0 ? { id: { in: explicitWorkerIds } } : {}),
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        calendarAccessRole: true,
-      },
-      orderBy: [{ name: "asc" }, { email: "asc" }, { id: "asc" }],
-      take: 50,
-    });
+    const workers = sortWorkspaceUsersByCalendarRoleThenLabel(
+      await listWorkspaceUsers({
+        organizationId: orgId,
+        excludeReadOnly: true,
+        userIds: explicitWorkerIds.length > 0 ? explicitWorkerIds : undefined,
+      }),
+    ).slice(0, 50);
 
     let orderedWorkers = workers;
     if (explicitWorkerIds.length > 0) {

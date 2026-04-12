@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocale } from "next-intl";
 import { formatLabel } from "@/lib/hq";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
@@ -67,6 +67,7 @@ type InboxContextPanelProps = {
   canManage: boolean;
   jobHref: string;
   calendarHref: string;
+  initialEditing?: boolean;
   onSaved: (nextLead: InboxLeadContext) => void;
 };
 
@@ -212,6 +213,7 @@ export default function InboxContextPanel({
   canManage,
   jobHref,
   calendarHref,
+  initialEditing = false,
   onSaved,
 }: InboxContextPanelProps) {
   const locale = useLocale();
@@ -221,11 +223,23 @@ export default function InboxContextPanel({
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const appliedInitialEditingRef = useRef(false);
 
   useEffect(() => {
     if (editing) return;
     setForm(buildFormState(leadContext));
   }, [editing, leadContext]);
+
+  useEffect(() => {
+    if (!initialEditing || appliedInitialEditingRef.current || !leadContext || !canManage) {
+      return;
+    }
+
+    appliedInitialEditingRef.current = true;
+    setEditing(true);
+    setError(null);
+    setNotice(null);
+  }, [initialEditing, leadContext, canManage]);
 
   if (!leadContext) {
     return <p className="muted">{copy.selectConversation}</p>;

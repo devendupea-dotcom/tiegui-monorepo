@@ -1,6 +1,8 @@
 import "server-only";
 
 import { Prisma, type JobStatus } from "@prisma/client";
+import { formatDispatchDateKey } from "@/lib/dispatch";
+import { formatOperationalJobStatusLabel } from "@/lib/job-tracking";
 import { prisma } from "@/lib/prisma";
 import {
   JOB_ADDRESS_MAX,
@@ -19,6 +21,7 @@ import {
   serializeJobDetail,
 } from "@/lib/job-records";
 import { roundMoney, toMoneyDecimal } from "@/lib/invoices";
+import { getOperationalJobPrimaryEstimateId } from "@/lib/estimate-job-linking";
 import { AppApiError } from "@/lib/app-api-permissions";
 
 export const jobListInclude = {
@@ -142,6 +145,13 @@ function normalizeStatus(value: unknown): JobStatus {
     return value as JobStatus;
   }
   return "DRAFT";
+}
+
+function normalizeRequiredJobStatus(value: unknown): JobStatus {
+  if (jobStatusOptions.includes(value as JobStatus)) {
+    return value as JobStatus;
+  }
+  throw new AppApiError("Invalid job status.", 400);
 }
 
 function normalizeOptionalId(value: unknown): string | null {
@@ -465,6 +475,86 @@ export async function saveJobRecord(input: {
   }
 
   return serializeJobDetail(saved);
+}
+
+export async function updateJobRecordStatus(input: {
+  orgId: string;
+  actorId: string | null;
+  jobId: string;
+  status: unknown;
+}) {
+  const nextStatus = normalizeRequiredJobStatus(input.status);
+
+  const existing = await prisma.job.findFirst({
+    where: {
+      id: input.jobId,
+      orgId: input.orgId,
+    },
+    select: {
+      id: true,
+      status: true,
+      scheduledDate: true,
+      scheduledStartTime: true,
+      scheduledEndTime: true,
+      customerId: true,
+      leadId: true,
+      linkedEstimateId: true,
+      sourceEstimateId: true,
+      assignedCrewId: true,
+    },
+  });
+
+  if (!existing) {
+    throw new AppApiError("Job not found.", 404);
+  }
+
+  if (existing.status === nextStatus) {
+    return {
+      id: existing.id,
+      status: existing.status,
+    };
+  }
+
+  const saved = await prisma.$transaction(async (tx) => {
+    const job = await tx.job.update({
+      where: { id: existing.id },
+      data: {
+        status: nextStatus,
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    await tx.jobEvent.create({
+      data: {
+        jobId: existing.id,
+        orgId: input.orgId,
+        actorUserId: input.actorId,
+        eventType: "STATUS_CHANGED",
+        fromValue: existing.status,
+        toValue: nextStatus,
+        metadata: {
+          statusKind: "job",
+          fromStatusLabel: formatOperationalJobStatusLabel(existing.status),
+          toStatusLabel: formatOperationalJobStatusLabel(nextStatus),
+          statusLabel: formatOperationalJobStatusLabel(nextStatus),
+          scheduledDate: existing.scheduledDate ? formatDispatchDateKey(existing.scheduledDate) : null,
+          scheduledStartTime: existing.scheduledStartTime,
+          scheduledEndTime: existing.scheduledEndTime,
+          customerId: existing.customerId,
+          leadId: existing.leadId,
+          linkedEstimateId: getOperationalJobPrimaryEstimateId(existing),
+          assignedCrewId: existing.assignedCrewId,
+        },
+      },
+    });
+
+    return job;
+  });
+
+  return saved;
 }
 
 export async function getJobForOrg(input: {

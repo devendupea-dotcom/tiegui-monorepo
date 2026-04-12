@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { buildCommunicationIdempotencyKey, upsertCommunicationEvent, upsertVoicemailArtifact } from "@/lib/communication-events";
 import { normalizeEnvValue } from "@/lib/env";
 import { ensureLeadAndContactForInboundPhone } from "@/lib/lead-contact-resolution";
+import type { InboundCallRiskAssessment } from "@/lib/inbound-call-risk";
 import { processMissedCallRecovery } from "@/lib/missed-call-recovery";
 import { normalizeE164 } from "@/lib/phone";
 import { validateTwilioWebhook } from "@/lib/twilio";
@@ -265,9 +266,28 @@ async function persistVoiceCommunicationEvent(
   });
 }
 
+function voiceRiskMetadata(riskAssessment: InboundCallRiskAssessment | null | undefined) {
+  if (!riskAssessment) {
+    return undefined;
+  }
+
+  return {
+    riskScore: riskAssessment.score,
+    riskDisposition: riskAssessment.disposition,
+    riskReasons: riskAssessment.reasons,
+    stirVerstat: riskAssessment.stirVerstat,
+    distinctRecentOrgCount: riskAssessment.distinctRecentOrgCount,
+    recentCallCount: riskAssessment.recentCallCount,
+    recentMissedCount: riskAssessment.recentMissedCount,
+    trustedKnownCaller: riskAssessment.trustedKnownCaller,
+  };
+}
+
 export async function trackVoiceCallStart(input: {
   context: TwilioVoiceWebhookContext;
   form: FormData;
+  riskAssessment?: InboundCallRiskAssessment | null;
+  allowLeadCreation?: boolean;
 }) {
   const { context, form } = input;
   const callSid = asTwilioString(form.get("CallSid")) || null;
@@ -297,6 +317,7 @@ export async function trackVoiceCallStart(input: {
             at: snapshot.timestamp,
             preferredLanguage: context.organization.messageLanguage === "ES" ? "ES" : null,
             leadSource: "CALL",
+            allowCreateLead: input.allowLeadCreation,
           })
         : { leadId: null, contactId: null };
 
@@ -321,6 +342,7 @@ export async function trackVoiceCallStart(input: {
       event: buildTwilioVoiceEvent({
         type: "INBOUND_CALL_RECEIVED",
         snapshot,
+        extraMetadata: voiceRiskMetadata(input.riskAssessment),
       }),
       occurredAt: snapshot.timestamp,
       idempotencyKey: voiceEventKey(snapshot, "INBOUND_CALL_RECEIVED"),
@@ -384,6 +406,7 @@ export async function recordVoiceVoicemailReached(input: {
   callId?: string | null;
   reason: string;
   forwardedTo?: string | null;
+  riskAssessment?: InboundCallRiskAssessment | null;
 }) {
   const snapshot = parseTwilioVoiceSnapshot({
     form: input.form,
@@ -403,6 +426,7 @@ export async function recordVoiceVoicemailReached(input: {
         snapshot,
         extraMetadata: {
           reason: input.reason,
+          ...(voiceRiskMetadata(input.riskAssessment) || {}),
         },
       }),
       occurredAt: new Date(),
@@ -416,6 +440,8 @@ export async function recordVoiceDialOutcome(input: {
   form: FormData;
   voicemailFallbackStage?: boolean;
   skipMissedCallRecovery?: boolean;
+  riskAssessment?: InboundCallRiskAssessment | null;
+  allowLeadCreation?: boolean;
 }) {
   const { context, form } = input;
   const callSid = asTwilioString(form.get("CallSid")) || null;
@@ -472,6 +498,7 @@ export async function recordVoiceDialOutcome(input: {
             preferredLanguage: context.organization.messageLanguage === "ES" ? "ES" : null,
             leadSource: "CALL",
             existingLeadId: existingCall?.leadId || null,
+            allowCreateLead: input.allowLeadCreation,
           })
         : { leadId: existingCall?.leadId || null, contactId: null };
 
@@ -495,7 +522,13 @@ export async function recordVoiceDialOutcome(input: {
         contactId: resolved.contactId,
         callId: call.id,
         snapshot,
-        event,
+        event: {
+          ...event,
+          metadata: {
+            ...(event.metadata || {}),
+            ...(voiceRiskMetadata(input.riskAssessment) || {}),
+          },
+        },
         occurredAt: now,
         idempotencyKey: voiceEventKey(
           snapshot,

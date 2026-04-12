@@ -9,8 +9,22 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+/// Parent account for multi-client ownership, support, and billing.
+/// Operational records remain scoped to child organizations.
+model Agency {
+  id        String       @id @default(uuid())
+  name      String
+  status    AgencyStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  organizations Organization[]
+  memberships   AgencyMembership[]
+}
+
 model Organization {
   id                          String          @id @default(uuid())
+  agencyId                    String?
   name                        String
   legalName                   String?
   addressLine1                String?
@@ -139,8 +153,14 @@ model Organization {
   messagingSettings        OrganizationMessagingSettings?
   twilioConfig             OrganizationTwilioConfig?
   twilioConfigAuditLogs    TwilioConfigAuditLog[]
+  blockedCallers           BlockedCaller[]
 
+  agency   Agency? @relation(fields: [agencyId], references: [id], onDelete: SetNull)
   logoPhoto Photo? @relation("OrganizationLogo", fields: [logoPhotoId], references: [id], onDelete: SetNull)
+
+  organizationMemberships OrganizationMembership[]
+
+  @@index([agencyId])
 }
 
 model User {
@@ -151,6 +171,8 @@ model User {
   role               Role               @default(CLIENT)
   calendarAccessRole CalendarAccessRole @default(WORKER)
   timezone           String?
+  /// Legacy/default workspace during tenant-access rollout.
+  /// Membership tables become the long-term authority.
   orgId              String?
   passwordHash       String?
   mustChangePassword Boolean            @default(false)
@@ -158,6 +180,7 @@ model User {
   createdAt          DateTime           @default(now())
 
   org                       Organization?          @relation(fields: [orgId], references: [id])
+  agencyMemberships         AgencyMembership[]
   assignedLeads             Lead[]                 @relation("LeadAssignee")
   assignedEvents            Event[]                @relation("EventAssignee")
   requestedBudgetChanges    BudgetRequest[]        @relation("BudgetRequestRequester")
@@ -195,9 +218,45 @@ model User {
   resetTokens               PasswordResetToken[]
   aiUserDayUsage            AiUserDayUsage[]
   communicationEvents       CommunicationEvent[]   @relation("CommunicationEventActor")
+  organizationMemberships   OrganizationMembership[]
   twilioConfigAuditLogs     TwilioConfigAuditLog[] @relation("TwilioConfigAuditActor")
+  createdBlockedCallers     BlockedCaller[]        @relation("BlockedCallerCreator")
 
   @@index([orgId])
+}
+
+model AgencyMembership {
+  id        String           @id @default(uuid())
+  agencyId  String
+  userId    String
+  role      AgencyRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  agency Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, userId])
+  @@index([agencyId, status])
+  @@index([userId, status])
+}
+
+model OrganizationMembership {
+  id             String             @id @default(uuid())
+  organizationId String
+  userId         String
+  role           CalendarAccessRole
+  status         MembershipStatus   @default(ACTIVE)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId, status])
+  @@index([userId, status])
 }
 
 model Lead {
@@ -268,6 +327,7 @@ model Lead {
   smsDispatchQueue    SmsDispatchQueue[]
   conversationState   LeadConversationState?
   conversationAudits  LeadConversationAuditEvent[]
+  blockedCallerEntries BlockedCaller[]            @relation("BlockedCallerSourceLead")
 
   @@index([orgId, status, createdAt])
   @@index([orgId, nextFollowUpAt])
@@ -282,6 +342,26 @@ model Lead {
   @@index([createdByUserId, createdAt])
   @@index([orgId, sourceType, createdAt])
   @@index([orgId, sourceChannel, createdAt])
+}
+
+model BlockedCaller {
+  id              String   @id @default(uuid())
+  orgId           String
+  phoneE164       String
+  reason          String?
+  sourceLeadId    String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  sourceLead Lead?        @relation("BlockedCallerSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  createdBy  User?        @relation("BlockedCallerCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, phoneE164])
+  @@index([orgId, createdAt])
+  @@index([sourceLeadId])
+  @@index([createdByUserId, createdAt])
 }
 
 model SmsDispatchQueue {
@@ -360,6 +440,8 @@ model Call {
   @@index([leadId, startedAt])
 }
 
+/// Legacy/provider SMS transport record. CommunicationEvent is the canonical
+/// communication audit stream; Message remains for provider compatibility detail.
 model Message {
   id                 String           @id @default(uuid())
   orgId              String
@@ -383,6 +465,8 @@ model Message {
   @@index([leadId, type, createdAt])
 }
 
+/// Canonical audit/event stream for customer communication across SMS, calls,
+/// and voicemail. This is the communication source of truth for history.
 model CommunicationEvent {
   id                    String                 @id @default(uuid())
   orgId                 String
@@ -473,10 +557,13 @@ model SmsTemplate {
   @@index([orgId, isActive, createdAt])
 }
 
+/// Canonical calendar/booking record. LeadConversationState only keeps a
+/// lightweight booked snapshot for automation and conversation continuity.
 model Event {
   id               String              @id @default(uuid())
   orgId            String
   leadId           String?
+  jobId            String?
   customerId       String?
   type             EventType
   provider         EventProvider       @default(LOCAL)
@@ -500,6 +587,7 @@ model Event {
 
   org               Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
   lead              Lead?                 @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  job               Job?                  @relation("EventJob", fields: [jobId], references: [id], onDelete: SetNull)
   customer          Customer?             @relation(fields: [customerId], references: [id], onDelete: SetNull)
   assignedTo        User?                 @relation("EventAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
   createdBy         User?                 @relation("EventCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
@@ -512,13 +600,15 @@ model Event {
   @@index([orgId, type, startAt])
   @@index([orgId, provider, startAt])
   @@index([assignedToUserId, provider, startAt])
+  @@index([jobId, startAt])
   @@index([customerId, startAt])
 }
 
 model Invoice {
   id               String               @id @default(uuid())
   orgId            String
-  jobId            String?
+  /// Legacy CRM lead link preserved for compatibility. Operational invoice truth lives on sourceJobId.
+  legacyLeadId     String?              @map("jobId")
   sourceEstimateId String?
   sourceJobId      String?
   customerId       String
@@ -539,7 +629,7 @@ model Invoice {
   updatedAt        DateTime             @updatedAt
 
   org            Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  job            Lead?             @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  legacyLead     Lead?             @relation(fields: [legacyLeadId], references: [id], onDelete: SetNull)
   sourceEstimate Estimate?         @relation("EstimateSourceInvoice", fields: [sourceEstimateId], references: [id], onDelete: SetNull)
   sourceJob      Job?              @relation("InvoiceSourceJob", fields: [sourceJobId], references: [id], onDelete: SetNull)
   customer       Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -552,7 +642,7 @@ model Invoice {
   @@index([orgId, status, dueDate])
   @@index([sourceEstimateId, createdAt])
   @@index([sourceJobId, createdAt])
-  @@index([jobId, createdAt])
+  @@index([legacyLeadId, createdAt], map: "Invoice_jobId_createdAt_idx")
   @@index([customerId, createdAt])
 }
 
@@ -698,7 +788,9 @@ model Material {
 model Estimate {
   id                   String            @id @default(uuid())
   orgId                String
+  /// CRM lead context for this estimate.
   leadId               String?
+  /// Optional operational job attachment. Many estimates can attach to one job.
   jobId                String?
   createdByUserId      String?
   status               EstimateStatus    @default(DRAFT)
@@ -899,7 +991,9 @@ model Job {
   customerId         String?
   leadId             String?
   estimateDraftId    String?
+  /// Originating estimate that first seeded this operational job lineage.
   sourceEstimateId   String?
+  /// Current operational estimate reference when one estimate is needed for active workflows.
   linkedEstimateId   String?
   customerName       String
   phone              String?
@@ -927,6 +1021,7 @@ model Job {
   linkedEstimate Estimate?         @relation("DispatchLinkedEstimate", fields: [linkedEstimateId], references: [id], onDelete: SetNull)
   estimateDraft  EstimateDraft?    @relation(fields: [estimateDraftId], references: [id], onDelete: SetNull)
   assignedCrew   Crew?             @relation(fields: [assignedCrewId], references: [id], onDelete: SetNull)
+  calendarEvents Event[]           @relation("EventJob")
   estimates      Estimate[]        @relation("EstimateAttachedJob")
   sourceInvoices Invoice[]         @relation("InvoiceSourceJob")
   purchaseOrders PurchaseOrder[]
@@ -1170,6 +1265,8 @@ model OrganizationMessagingSettings {
   @@index([orgId, smsTone])
 }
 
+/// Conversation automation state plus a lightweight booked snapshot.
+/// This is not the canonical communication history or calendar booking record.
 model LeadConversationState {
   id                    String                 @id @default(uuid())
   orgId                 String
@@ -1185,6 +1282,8 @@ model LeadConversationState {
   pausedUntil           DateTime?
   stoppedAt             DateTime?
   bookingOptions        Json?
+  /// Snapshot of the active booked event for automation continuity.
+  /// Event remains the canonical booking row.
   bookedStartAt         DateTime?
   bookedEndAt           DateTime?
   bookedCalendarEventId String?
@@ -1946,6 +2045,23 @@ model VerificationToken {
 enum Role {
   INTERNAL
   CLIENT
+}
+
+enum AgencyStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum AgencyRole {
+  OWNER
+  ADMIN
+  SUPPORT
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
 }
 
 enum LeadStatus {

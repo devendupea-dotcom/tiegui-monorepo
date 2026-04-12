@@ -21,6 +21,28 @@ function normalizeVoiceBusinessName(value: string | null | undefined): string | 
   return trimmed ? trimmed : null;
 }
 
+export function buildForwardDialTwiml(input: {
+  afterCallUrl: string;
+  forwardingNumber: string;
+  timeoutSeconds: number;
+  callerId?: string | null;
+}) {
+  const attributes = [
+    `timeout="${Math.max(1, Math.min(60, Math.floor(input.timeoutSeconds || 0) || 20))}"`,
+    `action="${escapeTwiml(input.afterCallUrl)}"`,
+    'method="POST"',
+    'answerOnBridge="true"',
+  ];
+
+  if (input.callerId?.trim()) {
+    attributes.push(`callerId="${escapeTwiml(input.callerId)}"`);
+  }
+
+  return twimlResponse(
+    [`<Dial ${attributes.join(" ")}>`, escapeTwiml(input.forwardingNumber), "</Dial>"].join(""),
+  );
+}
+
 export function buildVoicemailFallbackTwiml(input: {
   afterCallUrl: string;
   businessName?: string | null;

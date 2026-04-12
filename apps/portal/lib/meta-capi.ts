@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { normalizeEnvValue } from "./env";
+import { getInvoiceActionContext } from "./invoices";
 import { prisma } from "./prisma";
 
 function hashSha256(value: string): string {
@@ -45,11 +46,24 @@ export async function sendMetaCapiPurchaseForInvoice(input: { invoiceId: string 
           phoneE164: true,
         },
       },
-      job: {
+      legacyLead: {
         select: {
           id: true,
           fbClickId: true,
           fbBrowserId: true,
+        },
+      },
+      sourceJob: {
+        select: {
+          id: true,
+          leadId: true,
+          lead: {
+            select: {
+              id: true,
+              fbClickId: true,
+              fbBrowserId: true,
+            },
+          },
         },
       },
     },
@@ -66,6 +80,13 @@ export async function sendMetaCapiPurchaseForInvoice(input: { invoiceId: string 
   if (invoice.status !== "PAID") {
     return { sent: false, skipped: true, reason: "invoice-not-paid" };
   }
+
+  const invoiceActionContext = getInvoiceActionContext({
+    legacyLeadId: invoice.legacyLeadId,
+    sourceJobId: invoice.sourceJobId,
+    legacyLead: invoice.legacyLead,
+    sourceJob: invoice.sourceJob,
+  });
 
   const pixelId = normalizeEnvValue(process.env.META_PIXEL_ID);
   const accessToken = normalizeEnvValue(process.env.META_CAPI_ACCESS_TOKEN);
@@ -101,11 +122,11 @@ export async function sendMetaCapiPurchaseForInvoice(input: { invoiceId: string 
   if (normalizedPhone) {
     userData.ph = hashSha256(normalizedPhone);
   }
-  if (invoice.job?.fbClickId) {
-    userData.fbc = invoice.job.fbClickId;
+  if (invoiceActionContext.fbClickId) {
+    userData.fbc = invoiceActionContext.fbClickId;
   }
-  if (invoice.job?.fbBrowserId) {
-    userData.fbp = invoice.job.fbBrowserId;
+  if (invoiceActionContext.fbBrowserId) {
+    userData.fbp = invoiceActionContext.fbBrowserId;
   }
 
   const payload = {
@@ -131,7 +152,7 @@ export async function sendMetaCapiPurchaseForInvoice(input: { invoiceId: string 
     (await prisma.metaCapiEvent.create({
       data: {
         orgId: invoice.orgId,
-        leadId: invoice.jobId || null,
+        leadId: invoiceActionContext.leadId,
         invoiceId: invoice.id,
         eventName: "Purchase",
         eventId,

@@ -1,8 +1,15 @@
-import type { CalendarAccessRole, Role } from "@prisma/client";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { isInternalRole } from "@/lib/session";
+import {
+  AppApiError,
+  assertOrgReadAccess as assertSharedOrgReadAccess,
+  assertOrgWriteAccess as assertSharedOrgWriteAccess,
+  type AppApiActor,
+  requireAppApiActor,
+  resolveActorOrgId,
+} from "@/lib/app-api-permissions";
+import {
+  canEditAnyCalendarEventInOrg,
+  getCalendarWorkerEditErrorMessage,
+} from "./calendar-access-rules";
 
 export class CalendarApiError extends Error {
   status: number;
@@ -13,13 +20,7 @@ export class CalendarApiError extends Error {
   }
 }
 
-export type CalendarActor = {
-  id: string;
-  role: Role;
-  orgId: string | null;
-  calendarAccessRole: CalendarAccessRole;
-  internalUser: boolean;
-};
+export type CalendarActor = AppApiActor;
 
 function getString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -27,34 +28,22 @@ function getString(value: unknown): string | null {
   return trimmed || null;
 }
 
+function rethrowCalendarAccessError(error: unknown): never {
+  if (error instanceof CalendarApiError) {
+    throw error;
+  }
+  if (error instanceof AppApiError) {
+    throw new CalendarApiError(error.message, error.status);
+  }
+  throw error;
+}
+
 export async function requireCalendarActor(): Promise<CalendarActor> {
-  const session = await getServerSession(authOptions);
-  const sessionUser = session?.user;
-  if (!sessionUser?.id || !sessionUser.role) {
-    throw new CalendarApiError("Unauthorized", 401);
+  try {
+    return await requireAppApiActor();
+  } catch (error) {
+    rethrowCalendarAccessError(error);
   }
-
-  const dbUser = await prisma.user.findUnique({
-    where: { id: sessionUser.id },
-    select: {
-      id: true,
-      role: true,
-      orgId: true,
-      calendarAccessRole: true,
-    },
-  });
-
-  if (!dbUser) {
-    throw new CalendarApiError("Unauthorized", 401);
-  }
-
-  return {
-    id: dbUser.id,
-    role: dbUser.role,
-    orgId: dbUser.orgId,
-    calendarAccessRole: dbUser.calendarAccessRole,
-    internalUser: isInternalRole(dbUser.role),
-  };
 }
 
 export function resolveOrgIdFromRequest(input: {
@@ -68,46 +57,52 @@ export function resolveOrgIdFromRequest(input: {
   return input.body ? getString(input.body.orgId) : null;
 }
 
-export function assertOrgReadAccess(actor: CalendarActor, orgId: string) {
-  if (actor.internalUser) {
-    return;
+export async function resolveCalendarOrgId(input: {
+  actor: CalendarActor;
+  requestedOrgId?: string | null;
+  req?: Request;
+  body?: Record<string, unknown> | null;
+}) {
+  const requestedOrgId =
+    getString(input.requestedOrgId) ||
+    (input.req ? resolveOrgIdFromRequest({ req: input.req, body: input.body }) : input.body ? getString(input.body.orgId) : null);
+
+  try {
+    return await resolveActorOrgId({
+      actor: input.actor,
+      requestedOrgId,
+    });
+  } catch (error) {
+    rethrowCalendarAccessError(error);
   }
-  if (!actor.orgId || actor.orgId !== orgId) {
-    throw new CalendarApiError("Forbidden", 403);
+}
+
+export function assertOrgReadAccess(actor: CalendarActor, orgId: string) {
+  try {
+    assertSharedOrgReadAccess(actor, orgId);
+  } catch (error) {
+    rethrowCalendarAccessError(error);
   }
 }
 
 export function assertOrgWriteAccess(actor: CalendarActor, orgId: string) {
-  assertOrgReadAccess(actor, orgId);
-
-  if (actor.internalUser) {
-    return;
-  }
-
-  if (actor.calendarAccessRole === "READ_ONLY") {
-    throw new CalendarApiError("Read-only users cannot edit calendar data.", 403);
+  try {
+    assertSharedOrgWriteAccess(actor, orgId);
+  } catch (error) {
+    rethrowCalendarAccessError(error);
   }
 }
 
 export function canEditAnyEventInOrg(actor: CalendarActor): boolean {
-  if (actor.internalUser) return true;
-  return actor.calendarAccessRole === "OWNER" || actor.calendarAccessRole === "ADMIN";
+  return canEditAnyCalendarEventInOrg(actor);
 }
 
 export function assertWorkerEditAllowed(input: {
   actor: CalendarActor;
   workerUserIds: string[];
 }) {
-  if (canEditAnyEventInOrg(input.actor)) {
-    return;
-  }
-
-  if (input.actor.calendarAccessRole === "READ_ONLY") {
-    throw new CalendarApiError("Read-only users cannot edit calendar data.", 403);
-  }
-
-  const includesActor = input.workerUserIds.includes(input.actor.id);
-  if (!includesActor) {
-    throw new CalendarApiError("Workers can only edit events assigned to themselves.", 403);
+  const errorMessage = getCalendarWorkerEditErrorMessage(input);
+  if (errorMessage) {
+    throw new CalendarApiError(errorMessage, 403);
   }
 }

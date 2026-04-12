@@ -1,7 +1,6 @@
-import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/session";
 import { canManageJobRecords } from "@/lib/job-records";
 import { getParam, resolveAppScope } from "../../_lib/portal-scope";
+import { requireAppPageViewer } from "../../_lib/portal-viewer";
 import JobRecordsManager from "./job-records-manager";
 
 export const dynamic = "force-dynamic";
@@ -16,26 +15,21 @@ export default async function JobRecordsPage({
     nextPath: "/app/jobs/records",
     requestedOrgId,
   });
-
-  const sessionUser = await requireSessionUser("/app/jobs/records");
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { calendarAccessRole: true },
-        })
-      : null;
+  const viewer = await requireAppPageViewer({
+    nextPath: "/app/jobs/records",
+    orgId: scope.orgId,
+  });
 
   const canManage = canManageJobRecords({
-    internalUser: scope.internalUser,
-    calendarAccessRole: currentUser?.calendarAccessRole || "OWNER",
+    internalUser: viewer.internalUser,
+    calendarAccessRole: viewer.calendarAccessRole,
   });
 
   return (
     <JobRecordsManager
       orgId={scope.orgId}
       orgName={scope.orgName}
-      internalUser={scope.internalUser}
+      internalUser={viewer.internalUser}
       canManage={canManage}
     />
   );

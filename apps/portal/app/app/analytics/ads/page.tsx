@@ -4,9 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isNotFoundError } from "next/dist/client/components/not-found";
 import { isRedirectError } from "next/dist/client/components/redirect";
-import type { CalendarAccessRole, MarketingChannel } from "@prisma/client";
+import type { MarketingChannel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/session";
 import {
   canManageAnyOrgJobs,
   requireAppApiActor,
@@ -14,6 +13,7 @@ import {
 } from "@/lib/app-api-permissions";
 import { getPortalAdsMetrics } from "@/lib/portal-analytics";
 import { getParam, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import { requireAppPageViewer } from "../../_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -166,35 +166,18 @@ export default async function AdsAnalyticsPage({
       nextPath: "/app/analytics/ads",
       requestedOrgId,
     });
-    const user = await requireSessionUser("/app/analytics/ads");
-
-    let calendarAccessRole: CalendarAccessRole = scope.internalUser ? "OWNER" : "WORKER";
-    if (!scope.internalUser && user.id) {
-      const dbUser = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { calendarAccessRole: true },
-      });
-      calendarAccessRole = dbUser?.calendarAccessRole || "WORKER";
-    }
-
-    if (!scope.internalUser && !canManageAnyOrgJobs({
-      id: user.id || "",
-      role: user.role,
+    const viewer = await requireAppPageViewer({
+      nextPath: "/app/analytics/ads",
       orgId: scope.orgId,
-      calendarAccessRole,
-      internalUser: false,
-    })) {
+    });
+
+    if (!viewer.internalUser && !canManageAnyOrgJobs(viewer)) {
       redirect(withOrgQuery("/app/calendar", scope.orgId, scope.internalUser));
     }
 
     const monthStart = parseMonthStart(monthParam);
     const ads = await getPortalAdsMetrics({
-      viewer: {
-        id: user.id || "",
-        internalUser: scope.internalUser,
-        calendarAccessRole,
-        orgId: scope.orgId,
-      },
+      viewer,
       month: formatMonthValue(monthStart),
     });
 

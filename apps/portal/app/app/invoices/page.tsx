@@ -3,9 +3,15 @@ import { Prisma, type BillingInvoiceStatus } from "@prisma/client";
 import { getRequestTranslator } from "@/lib/i18n";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/hq";
-import { billingInvoiceStatusOptions, formatCurrency, formatInvoiceNumber } from "@/lib/invoices";
-import { requireSessionUser } from "@/lib/session";
+import {
+  billingInvoiceStatusOptions,
+  buildInvoiceWorkerLeadAccessWhere,
+  formatCurrency,
+  formatInvoiceNumber,
+  getInvoiceReadJobContext,
+} from "@/lib/invoices";
 import { getParam, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
+import { isWorkerScopedPageViewer, requireAppPageViewer } from "../_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -46,29 +52,34 @@ export default async function InvoicesPage({
     );
   }
 
-  const sessionUser = await requireSessionUser("/app/invoices");
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
-  const workerScoped = !scope.internalUser && currentUser?.calendarAccessRole === "WORKER";
-  const workerId = workerScoped ? currentUser!.id : null;
+  const viewer = await requireAppPageViewer({
+    nextPath: "/app/invoices",
+    orgId: scope.orgId,
+  });
+  const workerScoped = isWorkerScopedPageViewer(viewer);
+  const workerId = workerScoped ? viewer.id : null;
+  const workerLeadAccessWhere = workerId ? buildInvoiceWorkerLeadAccessWhere({ actorId: workerId }) : null;
 
   const baseWhere: Prisma.InvoiceWhereInput = {
     orgId: scope.orgId,
-    ...(workerScoped
+    ...(workerLeadAccessWhere
       ? {
-          job: {
-            OR: [
-              { assignedToUserId: workerId! },
-              { createdByUserId: workerId! },
-              { events: { some: { assignedToUserId: workerId! } } },
-              { events: { some: { workerAssignments: { some: { workerUserId: workerId! } } } } },
-            ],
-          },
+          OR: [
+            {
+              sourceJob: {
+                is: {
+                  lead: {
+                    is: workerLeadAccessWhere,
+                  },
+                },
+              },
+            },
+            {
+              legacyLead: {
+                is: workerLeadAccessWhere,
+              },
+            },
+          ],
         }
       : {}),
   };
@@ -95,12 +106,21 @@ export default async function InvoicesPage({
             name: true,
           },
         },
-        job: {
+        legacyLead: {
           select: {
             id: true,
             contactName: true,
             businessName: true,
             phoneE164: true,
+          },
+        },
+        sourceJob: {
+          select: {
+            id: true,
+            leadId: true,
+            customerName: true,
+            serviceType: true,
+            projectType: true,
           },
         },
       },
@@ -191,12 +211,18 @@ export default async function InvoicesPage({
             <ul className="mobile-list-cards" style={{ marginTop: 12 }}>
               {rows.map((row) => {
                 const invoiceHref = withOrgQuery(`/app/invoices/${row.id}`, scope.orgId, scope.internalUser);
-                const jobHref = row.jobId
-                  ? withOrgQuery(`/app/jobs/${row.jobId}?tab=invoice`, scope.orgId, scope.internalUser)
-                  : null;
-                const jobLabel = row.job
-                  ? row.job.contactName || row.job.businessName || row.job.phoneE164
-                  : "-";
+                const jobContext = getInvoiceReadJobContext({
+                  legacyLeadId: row.legacyLeadId,
+                  sourceJobId: row.sourceJobId,
+                  legacyLead: row.legacyLead,
+                  sourceJob: row.sourceJob,
+                });
+                const jobHref = jobContext.operationalJobId
+                  ? withOrgQuery(`/app/jobs/records/${jobContext.operationalJobId}`, scope.orgId, scope.internalUser)
+                  : jobContext.crmLeadId
+                    ? withOrgQuery(`/app/jobs/${jobContext.crmLeadId}?tab=invoice`, scope.orgId, scope.internalUser)
+                    : null;
+                const jobLabel = jobContext.primaryLabel || "-";
 
                 return (
                   <li key={row.id} className="mobile-list-card">
@@ -251,12 +277,18 @@ export default async function InvoicesPage({
                 <tbody>
                   {rows.map((row) => {
                     const invoiceHref = withOrgQuery(`/app/invoices/${row.id}`, scope.orgId, scope.internalUser);
-                    const jobHref = row.jobId
-                      ? withOrgQuery(`/app/jobs/${row.jobId}?tab=invoice`, scope.orgId, scope.internalUser)
-                      : null;
-                    const jobLabel = row.job
-                      ? row.job.contactName || row.job.businessName || row.job.phoneE164
-                      : "-";
+                    const jobContext = getInvoiceReadJobContext({
+                      legacyLeadId: row.legacyLeadId,
+                      sourceJobId: row.sourceJobId,
+                      legacyLead: row.legacyLead,
+                      sourceJob: row.sourceJob,
+                    });
+                    const jobHref = jobContext.operationalJobId
+                      ? withOrgQuery(`/app/jobs/records/${jobContext.operationalJobId}`, scope.orgId, scope.internalUser)
+                      : jobContext.crmLeadId
+                        ? withOrgQuery(`/app/jobs/${jobContext.crmLeadId}?tab=invoice`, scope.orgId, scope.internalUser)
+                        : null;
+                    const jobLabel = jobContext.primaryLabel || "-";
 
                     return (
                       <tr key={row.id}>

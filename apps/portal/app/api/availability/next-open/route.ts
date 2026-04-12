@@ -6,7 +6,9 @@ import {
   assertOrgWriteAccess,
   canEditAnyEventInOrg,
   requireCalendarActor,
+  resolveCalendarOrgId,
 } from "@/lib/calendar/permissions";
+import { listWorkspaceUsers, sortWorkspaceUsersByUserRoleThenLabel } from "@/lib/workspace-users";
 
 export const dynamic = "force-dynamic";
 
@@ -112,10 +114,11 @@ export async function POST(req: Request) {
       throw new CalendarApiError("Invalid JSON payload.", 400);
     }
 
-    const orgId = (body.orgId || actor.orgId || "").trim();
-    if (!orgId) {
-      throw new CalendarApiError("orgId is required for internal users.", 400);
-    }
+    const orgId = await resolveCalendarOrgId({
+      actor,
+      body,
+      requestedOrgId: body.orgId,
+    });
     assertOrgWriteAccess(actor, orgId);
 
     const startDateKey = parseDateKey(body.date);
@@ -129,23 +132,15 @@ export async function POST(req: Request) {
     const candidateWorkerIdsInput = uniqueWorkerIds(body.candidateWorkerIds);
     const requestedPreferredWorkerId = typeof body.preferredWorkerId === "string" ? body.preferredWorkerId.trim() : "";
 
-    const whereOrgScope = actor.internalUser ? [{ orgId }, { role: "INTERNAL" as const }] : [{ orgId }];
-    const workers = await prisma.user.findMany({
-      where: {
-        OR: whereOrgScope,
-        ...(candidateWorkerIdsInput.length > 0 ? { id: { in: candidateWorkerIdsInput } } : {}),
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        calendarAccessRole: true,
-      },
-      orderBy: [{ role: "asc" }, { name: "asc" }, { email: "asc" }, { id: "asc" }],
-      take: 200,
-    });
-
-    let orderedWorkers: WorkerCandidate[] = workers.filter((worker) => worker.calendarAccessRole !== "READ_ONLY");
+    let orderedWorkers: WorkerCandidate[] = sortWorkspaceUsersByUserRoleThenLabel(
+      await listWorkspaceUsers({
+        organizationId: orgId,
+        includeInternal: actor.internalUser,
+        userIds: candidateWorkerIdsInput.length > 0 ? candidateWorkerIdsInput : undefined,
+      }),
+    )
+      .filter((worker) => worker.calendarAccessRole !== "READ_ONLY")
+      .slice(0, 200);
     if (candidateWorkerIdsInput.length > 0) {
       const indexById = new Map(candidateWorkerIdsInput.map((id, index) => [id, index]));
       orderedWorkers = [...orderedWorkers].sort((a, b) => {

@@ -1,10 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { getRequestTranslator } from "@/lib/i18n";
 import { resolveLeadLocationLabel } from "@/lib/lead-location";
-import { requireSessionUser } from "@/lib/session";
 import { DEFAULT_CALENDAR_TIMEZONE, DEFAULT_SLOT_MINUTES } from "@/lib/calendar/dates";
 import { getOrgCalendarSettings, type OrgCalendarSettings } from "@/lib/calendar/availability";
+import { listWorkspaceUsers, sortWorkspaceUsersByUserRoleThenLabel } from "@/lib/workspace-users";
 import { getParam, resolveAppScope } from "../_lib/portal-scope";
+import { requireAppPageViewer } from "../_lib/portal-viewer";
 import PremiumJobCalendar from "./premium-job-calendar";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +47,10 @@ export default async function ClientCalendarPage({
       );
     }
 
-    const user = await requireSessionUser("/app/calendar");
+    const viewer = await requireAppPageViewer({
+      nextPath: "/app/calendar",
+      orgId: scope.orgId,
+    });
 
     const fallbackSettings: OrgCalendarSettings = {
       allowOverlaps: false,
@@ -71,61 +75,17 @@ export default async function ClientCalendarPage({
       calendarAccessRole: "OWNER" | "ADMIN" | "WORKER" | "READ_ONLY";
     }> = [];
     try {
-      const rows = await prisma.user.findMany({
-        where: {
-          OR: [{ orgId: scope.orgId }, { role: "INTERNAL" }],
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          calendarAccessRole: true,
-          role: true,
-        },
-        orderBy: [{ role: "asc" }, { name: "asc" }, { email: "asc" }],
-        take: 100,
-      });
-      workers = rows.map((row) => ({
-        ...row,
-        calendarAccessRole: row.calendarAccessRole,
-      }));
+      workers = sortWorkspaceUsersByUserRoleThenLabel(
+        await listWorkspaceUsers({
+          organizationId: scope.orgId,
+          includeInternal: true,
+        }),
+      ).slice(0, 100);
     } catch (error) {
-      console.error("ClientCalendarPage failed to load worker calendar roles. Falling back to WORKER roles.", error);
-      const rows = await prisma.user.findMany({
-        where: {
-          OR: [{ orgId: scope.orgId }, { role: "INTERNAL" }],
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-        },
-        orderBy: [{ role: "asc" }, { name: "asc" }, { email: "asc" }],
-        take: 100,
-      });
-      workers = rows.map((row) => ({
-        ...row,
-        calendarAccessRole: scope.internalUser ? "OWNER" : "WORKER",
-      }));
+      console.error("ClientCalendarPage failed to load membership-backed worker roster.", error);
     }
 
-    let currentUserCalendarRole: "OWNER" | "ADMIN" | "WORKER" | "READ_ONLY" = scope.internalUser ? "OWNER" : "WORKER";
-    if (!scope.internalUser && user.id) {
-      try {
-        const currentUserRecord = await prisma.user.findUnique({
-          where: { id: user.id || "" },
-          select: {
-            calendarAccessRole: true,
-          },
-        });
-        if (currentUserRecord?.calendarAccessRole) {
-          currentUserCalendarRole = currentUserRecord.calendarAccessRole;
-        }
-      } catch (error) {
-        console.error("ClientCalendarPage failed to load current user calendar role. Using WORKER.", error);
-      }
-    }
+    const currentUserCalendarRole = viewer.calendarAccessRole;
 
     const quickScheduleLead = quickLeadId
       ? await prisma.lead.findFirst({
@@ -153,8 +113,8 @@ export default async function ClientCalendarPage({
       <PremiumJobCalendar
         orgId={scope.orgId}
         orgName={scope.orgName}
-        internalUser={scope.internalUser}
-        currentUserId={user.id || ""}
+        internalUser={viewer.internalUser}
+        currentUserId={viewer.id}
         currentUserCalendarRole={currentUserCalendarRole}
         defaultSettings={settings}
         quickScheduleLead={

@@ -1,4 +1,5 @@
 import type { LeadPreferredLanguage, Prisma } from "@prisma/client";
+import { findBlockedCallerByPhone } from "@/lib/blocked-callers";
 
 type Tx = Prisma.TransactionClient;
 
@@ -17,6 +18,7 @@ export async function ensureLeadAndContactForInboundPhone(
     existingLeadId?: string | null;
     contactName?: string | null;
     businessName?: string | null;
+    allowCreateLead?: boolean;
   },
 ) {
   if (!input.phoneE164) {
@@ -29,6 +31,19 @@ export async function ensureLeadAndContactForInboundPhone(
   await tx.$executeRaw`
     SELECT pg_advisory_xact_lock(hashtext(${input.orgId}), hashtext(${input.phoneE164}))
   `;
+
+  const blockedCaller = await findBlockedCallerByPhone({
+    orgId: input.orgId,
+    phone: input.phoneE164,
+    tx,
+  });
+
+  if (blockedCaller) {
+    return {
+      leadId: null,
+      contactId: null,
+    };
+  }
 
   const lead =
     (input.existingLeadId
@@ -63,8 +78,66 @@ export async function ensureLeadAndContactForInboundPhone(
       },
     }));
 
+  if (!lead) {
+    if (input.allowCreateLead === false) {
+      return {
+        leadId: null,
+        contactId: null,
+      };
+    }
+
+    const customer =
+      (await tx.customer.findFirst({
+        where: {
+          orgId: input.orgId,
+          phoneE164: input.phoneE164,
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+        },
+      })) ||
+      (await tx.customer.create({
+        data: {
+          orgId: input.orgId,
+          name:
+            input.contactName ||
+            input.businessName ||
+            defaultContactNameForPhone(input.phoneE164),
+          phoneE164: input.phoneE164,
+        },
+        select: {
+          id: true,
+        },
+      }));
+
+    const createdLead = await tx.lead.create({
+      data: {
+        orgId: input.orgId,
+        customerId: customer.id,
+        contactName: input.contactName || null,
+        businessName: input.businessName || null,
+        phoneE164: input.phoneE164,
+        preferredLanguage: input.preferredLanguage,
+        status: "NEW",
+        leadSource: input.leadSource,
+        firstContactedAt: input.at,
+        lastContactedAt: input.at,
+        lastInboundAt: input.at,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return {
+      leadId: createdLead.id,
+      contactId: customer.id,
+    };
+  }
+
   const customer =
-    (lead?.customerId
+    (lead.customerId
       ? await tx.customer.findFirst({
           where: {
             id: lead.customerId,
@@ -90,9 +163,9 @@ export async function ensureLeadAndContactForInboundPhone(
         orgId: input.orgId,
         name:
           input.contactName ||
-          lead?.contactName ||
+          lead.contactName ||
           input.businessName ||
-          lead?.businessName ||
+          lead.businessName ||
           defaultContactNameForPhone(input.phoneE164),
         phoneE164: input.phoneE164,
       },
@@ -100,32 +173,6 @@ export async function ensureLeadAndContactForInboundPhone(
         id: true,
       },
     }));
-
-  if (!lead) {
-    const createdLead = await tx.lead.create({
-      data: {
-        orgId: input.orgId,
-        customerId: customer.id,
-        contactName: input.contactName || null,
-        businessName: input.businessName || null,
-        phoneE164: input.phoneE164,
-        preferredLanguage: input.preferredLanguage,
-        status: "NEW",
-        leadSource: input.leadSource,
-        firstContactedAt: input.at,
-        lastContactedAt: input.at,
-        lastInboundAt: input.at,
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    return {
-      leadId: createdLead.id,
-      contactId: customer.id,
-    };
-  }
 
   await tx.lead.update({
     where: { id: lead.id },

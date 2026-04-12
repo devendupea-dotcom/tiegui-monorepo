@@ -57,10 +57,10 @@ type SmsFunnelTemplatePack = {
 export const SMS_TEMPLATES = {
   friendly: {
     opener:
-      "Hey! This is {bizName} — sorry we missed ya. What kind of work are you looking to get done? Reply STOP to unsubscribe.",
-    afterJob: "Got it! What's the address? (or closest cross-street works too)",
-    afterAddress: "Nice — are you thinking ASAP, this week, next week, or just want a ballpark quote?",
-    afterTimeline: "Perfect — I've got: {slot1}, {slot2}, {slot3}. Which works? Or throw out a time.",
+      "Hi, this is {bizName}. Sorry we missed your call. What kind of work do you need help with? Reply STOP to unsubscribe.",
+    afterJob: "Thanks. What is the property address? A nearby cross street works too.",
+    afterAddress: "Thanks. Are you looking for ASAP, this week, next week, or just a quote?",
+    afterTimeline: "Available estimate times: {slot1}, {slot2}, {slot3}. Which works best for you?",
   },
   professional: {
     opener:
@@ -71,15 +71,15 @@ export const SMS_TEMPLATES = {
   },
   direct: {
     opener: "{bizName}: missed your call. What job do you need? Reply STOP to unsubscribe.",
-    afterJob: "Address?",
-    afterAddress: "When — ASAP, this week, or next week?",
-    afterTimeline: "Open slots: {slot1} / {slot2} / {slot3}. Pick one.",
+    afterJob: "What is the address?",
+    afterAddress: "When do you need it: ASAP, this week, next week, or quote only?",
+    afterTimeline: "Available times: {slot1} / {slot2} / {slot3}. Which one works?",
   },
   highEnergy: {
-    opener: "Thanks for calling {bizName}! What work do you need? Reply STOP to unsubscribe.",
-    afterJob: "Love it — let's get you locked in. What's the property address?",
-    afterAddress: "Are you trying to get this done ASAP or just exploring options?",
-    afterTimeline: "Let's book your free estimate now. I've got {slot1}, {slot2}, or {slot3} — grab a spot!",
+    opener: "Thanks for calling {bizName}. What kind of work do you need help with? Reply STOP to unsubscribe.",
+    afterJob: "Thanks. What is the property address?",
+    afterAddress: "Are you looking to do this ASAP, this week, next week, or just get a quote?",
+    afterTimeline: "I can offer {slot1}, {slot2}, or {slot3}. Which works best?",
   },
   luxury: {
     opener:
@@ -105,14 +105,14 @@ const FRIENDLY_EN: SmsTemplatePack = {
   askCity: "No worries — what city/area is the property in?",
   askTimeframe: SMS_TEMPLATES.friendly.afterAddress,
   offerBooking: SMS_TEMPLATES.friendly.afterTimeline,
-  followUp1: "Quick follow-up from {bizName}: still happy to help. Send {missingField} when you can.",
-  followUp2: "Just checking back — once you send {missingField}, we can lock this in.",
-  followUp3: "Last check-in from {bizName}. Send {missingField} and we’ll keep this moving.",
+  followUp1: "Following up from {bizName}. When you have a moment, send {missingField}.",
+  followUp2: "Last follow-up from {bizName}. Send {missingField} if you'd like us to keep this moving.",
+  followUp3: "Last follow-up from {bizName}. Send {missingField} if you'd like us to keep this moving.",
   bookingConfirmation: "You're booked ✅ {bizName} estimate at {address} — {slotLabel}. Reply RESCHEDULE to change.",
   clarification:
-    "Sorry — I didn't quite catch that. Could you reply with just the {missingField}? Example: '123 Oak St' or 'this week.'",
+    "Sorry, I didn't catch that. Could you reply with just {missingField}? Example: '123 Oak St' or 'this week'.",
   optOutConfirmation: "You've been unsubscribed from {bizName} messages. Reply START to re-subscribe.",
-  humanAck: "Got it — we'll reach out shortly.",
+  humanAck: "Thanks. Someone from {bizName} will follow up shortly.",
 };
 
 const FRIENDLY_ES: SmsTemplatePack = {
@@ -122,14 +122,14 @@ const FRIENDLY_ES: SmsTemplatePack = {
   askCity: "No hay problema — ¿en qué ciudad/zona está la propiedad?",
   askTimeframe: "Perfecto. ¿Lo quieres ASAP, esta semana, la próxima semana, o solo una cotización?",
   offerBooking: "Perfecto — tengo: {slot1}, {slot2}, {slot3}. ¿Cuál te funciona? O dime otro horario.",
-  followUp1: "Seguimiento rápido de {bizName}: cuando puedas, comparte {missingField}.",
-  followUp2: "Solo confirmando — con {missingField} te apartamos horario.",
-  followUp3: "Último recordatorio de {bizName}. Envíanos {missingField} y avanzamos.",
+  followUp1: "Seguimiento de {bizName}. Cuando puedas, comparte {missingField}.",
+  followUp2: "Último seguimiento de {bizName}. Envíanos {missingField} si quieres que sigamos con esto.",
+  followUp3: "Último seguimiento de {bizName}. Envíanos {missingField} si quieres que sigamos con esto.",
   bookingConfirmation: "Quedó agendado ✅ {bizName} en {address} — {slotLabel}. Responde REAGENDAR para cambiar.",
   clarification:
     "Perdón, no lo entendí bien. ¿Me respondes solo con {missingField}? Ejemplo: '123 Oak St' o 'esta semana'.",
   optOutConfirmation: "Ya no recibirás mensajes de {bizName}. Responde START para volver a suscribirte.",
-  humanAck: "Entendido — te contactamos en breve.",
+  humanAck: "Gracias. Alguien de {bizName} te contactará pronto.",
 };
 
 const PROFESSIONAL_EN: SmsTemplatePack = {
@@ -138,13 +138,13 @@ const PROFESSIONAL_EN: SmsTemplatePack = {
   askCity: "Please share the city/area for the property.",
   askTimeframe: SMS_TEMPLATES.professional.afterAddress,
   offerBooking: SMS_TEMPLATES.professional.afterTimeline,
-  followUp1: "{bizName} follow-up: please share {missingField} so we can continue.",
-  followUp2: "Friendly reminder from {bizName}: we still need {missingField}.",
-  followUp3: "Final reminder from {bizName}: send {missingField} when ready.",
+  followUp1: "{bizName} follow-up: please share {missingField} when convenient.",
+  followUp2: "Final follow-up from {bizName}: send {missingField} if you would like us to continue.",
+  followUp3: "Final follow-up from {bizName}: send {missingField} if you would like us to continue.",
   bookingConfirmation: "Confirmed: {bizName} estimate at {address} on {slotLabel}. Reply RESCHEDULE to change.",
   clarification: "Could you send only {missingField}? Example: '123 Oak St' or 'this week'.",
   optOutConfirmation: "You've been unsubscribed from {bizName} messages. Reply START to re-subscribe.",
-  humanAck: "Understood. We will contact you shortly.",
+  humanAck: "Understood. Someone from {bizName} will contact you shortly.",
 };
 
 const PROFESSIONAL_ES: SmsTemplatePack = {
@@ -161,13 +161,13 @@ const DIRECT_EN: SmsTemplatePack = {
   askCity: "City/area?",
   askTimeframe: SMS_TEMPLATES.direct.afterAddress,
   offerBooking: SMS_TEMPLATES.direct.afterTimeline,
-  followUp1: "{bizName}: send {missingField} to continue.",
-  followUp2: "Still need {missingField}.",
-  followUp3: "Last reminder: send {missingField} when ready.",
+  followUp1: "{bizName}: please send {missingField} when ready.",
+  followUp2: "{bizName}: final follow-up. Send {missingField} if you'd like to continue.",
+  followUp3: "{bizName}: final follow-up. Send {missingField} if you'd like to continue.",
   bookingConfirmation: "Booked: {address} — {slotLabel}. Reply RESCHEDULE to change.",
   clarification: "Please send only {missingField}.",
   optOutConfirmation: "You've been unsubscribed from {bizName} messages. Reply START to re-subscribe.",
-  humanAck: "Understood. We'll call you shortly.",
+  humanAck: "Understood. Someone from {bizName} will call you shortly.",
 };
 
 const DIRECT_ES: SmsTemplatePack = {
@@ -186,13 +186,13 @@ const SALES_EN: SmsTemplatePack = {
   askCity: "What city/area is the property in?",
   askTimeframe: SMS_TEMPLATES.highEnergy.afterAddress,
   offerBooking: SMS_TEMPLATES.highEnergy.afterTimeline,
-  followUp1: "We can still help today. Send {missingField} and we’ll book next steps.",
-  followUp2: "Still interested? Send {missingField} and we’ll reserve your spot.",
-  followUp3: "Last check-in from {bizName}. Send {missingField} if you want us to hold a time.",
-  bookingConfirmation: "You're locked in ✅ {address} — {slotLabel}. Reply RESCHEDULE to change.",
-  clarification: "Can you resend only {missingField}?",
+  followUp1: "{bizName} follow-up: send {missingField} when you're ready.",
+  followUp2: "Final follow-up from {bizName}: send {missingField} if you'd like us to continue.",
+  followUp3: "Final follow-up from {bizName}: send {missingField} if you'd like us to continue.",
+  bookingConfirmation: "Estimate scheduled ✅ {address} — {slotLabel}. Reply RESCHEDULE to change.",
+  clarification: "Could you resend only {missingField}?",
   optOutConfirmation: "You've been unsubscribed from {bizName} messages. Reply START to re-subscribe.",
-  humanAck: "Perfect — we’ll call you shortly.",
+  humanAck: "Thanks. Someone from {bizName} will call you shortly.",
 };
 
 const SALES_ES: SmsTemplatePack = {
@@ -210,13 +210,13 @@ const PREMIUM_EN: SmsTemplatePack = {
   askCity: "Please share the city/area for the property.",
   askTimeframe: SMS_TEMPLATES.luxury.afterAddress,
   offerBooking: SMS_TEMPLATES.luxury.afterTimeline,
-  followUp1: "{bizName} follow-up: share {missingField} and we’ll finalize your estimate details.",
-  followUp2: "We’re ready when you are. Send {missingField} to continue.",
-  followUp3: "Final follow-up from {bizName}. Send {missingField} if you'd like to proceed.",
+  followUp1: "{bizName} follow-up: share {missingField} when convenient.",
+  followUp2: "Final follow-up from {bizName}: send {missingField} if you'd like to proceed.",
+  followUp3: "Final follow-up from {bizName}: send {missingField} if you'd like to proceed.",
   bookingConfirmation: "Scheduled ✅ {bizName} estimate at {address} — {slotLabel}. Reply RESCHEDULE to adjust.",
   clarification: "Please reply with {missingField} only, so we can proceed quickly.",
   optOutConfirmation: "You've been unsubscribed from {bizName} messages. Reply START to re-subscribe.",
-  humanAck: "Acknowledged. We’ll follow up shortly.",
+  humanAck: "Acknowledged. Someone from {bizName} will follow up shortly.",
 };
 
 const PREMIUM_ES: SmsTemplatePack = {

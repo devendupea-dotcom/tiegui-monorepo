@@ -11,13 +11,15 @@ import {
   recomputeInvoiceTotals,
   reserveNextInvoiceNumber,
 } from "@/lib/invoices";
+import { upsertBlockedCaller } from "@/lib/blocked-callers";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { leadPhotoSelect, resolveLeadPhotoUrls } from "@/lib/lead-photos";
 import { buildMapsHrefFromLocation, normalizeLeadCity, resolveLeadLocationLabel } from "@/lib/lead-location";
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
+import { findOperationalJobForLead, operationalJobCandidateSelect, selectReusableOperationalJobCandidate } from "@/lib/operational-jobs";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
-import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session";
-import { getParam, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import { requireAppPageViewer } from "../../_lib/portal-viewer";
 import JobFieldActions from "../job-field-actions";
 import JobPhotoUploader from "../job-photo-uploader";
 import JobStatusControls from "../job-status-controls";
@@ -77,33 +79,22 @@ async function requireLeadActionAccess(formData: FormData) {
     redirect("/app/jobs");
   }
 
-  const user = await requireSessionUser(`/app/jobs/${leadId}`);
-  if (!canAccessOrg(user, orgId)) {
-    redirect("/app");
-  }
+  const actor = await requireAppOrgActor(`/app/jobs/${leadId}`, orgId);
 
-  const currentUser =
-    user.id && !isInternalRole(user.role)
-      ? await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
-
-  if (!isInternalRole(user.role) && currentUser?.calendarAccessRole === "READ_ONLY") {
+  if (!actor.internalUser && actor.calendarAccessRole === "READ_ONLY") {
     redirect("/app/jobs");
   }
 
-  if (!isInternalRole(user.role) && currentUser?.calendarAccessRole === "WORKER") {
+  if (!actor.internalUser && actor.calendarAccessRole === "WORKER") {
     const workerAllowed = await prisma.lead.findFirst({
       where: {
         id: leadId,
         orgId,
         OR: [
-          { assignedToUserId: currentUser.id },
-          { createdByUserId: currentUser.id },
-          { events: { some: { assignedToUserId: currentUser.id } } },
-          { events: { some: { workerAssignments: { some: { workerUserId: currentUser.id } } } } },
+          { assignedToUserId: actor.id },
+          { createdByUserId: actor.id },
+          { events: { some: { assignedToUserId: actor.id } } },
+          { events: { some: { workerAssignments: { some: { workerUserId: actor.id } } } } },
         ],
       },
       select: { id: true },
@@ -134,10 +125,10 @@ async function requireLeadActionAccess(formData: FormData) {
     redirect("/app/jobs");
   }
 
-  const fallbackReturn = withOrgQuery(`/app/jobs/${lead.id}?tab=overview`, lead.orgId, isInternalRole(user.role));
+  const fallbackReturn = withOrgQuery(`/app/jobs/${lead.id}?tab=overview`, lead.orgId, actor.internalUser);
   const returnPath = getSafeReturnPath(String(formData.get("returnPath") || ""), fallbackReturn);
 
-  return { lead, user, returnPath, internalUser: isInternalRole(user.role) };
+  return { lead, actor, returnPath, internalUser: actor.internalUser };
 }
 
 async function addJobNoteAction(formData: FormData) {
@@ -154,7 +145,7 @@ async function addJobNoteAction(formData: FormData) {
     data: {
       orgId: scoped.lead.orgId,
       leadId: scoped.lead.id,
-      createdByUserId: scoped.user.id ?? null,
+      createdByUserId: scoped.actor.id ?? null,
       body,
     },
   });
@@ -163,6 +154,162 @@ async function addJobNoteAction(formData: FormData) {
   revalidatePath("/app/jobs");
 
   redirect(appendQuery(scoped.returnPath, "saved", "note"));
+}
+
+async function closeLeadAsSpam(input: {
+  tx: Prisma.TransactionClient;
+  leadId: string;
+  orgId: string;
+  userId: string | null;
+  at: Date;
+  noteBody: string;
+}) {
+  await input.tx.lead.update({
+    where: { id: input.leadId },
+    data: {
+      status: "DNC",
+      intakeStage: "COMPLETED",
+      nextFollowUpAt: null,
+    },
+  });
+
+  await input.tx.leadConversationState.updateMany({
+    where: { leadId: input.leadId },
+    data: {
+      stage: "CLOSED",
+      stoppedAt: input.at,
+      pausedUntil: null,
+      nextFollowUpAt: null,
+      bookingOptions: Prisma.DbNull,
+      followUpStep: 0,
+    },
+  });
+
+  await input.tx.smsDispatchQueue.updateMany({
+    where: {
+      orgId: input.orgId,
+      leadId: input.leadId,
+      status: "QUEUED",
+    },
+    data: {
+      status: "FAILED",
+      lastError: "Blocked as spam from CRM.",
+    },
+  });
+
+  await input.tx.leadNote.create({
+    data: {
+      orgId: input.orgId,
+      leadId: input.leadId,
+      createdByUserId: input.userId,
+      body: input.noteBody,
+    },
+  });
+}
+
+async function blockSpamLeadAction(formData: FormData) {
+  "use server";
+
+  const scoped = await requireLeadActionAccess(formData);
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await upsertBlockedCaller(tx, {
+      orgId: scoped.lead.orgId,
+      phone: scoped.lead.phoneE164,
+      sourceLeadId: scoped.lead.id,
+      createdByUserId: scoped.actor.id ?? null,
+      reason: "Blocked from CRM as spam or junk lead.",
+    });
+
+    await closeLeadAsSpam({
+      tx,
+      leadId: scoped.lead.id,
+      orgId: scoped.lead.orgId,
+      userId: scoped.actor.id ?? null,
+      at: now,
+      noteBody: "[Spam] Caller blocked from CRM. Future auto-text and forwarding should stay suppressed.",
+    });
+  });
+
+  revalidatePath(`/app/jobs/${scoped.lead.id}`);
+  revalidatePath("/app/jobs");
+  revalidatePath("/app/inbox");
+
+  redirect(appendQuery(scoped.returnPath, "saved", "spam-blocked"));
+}
+
+async function deleteSpamLeadAction(formData: FormData) {
+  "use server";
+
+  const scoped = await requireLeadActionAccess(formData);
+  const now = new Date();
+  const jobsListPath = withOrgQuery("/app/jobs", scoped.lead.orgId, scoped.internalUser);
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    await upsertBlockedCaller(tx, {
+      orgId: scoped.lead.orgId,
+      phone: scoped.lead.phoneE164,
+      sourceLeadId: scoped.lead.id,
+      createdByUserId: scoped.actor.id ?? null,
+      reason: "Deleted from CRM as blocked spam or junk caller.",
+    });
+
+    const current = await tx.lead.findUnique({
+      where: { id: scoped.lead.id },
+      select: {
+        id: true,
+        _count: {
+          select: {
+            events: true,
+            estimates: true,
+            invoices: true,
+            jobs: true,
+          },
+        },
+      },
+    });
+
+    if (!current) {
+      return { deleted: true as const };
+    }
+
+    const hasOperationalRecords =
+      current._count.events > 0 ||
+      current._count.estimates > 0 ||
+      current._count.invoices > 0 ||
+      current._count.jobs > 0;
+
+    if (hasOperationalRecords) {
+      await closeLeadAsSpam({
+        tx,
+        leadId: scoped.lead.id,
+        orgId: scoped.lead.orgId,
+        userId: scoped.actor.id ?? null,
+        at: now,
+        noteBody:
+          "[Spam] Caller blocked from CRM. Lead was kept because jobs, estimates, invoices, or events already exist.",
+      });
+
+      return { deleted: false as const };
+    }
+
+    await tx.lead.delete({
+      where: { id: scoped.lead.id },
+    });
+
+    return { deleted: true as const };
+  });
+
+  revalidatePath(`/app/jobs/${scoped.lead.id}`);
+  revalidatePath("/app/jobs");
+  revalidatePath("/app/inbox");
+
+  if (outcome.deleted) {
+    redirect(appendQuery(jobsListPath, "saved", "spam-deleted"));
+  }
+
+  redirect(appendQuery(scoped.returnPath, "saved", "spam-blocked-retained"));
 }
 
 async function addJobMeasurementAction(formData: FormData) {
@@ -182,7 +329,7 @@ async function addJobMeasurementAction(formData: FormData) {
     data: {
       orgId: scoped.lead.orgId,
       leadId: scoped.lead.id,
-      createdByUserId: scoped.user.id ?? null,
+      createdByUserId: scoped.actor.id ?? null,
       label,
       value,
       unit: unit || null,
@@ -220,7 +367,7 @@ async function createInvoiceAction(formData: FormData) {
       const customer = await tx.customer.create({
         data: {
           orgId: scoped.lead.orgId,
-          createdByUserId: scoped.user.id ?? null,
+          createdByUserId: scoped.actor.id ?? null,
           name: scoped.lead.contactName || scoped.lead.businessName || scoped.lead.phoneE164,
           phoneE164: scoped.lead.phoneE164,
           addressLine:
@@ -247,21 +394,26 @@ async function createInvoiceAction(formData: FormData) {
     });
 
     const invoiceNumber = await reserveNextInvoiceNumber(tx, scoped.lead.orgId);
+    const operationalJob = await findOperationalJobForLead(tx, {
+      orgId: scoped.lead.orgId,
+      leadId: scoped.lead.id,
+    });
     const invoice = await tx.invoice.create({
-      data: {
-        orgId: scoped.lead.orgId,
-        jobId: scoped.lead.id,
+        data: {
+          orgId: scoped.lead.orgId,
+          legacyLeadId: scoped.lead.id,
+          sourceJobId: operationalJob?.id || null,
         customerId,
         invoiceNumber,
         terms,
-        status: "DRAFT",
-        issueDate: now,
-        dueDate: dueAt,
-        taxRate: config.defaultTaxRate,
-        notes: `Created from job folder: ${leadLabel}`,
-        createdByUserId: scoped.user.id ?? null,
-      },
-      select: { id: true },
+          status: "DRAFT",
+          issueDate: now,
+          dueDate: dueAt,
+          taxRate: config.defaultTaxRate,
+          notes: `Created from CRM folder: ${leadLabel}`,
+          createdByUserId: scoped.actor.id ?? null,
+        },
+        select: { id: true },
     });
 
     await tx.invoiceLineItem.create({
@@ -302,7 +454,7 @@ async function quickMarkInvoicePaidAction(formData: FormData) {
       where: {
         id: invoiceId,
         orgId: scoped.lead.orgId,
-        jobId: scoped.lead.id,
+        legacyLeadId: scoped.lead.id,
       },
       select: {
         id: true,
@@ -320,7 +472,7 @@ async function quickMarkInvoicePaidAction(formData: FormData) {
         amount: invoice.balanceDue,
         date: new Date(),
         method: "OTHER",
-        note: "Quick mark paid from project folder.",
+        note: "Quick mark paid from CRM folder.",
       },
     });
 
@@ -355,26 +507,21 @@ export default async function ClientJobDetailPage({
     nextPath: `/app/jobs/${params.jobId}`,
     requestedOrgId,
   });
+  const viewer = await requireAppPageViewer({
+    nextPath: `/app/jobs/${params.jobId}`,
+    orgId: scope.orgId,
+  });
 
-  const sessionUser = await requireSessionUser(`/app/jobs/${params.jobId}`);
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
-
-  if (!scope.internalUser && currentUser?.calendarAccessRole === "WORKER") {
+  if (!viewer.internalUser && viewer.calendarAccessRole === "WORKER") {
     const workerAllowed = await prisma.lead.findFirst({
       where: {
         id: params.jobId,
         orgId: scope.orgId,
         OR: [
-          { assignedToUserId: currentUser.id },
-          { createdByUserId: currentUser.id },
-          { events: { some: { assignedToUserId: currentUser.id } } },
-          { events: { some: { workerAssignments: { some: { workerUserId: currentUser.id } } } } },
+          { assignedToUserId: viewer.id },
+          { createdByUserId: viewer.id },
+          { events: { some: { assignedToUserId: viewer.id } } },
+          { events: { some: { workerAssignments: { some: { workerUserId: viewer.id } } } } },
         ],
       },
       select: { id: true },
@@ -526,6 +673,11 @@ export default async function ClientJobDetailPage({
         },
         orderBy: [{ createdAt: "desc" }],
       },
+      jobs: {
+        select: operationalJobCandidateSelect,
+        orderBy: [{ updatedAt: "desc" }],
+        take: 12,
+      },
     },
   });
 
@@ -625,6 +777,9 @@ export default async function ClientJobDetailPage({
         )
       : [];
   const latestInvoice = lead.invoices[0] || null;
+  const operationalJob = selectReusableOperationalJobCandidate({
+    candidates: lead.jobs,
+  });
   const primaryStatusLabel = formatLabel(primaryJobEvent?.status || lead.status);
   const hasPaidInvoice = latestInvoice ? latestInvoice.status === "PAID" || latestInvoice.balanceDue.lte(0) : false;
   const displayCity = normalizeLeadCity(lead.city) || "-";
@@ -643,6 +798,9 @@ export default async function ClientJobDetailPage({
         : "TBD";
 
   const backHref = withOrgQuery("/app/jobs", scope.orgId, scope.internalUser);
+  const operationalJobHref = operationalJob
+    ? withOrgQuery(`/app/jobs/records/${operationalJob.id}`, scope.orgId, scope.internalUser)
+    : null;
   const overviewHref = withOrgQuery(`/app/jobs/${lead.id}?tab=overview`, scope.orgId, scope.internalUser);
   const messagesHref = withOrgQuery(`/app/jobs/${lead.id}?tab=messages`, scope.orgId, scope.internalUser);
   const notesHref = withOrgQuery(`/app/jobs/${lead.id}?tab=notes`, scope.orgId, scope.internalUser);
@@ -659,7 +817,7 @@ export default async function ClientJobDetailPage({
     <div className="job-detail-shell">
       <section className="card job-detail-header">
         <Link href={backHref} className="table-link">
-          ← Back to Jobs
+          ← Back to CRM
         </Link>
         <div className="job-title-row" style={{ marginTop: 8 }}>
           <h2>{lead.contactName || lead.businessName || lead.phoneE164}</h2>
@@ -685,9 +843,22 @@ export default async function ClientJobDetailPage({
             <span className="overdue-chip">Overdue</span>
           ) : null}
         </div>
+        {saved === "spam-blocked" ? (
+          <p className="form-status">Caller blocked as spam. Future auto-text and forwarding will stay suppressed.</p>
+        ) : null}
+        {saved === "spam-blocked-retained" ? (
+          <p className="form-status">
+            Caller blocked as spam. This lead stayed in CRM because it already has job, estimate, invoice, or calendar history.
+          </p>
+        ) : null}
 
         <div className="job-detail-action-row">
-          <a className="btn primary job-primary-action" href={`tel:${lead.phoneE164}`}>
+          {operationalJobHref ? (
+            <Link className="btn primary job-primary-action" href={operationalJobHref}>
+              Open Operational Job
+            </Link>
+          ) : null}
+          <a className={`btn ${operationalJobHref ? "secondary" : "primary"} job-primary-action`} href={`tel:${lead.phoneE164}`}>
             Call
           </a>
           <Link className="btn secondary job-secondary-action" href={messagesHref}>
@@ -700,8 +871,37 @@ export default async function ClientJobDetailPage({
             <a className="btn secondary job-secondary-action" href={mapsHref} target="_blank" rel="noopener noreferrer">
               Maps
             </a>
-          ) : null}
+            ) : null}
         </div>
+        <p className="muted" style={{ marginTop: 10 }}>
+          {operationalJobHref
+            ? "Use this CRM folder for customer history and supporting context. Run day-to-day operations from the operational job."
+            : "Use this CRM folder for intake history, customer context, and supporting records."}
+        </p>
+        <form action={blockSpamLeadAction} style={{ marginTop: 10 }}>
+          <input type="hidden" name="leadId" value={lead.id} />
+          <input type="hidden" name="orgId" value={lead.orgId} />
+          <input type="hidden" name="returnPath" value={withOrgQuery(`/app/jobs/${lead.id}?tab=${currentTab}`, lead.orgId, scope.internalUser)} />
+          <button
+            className="btn secondary"
+            type="submit"
+            style={{ borderColor: "#b91c1c", color: "#b91c1c" }}
+          >
+            Block Spam
+          </button>
+        </form>
+        <form action={deleteSpamLeadAction} style={{ marginTop: 10 }}>
+          <input type="hidden" name="leadId" value={lead.id} />
+          <input type="hidden" name="orgId" value={lead.orgId} />
+          <input type="hidden" name="returnPath" value={withOrgQuery(`/app/jobs/${lead.id}?tab=${currentTab}`, lead.orgId, scope.internalUser)} />
+          <button
+            className="btn secondary"
+            type="submit"
+            style={{ borderColor: "#7f1d1d", color: "#7f1d1d" }}
+          >
+            Delete Spam Lead
+          </button>
+        </form>
         <div className="job-detail-mobile-sticky-actions" aria-label="Job quick actions">
           <a className="btn secondary" href={`tel:${lead.phoneE164}`}>
             Call
@@ -709,9 +909,15 @@ export default async function ClientJobDetailPage({
           <a className="btn secondary" href={`sms:${lead.phoneE164}`}>
             Text
           </a>
-          <Link className="btn primary" href={messagesHref}>
-            Open
-          </Link>
+          {operationalJobHref ? (
+            <Link className="btn primary" href={operationalJobHref}>
+              Open Operational Job
+            </Link>
+          ) : (
+            <Link className="btn primary" href={messagesHref}>
+              Open Messages
+            </Link>
+          )}
         </div>
 
         <JobFieldActions
@@ -721,7 +927,7 @@ export default async function ClientJobDetailPage({
         />
 
         <article className="job-schedule-card">
-          <h3>Schedule</h3>
+          <h3>Schedule Snapshot</h3>
           {primaryJobEvent ? (
             <div className="stack-cell">
               <p>
@@ -737,9 +943,15 @@ export default async function ClientJobDetailPage({
             <p className="muted">No job time scheduled yet.</p>
           )}
           <div className="portal-empty-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
-            <Link className="btn secondary" href={scheduleCalendarHref}>
-              {primaryJobEvent ? "Reschedule in Calendar" : "Schedule in Calendar"}
-            </Link>
+            {operationalJobHref ? (
+              <Link className="btn secondary" href={operationalJobHref}>
+                {primaryJobEvent ? "Manage in Operational Job" : "Finish in Operational Job"}
+              </Link>
+            ) : (
+              <Link className="btn secondary" href={scheduleCalendarHref}>
+                {primaryJobEvent ? "Reschedule in Calendar" : "Schedule in Calendar"}
+              </Link>
+            )}
           </div>
         </article>
 
@@ -775,7 +987,7 @@ export default async function ClientJobDetailPage({
       {currentTab === "overview" ? (
         <>
           <section className="card">
-            <h2>Project Folder Summary</h2>
+            <h2>CRM Folder Summary</h2>
             <dl className="detail-list" style={{ marginTop: 10 }}>
               <div>
                 <dt>Business</dt>
@@ -881,7 +1093,7 @@ export default async function ClientJobDetailPage({
       {currentTab === "messages" ? (
         <section className="card">
           <h2>Messages</h2>
-          <p className="muted">Conversation thread for this job only.</p>
+          <p className="muted">Conversation thread for this CRM folder.</p>
           <LeadMessageThread
             leadId={lead.id}
             senderNumber={lead.org.twilioConfig?.phoneNumber || lead.org.smsFromNumberE164 || null}
@@ -898,7 +1110,7 @@ export default async function ClientJobDetailPage({
         <section className="grid two-col">
           <article className="card">
             <h2>Field Notes</h2>
-            <p className="muted">Drop job updates so crews and office stay aligned.</p>
+            <p className="muted">Store supporting notes tied to this CRM folder.</p>
 
             <form action={addJobNoteAction} className="auth-form" style={{ marginTop: 12 }}>
               <input type="hidden" name="leadId" value={lead.id} />
@@ -948,7 +1160,7 @@ export default async function ClientJobDetailPage({
         <section className="grid two-col">
           <article className="card">
             <h2>Upload Site Photo</h2>
-            <p className="muted">Add progress photos directly inside this project folder.</p>
+            <p className="muted">Add supporting photos directly inside this CRM folder.</p>
 
             <JobPhotoUploader jobId={lead.id} />
           </article>
@@ -1066,7 +1278,7 @@ export default async function ClientJobDetailPage({
           <div className="invoice-header-row">
             <div className="stack-cell">
               <h2>Invoices</h2>
-              <p className="muted">Create professional invoices from this project folder and track manual payments.</p>
+              <p className="muted">Create professional invoices from this CRM folder and track manual payments.</p>
             </div>
             <form action={createInvoiceAction}>
               <input type="hidden" name="leadId" value={lead.id} />
@@ -1080,7 +1292,7 @@ export default async function ClientJobDetailPage({
 
           {lead.invoices.length === 0 ? (
             <p className="muted" style={{ marginTop: 12 }}>
-              No invoices yet. Click Create Invoice to generate one from this job.
+              No invoices yet. Click Create Invoice to generate one from this CRM folder.
             </p>
           ) : (
             <div className="table-wrap" style={{ marginTop: 12 }}>
