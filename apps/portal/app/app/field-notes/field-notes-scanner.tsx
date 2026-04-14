@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type {
@@ -414,7 +415,15 @@ export default function FieldNotesScanner({
             </div>
             {previewUrl ? (
               <div className="field-notes-preview-card">
-                <img className="field-notes-preview-image" src={previewUrl} alt="Field notes preview" />
+                <Image
+                  className="field-notes-preview-image"
+                  src={previewUrl}
+                  alt="Field notes preview"
+                  width={1200}
+                  height={1600}
+                  unoptimized
+                  loader={({ src }) => src}
+                />
               </div>
             ) : null}
           </div>
@@ -446,7 +455,15 @@ export default function FieldNotesScanner({
             <div className="field-notes-layout" style={{ marginTop: 14 }}>
               {previewUrl ? (
                 <div className="field-notes-preview-card">
-                  <img className="field-notes-preview-image" src={previewUrl} alt="Uploaded field notes" />
+                  <Image
+                    className="field-notes-preview-image"
+                    src={previewUrl}
+                    alt="Uploaded field notes"
+                    width={1200}
+                    height={1600}
+                    unoptimized
+                    loader={({ src }) => src}
+                  />
                 </div>
               ) : null}
 

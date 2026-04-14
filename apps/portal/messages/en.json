@@ -92,6 +92,158 @@
       "updated": "Updated"
     }
   },
+  "dashboard": {
+    "error": {
+      "title": "Dashboard is temporarily unavailable",
+      "body": "We hit a server issue loading this workspace. Use calendar or inbox while we recover the dashboard.",
+      "openCalendar": "Open Calendar",
+      "openInbox": "Open Inbox"
+    },
+    "common": {
+      "emptyValue": "—",
+      "lessThanMinute": "<1m",
+      "hoursShort": "{value}h",
+      "minutesShort": "{value}m",
+      "addressMissing": "Address not added yet",
+      "scheduledJob": "Scheduled job",
+      "newLead": "+ New Lead",
+      "addJob": "+ Add Job",
+      "inbox": "Inbox"
+    },
+    "workflow": {
+      "eyebrow": "Workflow",
+      "title": "Run each job from lead to payment",
+      "subtitle": "Use the same flow whether the customer came in by SMS, call, web form, referral, or manual entry.",
+      "action": "Open Leads",
+      "steps": {
+        "capture": {
+          "title": "Capture the lead",
+          "detail": "Start from text, phone, web form, or manual entry and keep one workspace per customer.",
+          "action": "Open Leads"
+        },
+        "reply": {
+          "title": "Reply and follow up",
+          "detail": "Reply by text, call, or email, then set the next follow-up so nothing slips.",
+          "action": "Open Inbox"
+        },
+        "estimate": {
+          "title": "Build and send the estimate",
+          "detail": "Price the work, send the estimate, and track viewed, approved, or declined status.",
+          "action": "Open Estimates"
+        },
+        "schedule": {
+          "title": "Schedule the job",
+          "detail": "Move approved work onto the calendar and hand it off to the crew without losing context.",
+          "action": "Open Calendar"
+        },
+        "invoice": {
+          "title": "Invoice and collect",
+          "detail": "Create the invoice, send it, and track what is still outstanding.",
+          "action": "Open Invoices"
+        }
+      }
+    },
+    "owner": {
+      "sources": {
+        "google": "Google",
+        "meta": "Meta",
+        "direct": "Direct",
+        "other": "Other"
+      },
+      "queueSummaryClear": "All clear",
+      "queueSummary": "{leadsCount, plural, one {# lead waiting} other {# leads waiting}} · {jobsCount, plural, one {# job active} other {# jobs active}}",
+      "leadEngine": {
+        "eyebrow": "Lead Engine",
+        "title": "Leads to work",
+        "subtitle": "New leads, reply speed, and missed-call recovery in one place.",
+        "action": "Go to Inbox",
+        "newLeadsLabel": "New leads",
+        "newLeadsHint": "Last 7 days",
+        "responseTimeLabel": "Response time",
+        "responseTimeHint": "Average first reply",
+        "recoveredCallsLabel": "Recovered calls",
+        "recoveredCallsHint": "Missed calls turned into leads",
+        "emptyTitle": "No leads yet.",
+        "emptyBody": "Leads will appear here when customers reach out.",
+        "emptyAction": "Add your first lead"
+      },
+      "jobsThisWeek": {
+        "eyebrow": "Jobs This Week",
+        "title": "{count, plural, one {# job on deck} other {# jobs on deck}}",
+        "subtitle": "Upcoming work for the next 7 days.",
+        "action": "Open Calendar",
+        "emptyTitle": "No jobs scheduled.",
+        "emptyBody": "Add your first job to get started.",
+        "emptyAction": "Add your first job"
+      },
+      "setup": {
+        "eyebrow": "Setup",
+        "title": "Finish setup",
+        "subtitle": "Only show what still needs attention before the workflow runs cleanly.",
+        "action": "Open Settings",
+        "messaging": "Messaging",
+        "calendar": "Calendar",
+        "integrations": "Integrations",
+        "active": "Active",
+        "connected": "Connected",
+        "configured": "Configured",
+        "needsSetup": "Needs setup"
+      }
+    },
+    "worker": {
+      "header": {
+        "eyebrow": "Today",
+        "title": "Work Queue",
+        "subtitle": "Leads to follow up, jobs on deck, and open capacity for {orgName} in one workspace."
+      },
+      "stats": {
+        "todayLabel": "Today",
+        "todayHint": "Jobs on your calendar today",
+        "nextStopLabel": "Next stop",
+        "nextStopEmpty": "Nothing assigned yet",
+        "replyQueueLabel": "Reply queue",
+        "replyQueueHint": "Customers waiting on you",
+        "replyQueueClear": "Inbox is clear",
+        "openSlotsLabel": "Open slots",
+        "openSlotsHint": "Available over the next 7 days"
+      },
+      "kpis": {
+        "assignedJobsLabel": "Assigned jobs",
+        "assignedJobsHint": "Next 7 days",
+        "todayScheduleLabel": "Today’s schedule",
+        "todayScheduleHint": "Jobs on the calendar today",
+        "messagesNeedingReplyLabel": "Messages needing reply",
+        "messagesNeedingReplyHint": "Customers waiting on you",
+        "messagesNeedingReplyClear": "Inbox is clear",
+        "openSlotsLabel": "Open slots",
+        "openSlotsHint": "Available in the next 7 days"
+      },
+      "assignedJobs": {
+        "eyebrow": "Assigned Jobs",
+        "title": "Your next 7 days",
+        "subtitle": "The jobs you need to keep moving.",
+        "action": "Open Calendar",
+        "nextJobLabel": "Next job",
+        "nextJobEmpty": "Nothing assigned yet",
+        "nextJobEmptyHint": "No assigned job yet",
+        "nextJobBody": "Your next scheduled stop will show here.",
+        "emptyTitle": "No jobs scheduled.",
+        "emptyBody": "Add your first job to get started.",
+        "emptyAction": "Add your first job"
+      },
+      "replyQueue": {
+        "eyebrow": "Reply Queue",
+        "title": "Messages waiting on you",
+        "subtitle": "Stay on top of the conversations that still need a response.",
+        "action": "Go to Inbox",
+        "emptyTitle": "No replies needed.",
+        "emptyBody": "Customer messages will appear here when they need attention.",
+        "emptyAction": "Open Inbox",
+        "needsReply": "Needs reply",
+        "now": "Now"
+      }
+    }
+  },
   "settings": {
     "title": "Settings",
     "subtitle": "Update SMS and follow-up preferences for {organizationName}.",

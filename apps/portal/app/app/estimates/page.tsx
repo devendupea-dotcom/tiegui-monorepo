@@ -13,6 +13,7 @@ export default async function EstimatesPage({
 }) {
   const requestedOrgId = getParam(searchParams?.orgId);
   const initialCreate = getParam(searchParams?.create) === "1";
+  const initialLeadId = getParam(searchParams?.leadId);
   const scope = await resolveAppScope({
     nextPath: "/app/estimates",
     requestedOrgId,
@@ -37,6 +38,7 @@ export default async function EstimatesPage({
       canManage={canManage}
       initialEstimateId={null}
       initialCreate={initialCreate}
+      initialLeadId={initialLeadId}
       leadOptions={references.leads}
       materials={references.materials}
     />

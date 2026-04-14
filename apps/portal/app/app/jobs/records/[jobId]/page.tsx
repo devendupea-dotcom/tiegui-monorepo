@@ -203,7 +203,7 @@ export default async function OperationalJobDetailPage({ params, searchParams }:
             </Link>
             {crmPath ? (
               <Link className="btn secondary" href={crmPath}>
-                Open CRM Folder
+                Open Lead
               </Link>
             ) : null}
             {crmMessagesPath ? (
@@ -236,7 +236,7 @@ export default async function OperationalJobDetailPage({ params, searchParams }:
                 <strong>{customerAddress || "-"}</strong>
               </div>
               <div>
-                <span className="muted">CRM Folder</span>
+                <span className="muted">Lead Workspace</span>
                 <strong>{leadLabel || "Not linked"}</strong>
               </div>
               {job.customer?.email ? (

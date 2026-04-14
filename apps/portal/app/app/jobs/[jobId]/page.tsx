@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
@@ -18,6 +19,10 @@ import { buildMapsHrefFromLocation, normalizeLeadCity, resolveLeadLocationLabel 
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
 import { findOperationalJobForLead, operationalJobCandidateSelect, selectReusableOperationalJobCandidate } from "@/lib/operational-jobs";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
+import {
+  resolveContractorWorkflow,
+  resolveContractorWorkflowActionTarget,
+} from "@/lib/contractor-workflow";
 import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
 import { requireAppPageViewer } from "../../_lib/portal-viewer";
 import JobFieldActions from "../job-field-actions";
@@ -33,6 +38,12 @@ type TimelineItem = {
 };
 
 type TabKey = "overview" | "messages" | "notes" | "photos" | "measurements" | "invoice";
+
+type WorkflowAction = {
+  label: string;
+  href: string;
+  external?: boolean;
+};
 
 function getTab(value: string | string[] | undefined): TabKey {
   const current = typeof value === "string" ? value : "overview";
@@ -69,6 +80,22 @@ function formatCurrencyFromCents(value: number | null | undefined): string {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value / 100);
+}
+
+function renderWorkflowAction(action: WorkflowAction, className: string) {
+  if (action.external) {
+    return (
+      <a className={className} href={action.href}>
+        {action.label}
+      </a>
+    );
+  }
+
+  return (
+    <Link className={className} href={action.href}>
+      {action.label}
+    </Link>
+  );
 }
 
 async function requireLeadActionAccess(formData: FormData) {
@@ -673,6 +700,26 @@ export default async function ClientJobDetailPage({
         },
         orderBy: [{ createdAt: "desc" }],
       },
+      estimates: {
+        select: {
+          id: true,
+          estimateNumber: true,
+          status: true,
+          title: true,
+          total: true,
+          sentAt: true,
+          customerViewedAt: true,
+          approvedAt: true,
+          declinedAt: true,
+          archivedAt: true,
+          updatedAt: true,
+        },
+        where: {
+          archivedAt: null,
+        },
+        orderBy: [{ updatedAt: "desc" }],
+        take: 8,
+      },
       jobs: {
         select: operationalJobCandidateSelect,
         orderBy: [{ updatedAt: "desc" }],
@@ -780,6 +827,15 @@ export default async function ClientJobDetailPage({
   const operationalJob = selectReusableOperationalJobCandidate({
     candidates: lead.jobs,
   });
+  const latestEstimate =
+    lead.estimates.find((estimate) => estimate.status !== "CONVERTED") ||
+    lead.estimates[0] ||
+    null;
+  const latestMessage = lead.messages[lead.messages.length - 1] || null;
+  const hasMessagingWorkspace = Boolean(lead.org.twilioConfig?.phoneNumber || lead.org.smsFromNumberE164 || lead.messages.length > 0);
+  const scheduledJobEvent =
+    lead.events.find((event) => event.type === "JOB" && event.status !== "CANCELLED") || null;
+  const openInvoice = lead.invoices.find((invoice) => invoice.balanceDue.gt(0)) || null;
   const primaryStatusLabel = formatLabel(primaryJobEvent?.status || lead.status);
   const hasPaidInvoice = latestInvoice ? latestInvoice.status === "PAID" || latestInvoice.balanceDue.lte(0) : false;
   const displayCity = normalizeLeadCity(lead.city) || "-";
@@ -807,8 +863,72 @@ export default async function ClientJobDetailPage({
   const photosHref = withOrgQuery(`/app/jobs/${lead.id}?tab=photos`, scope.orgId, scope.internalUser);
   const measurementsHref = withOrgQuery(`/app/jobs/${lead.id}?tab=measurements`, scope.orgId, scope.internalUser);
   const invoiceHref = withOrgQuery(`/app/jobs/${lead.id}?tab=invoice`, scope.orgId, scope.internalUser);
+  const createEstimateHref = withOrgQuery(
+    `/app/estimates?create=1&leadId=${encodeURIComponent(lead.id)}`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const latestEstimateHref = latestEstimate
+    ? withOrgQuery(`/app/estimates/${latestEstimate.id}`, scope.orgId, scope.internalUser)
+    : null;
   const scheduleCalendarHref = withOrgQuery(`/app/calendar?quickAction=schedule&leadId=${encodeURIComponent(lead.id)}`, scope.orgId, scope.internalUser);
   const mapsHref = buildMapsHrefFromLocation(locationLabel);
+  const workflow = resolveContractorWorkflow({
+    now,
+    hasMessagingWorkspace,
+    latestMessageDirection: latestMessage?.direction || null,
+    nextFollowUpAt: effectiveNextFollowUpAt,
+    latestEstimateStatus: latestEstimate?.status || null,
+    hasScheduledJob: Boolean(scheduledJobEvent),
+    hasOperationalJob: Boolean(operationalJobHref),
+    hasLatestInvoice: Boolean(latestInvoice),
+    hasOpenInvoice: Boolean(openInvoice),
+    latestInvoicePaid: Boolean(latestInvoice && latestInvoice.balanceDue.lte(0)),
+  });
+  const nextActionTarget = resolveContractorWorkflowActionTarget({
+    action: workflow.nextAction,
+    messagesHref,
+    phoneHref: lead.phoneE164 ? `tel:${lead.phoneE164}` : null,
+    createEstimateHref,
+    latestEstimateHref,
+    scheduleCalendarHref,
+    operationalJobHref,
+    invoiceHref,
+    overviewHref,
+  });
+  const nextAction: WorkflowAction = {
+    label: workflow.nextAction.label,
+    href: nextActionTarget.href,
+    external: nextActionTarget.external,
+  };
+  const followUpAction: WorkflowAction = hasMessagingWorkspace
+    ? { label: "Open Follow-up", href: messagesHref }
+    : { label: "Call Customer", href: `tel:${lead.phoneE164}`, external: true };
+
+  const contactSummary = latestMessage
+    ? latestMessage.direction === "INBOUND"
+      ? "Customer replied. You owe the next response."
+      : effectiveNextFollowUpAt
+        ? isOverdueFollowUp(effectiveNextFollowUpAt)
+          ? `Follow-up overdue since ${formatDateTime(effectiveNextFollowUpAt)}.`
+          : `Follow-up set for ${formatDateTime(effectiveNextFollowUpAt)}.`
+        : `Last outbound contact ${formatDateTime(latestMessage.createdAt)}.`
+    : lead.calls.length > 0
+      ? "Call activity exists, but no message thread is started yet."
+      : "No contact logged yet.";
+  const estimateSummary = latestEstimate
+    ? `${formatLabel(latestEstimate.status)} • ${latestEstimate.estimateNumber}`
+    : "No estimate yet.";
+  const scheduleSummary = scheduledJobEvent
+    ? `${formatLabel(scheduledJobEvent.status)} • ${formatDateTime(scheduledJobEvent.startAt)}`
+    : operationalJobHref
+      ? "Operational job created and ready to run."
+      : "No job scheduled yet.";
+  const invoiceSummary = latestInvoice
+    ? latestInvoice.balanceDue.lte(0)
+      ? `Paid • ${formatInvoiceNumber(latestInvoice.invoiceNumber)}`
+      : `Balance due ${formatCurrency(latestInvoice.balanceDue)}`
+    : "No invoice yet.";
 
   const returnPathFor = (tab: TabKey) =>
     withOrgQuery(`/app/jobs/${lead.id}?tab=${tab}`, scope.orgId, scope.internalUser);
@@ -817,7 +937,7 @@ export default async function ClientJobDetailPage({
     <div className="job-detail-shell">
       <section className="card job-detail-header">
         <Link href={backHref} className="table-link">
-          ← Back to CRM
+          ← Back to Leads
         </Link>
         <div className="job-title-row" style={{ marginTop: 8 }}>
           <h2>{lead.contactName || lead.businessName || lead.phoneE164}</h2>
@@ -875,8 +995,8 @@ export default async function ClientJobDetailPage({
         </div>
         <p className="muted" style={{ marginTop: 10 }}>
           {operationalJobHref
-            ? "Use this CRM folder for customer history and supporting context. Run day-to-day operations from the operational job."
-            : "Use this CRM folder for intake history, customer context, and supporting records."}
+            ? "Use this lead workspace for customer history and supporting context. Run day-to-day operations from the operational job."
+            : "Use this lead workspace for intake history, customer context, and supporting records."}
         </p>
         <form action={blockSpamLeadAction} style={{ marginTop: 10 }}>
           <input type="hidden" name="leadId" value={lead.id} />
@@ -964,10 +1084,10 @@ export default async function ClientJobDetailPage({
 
         <div className="tab-row job-detail-tabs" style={{ marginTop: 14 }}>
           <Link href={overviewHref} className={`tab-chip ${currentTab === "overview" ? "active" : ""}`}>
-            Overview
+            Next Step
           </Link>
           <Link href={messagesHref} className={`tab-chip ${currentTab === "messages" ? "active" : ""}`}>
-            Messages
+            Follow-up
           </Link>
           <Link href={notesHref} className={`tab-chip ${currentTab === "notes" ? "active" : ""}`}>
             Notes
@@ -979,7 +1099,7 @@ export default async function ClientJobDetailPage({
             Measurements
           </Link>
           <Link href={invoiceHref} className={`tab-chip ${currentTab === "invoice" ? "active" : ""}`}>
-            Invoice
+            Invoices
           </Link>
         </div>
       </section>
@@ -987,7 +1107,51 @@ export default async function ClientJobDetailPage({
       {currentTab === "overview" ? (
         <>
           <section className="card">
-            <h2>CRM Folder Summary</h2>
+            <div className="invoice-header-row">
+              <div className="stack-cell">
+                <h2>Next Step</h2>
+                <p className="muted">{workflow.stageDetail}</p>
+              </div>
+              <div className="quick-links">
+                {renderWorkflowAction(nextAction, "btn primary")}
+                {nextAction.href !== followUpAction.href ? renderWorkflowAction(followUpAction, "btn secondary") : null}
+                {latestEstimateHref && nextAction.href !== latestEstimateHref ? (
+                  <Link className="btn secondary" href={latestEstimateHref}>
+                    Open Estimate
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+            <div className="quick-meta" style={{ marginTop: 12 }}>
+              <span className="badge">{workflow.stageLabel}</span>
+              {latestEstimate ? <span className="badge">{formatLabel(latestEstimate.status)}</span> : null}
+              {scheduledJobEvent ? <span className="badge">{formatLabel(scheduledJobEvent.status)}</span> : null}
+              {latestInvoice ? (
+                <span className={`badge status-${latestInvoice.status.toLowerCase()}`}>{formatLabel(latestInvoice.status)}</span>
+              ) : null}
+            </div>
+            <dl className="detail-list" style={{ marginTop: 12 }}>
+              <div>
+                <dt>Contact</dt>
+                <dd>{contactSummary}</dd>
+              </div>
+              <div>
+                <dt>Estimate</dt>
+                <dd>{estimateSummary}</dd>
+              </div>
+              <div>
+                <dt>Schedule</dt>
+                <dd>{scheduleSummary}</dd>
+              </div>
+              <div>
+                <dt>Invoice</dt>
+                <dd>{invoiceSummary}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="card">
+            <h2>Lead Workspace Summary</h2>
             <dl className="detail-list" style={{ marginTop: 10 }}>
               <div>
                 <dt>Business</dt>
@@ -1092,8 +1256,8 @@ export default async function ClientJobDetailPage({
 
       {currentTab === "messages" ? (
         <section className="card">
-          <h2>Messages</h2>
-          <p className="muted">Conversation thread for this CRM folder.</p>
+          <h2>Follow-up</h2>
+          <p className="muted">Text, call, and keep the customer moving toward an estimate or booked job.</p>
           <LeadMessageThread
             leadId={lead.id}
             senderNumber={lead.org.twilioConfig?.phoneNumber || lead.org.smsFromNumberE164 || null}
@@ -1110,7 +1274,7 @@ export default async function ClientJobDetailPage({
         <section className="grid two-col">
           <article className="card">
             <h2>Field Notes</h2>
-            <p className="muted">Store supporting notes tied to this CRM folder.</p>
+            <p className="muted">Store supporting notes tied to this lead workspace.</p>
 
             <form action={addJobNoteAction} className="auth-form" style={{ marginTop: 12 }}>
               <input type="hidden" name="leadId" value={lead.id} />
@@ -1160,7 +1324,7 @@ export default async function ClientJobDetailPage({
         <section className="grid two-col">
           <article className="card">
             <h2>Upload Site Photo</h2>
-            <p className="muted">Add supporting photos directly inside this CRM folder.</p>
+            <p className="muted">Add supporting photos directly inside this lead workspace.</p>
 
             <JobPhotoUploader jobId={lead.id} />
           </article>
@@ -1174,7 +1338,15 @@ export default async function ClientJobDetailPage({
                 {resolvedLeadPhotos.map((photo) => (
                   <figure key={photo.id} className="photo-item">
                     {photo.resolvedUrl ? (
-                      <img src={photo.resolvedUrl} alt={photo.caption || photo.fileName} loading="lazy" />
+                      <Image
+                        src={photo.resolvedUrl}
+                        alt={photo.caption || photo.fileName}
+                        width={800}
+                        height={600}
+                        loading="lazy"
+                        unoptimized
+                        loader={({ src }) => src}
+                      />
                     ) : (
                       <div className="muted" style={{ padding: 12 }}>
                         Photo unavailable.
@@ -1278,7 +1450,7 @@ export default async function ClientJobDetailPage({
           <div className="invoice-header-row">
             <div className="stack-cell">
               <h2>Invoices</h2>
-              <p className="muted">Create professional invoices from this CRM folder and track manual payments.</p>
+              <p className="muted">Create professional invoices from this lead workspace and track manual payments.</p>
             </div>
             <form action={createInvoiceAction}>
               <input type="hidden" name="leadId" value={lead.id} />
@@ -1292,7 +1464,7 @@ export default async function ClientJobDetailPage({
 
           {lead.invoices.length === 0 ? (
             <p className="muted" style={{ marginTop: 12 }}>
-              No invoices yet. Click Create Invoice to generate one from this CRM folder.
+              No invoices yet. Click Create Invoice to generate one from this lead workspace.
             </p>
           ) : (
             <div className="table-wrap" style={{ marginTop: 12 }}>
@@ -1332,7 +1504,7 @@ export default async function ClientJobDetailPage({
                             <Link className="btn secondary" href={detailPath}>
                               Open
                             </Link>
-                            <a className="btn secondary" href={downloadablePdfPath}>
+                            <a className="btn secondary" href={downloadablePdfPath} target="_blank" rel="noreferrer">
                               PDF
                             </a>
                             <form action={quickMarkInvoicePaidAction}>

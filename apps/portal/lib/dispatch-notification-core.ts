@@ -1,4 +1,4 @@
-import type { JobEventType, MessageStatus, Prisma } from "@prisma/client";
+import type { JobEventType, Prisma } from "@prisma/client";
 import {
   describeDispatchNotificationBlockedReason,
   dispatchStatusFromDb,

@@ -60,11 +60,6 @@ function formatDollarsInput(value: number): string {
   return (value / 100).toFixed(2);
 }
 
-function formatPercent(value: number | null): string {
-  if (value === null) return "Not enough data";
-  return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
-}
-
 function formatRoas(value: number | null): string {
   if (value === null) return "Add spend";
   return `${value.toFixed(2)}x`;

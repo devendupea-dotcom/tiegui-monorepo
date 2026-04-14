@@ -1,54 +1,64 @@
 import Link from "next/link";
 import { addDays, startOfDay } from "date-fns";
 import type { LeadSourceChannel } from "@prisma/client";
-import type { AnalyticsRange, AnalyticsViewer } from "@/lib/portal-analytics";
-import { getPortalAdsMetrics, getPortalSummaryMetrics } from "@/lib/portal-analytics";
+import type { AnalyticsViewer } from "@/lib/portal-analytics";
+import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
+import { translateStatusLabel } from "@/lib/i18n-labels";
+import { getPortalSummaryMetrics } from "@/lib/portal-analytics";
 import { prisma } from "@/lib/prisma";
 import type { AppScope } from "./_lib/portal-scope";
 import { withOrgQuery } from "./_lib/portal-scope";
 import { KpiCard, PanelCard, StatusPill } from "./dashboard-ui";
-import RevenueKpiCard from "./revenue-kpi-card";
+import WorkflowGuidanceCard from "./workflow-guidance-card";
 
 type OwnerCommandCenterProps = {
   scope: AppScope;
   viewer: AnalyticsViewer;
-  range: AnalyticsRange;
 };
 
-const RANGE_OPTIONS: Array<{ value: AnalyticsRange; label: string }> = [
-  { value: "7d", label: "Last 7 days" },
-  { value: "30d", label: "Last 30 days" },
-];
+type DashboardTranslator = Awaited<ReturnType<typeof getRequestTranslator>>;
 
-const SOURCE_LABELS: Record<LeadSourceChannel, string> = {
-  GOOGLE_ADS: "Google",
-  META_ADS: "Meta",
-  ORGANIC: "Direct",
-  REFERRAL: "Direct",
-  OTHER: "Other",
-};
-
-function formatUsdCents(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value / 100);
+function formatNumber(value: number, locale: string): string {
+  return new Intl.NumberFormat(locale).format(value);
 }
 
-function formatResponseTime(value: number | null): string {
-  if (value === null) return "—";
-  if (value < 1) return "<1m";
+function formatMetricValue(value: number, locale: string, maximumFractionDigits = 1): string {
+  return new Intl.NumberFormat(locale, {
+    maximumFractionDigits,
+  }).format(value);
+}
+
+function sourceLabel(channel: LeadSourceChannel, t: DashboardTranslator): string {
+  switch (channel) {
+    case "GOOGLE_ADS":
+      return t("dashboard.owner.sources.google");
+    case "META_ADS":
+      return t("dashboard.owner.sources.meta");
+    case "ORGANIC":
+    case "REFERRAL":
+      return t("dashboard.owner.sources.direct");
+    case "OTHER":
+    default:
+      return t("dashboard.owner.sources.other");
+  }
+}
+
+function formatResponseTime(value: number | null, locale: string, t: DashboardTranslator): string {
+  if (value === null) return t("dashboard.common.emptyValue");
+  if (value < 1) return t("dashboard.common.lessThanMinute");
   if (value >= 60) {
     const hours = value / 60;
-    return `${hours.toFixed(hours >= 10 ? 0 : 1)}h`;
+    return t("dashboard.common.hoursShort", {
+      value: formatMetricValue(hours, locale, hours >= 10 ? 0 : 1),
+    });
   }
-  return `${value.toFixed(value >= 10 ? 0 : 1)}m`;
+  return t("dashboard.common.minutesShort", {
+    value: formatMetricValue(value, locale, value >= 10 ? 0 : 1),
+  });
 }
 
-function formatDateLabel(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+function formatDateLabel(value: Date, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -56,8 +66,8 @@ function formatDateLabel(value: Date): string {
   }).format(value);
 }
 
-function formatTimeLabel(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+function formatTimeLabel(value: Date, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     weekday: "short",
     hour: "numeric",
     minute: "2-digit",
@@ -84,22 +94,17 @@ function statusTone(status: "ACTIVE" | "NEEDS_SETUP" | "CONNECTED" | "CONFIGURED
   return status === "ACTIVE" || status === "CONNECTED" || status === "CONFIGURED" ? "good" : "warn";
 }
 
-function buildRangeHref(range: AnalyticsRange, scope: AppScope): string {
-  return withOrgQuery(`/app?range=${encodeURIComponent(range)}`, scope.orgId, scope.internalUser);
-}
-
-export default async function OwnerCommandCenter({ scope, viewer, range }: OwnerCommandCenterProps) {
+export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommandCenterProps) {
+  const t = await getRequestTranslator();
+  const locale = getRequestLocale();
   const now = new Date();
   const nextWeek = addDays(startOfDay(now), 7);
   const summaryMonthPromise = getPortalSummaryMetrics({ viewer, range: "month" });
   const summaryWeekPromise = getPortalSummaryMetrics({ viewer, range: "7d" });
-  const rangeSummaryPromise = range === "7d" ? Promise.resolve(null) : getPortalSummaryMetrics({ viewer, range });
 
-  const [summaryMonth, summaryWeek, rangeSummary, ads, newestLeads, upcomingJobs] = await Promise.all([
+  const [summaryMonth, summaryWeek, newestLeads, upcomingJobs] = await Promise.all([
     summaryMonthPromise,
     summaryWeekPromise,
-    rangeSummaryPromise,
-    getPortalAdsMetrics({ viewer }),
     prisma.lead.findMany({
       where: {
         orgId: scope.orgId,
@@ -145,149 +150,95 @@ export default async function OwnerCommandCenter({ scope, viewer, range }: Owner
       },
     }),
   ]);
-  const leadSummary = range === "7d" ? summaryWeek : rangeSummary!;
 
   const inboxHref = withOrgQuery("/app/inbox", scope.orgId, scope.internalUser);
   const quickLeadHref = withOrgQuery("/app?quickAdd=1", scope.orgId, scope.internalUser);
   const addJobHref = withOrgQuery("/app/calendar?quickAction=schedule", scope.orgId, scope.internalUser);
   const calendarHref = withOrgQuery("/app/calendar", scope.orgId, scope.internalUser);
-  const adsHref = withOrgQuery("/app/analytics/ads", scope.orgId, scope.internalUser);
   const settingsHref = withOrgQuery("/app/settings", scope.orgId, scope.internalUser);
-  const invoiceHref = withOrgQuery("/app/invoices", scope.orgId, scope.internalUser);
-  const paidChannels = ads.channels.filter((channel) => channel.key === "GOOGLE_ADS" || channel.key === "META_ADS");
   const allSystemsReady =
     summaryMonth.systemHealth.messaging === "ACTIVE" &&
     summaryMonth.systemHealth.calendar === "CONNECTED" &&
     summaryMonth.systemHealth.integrations === "CONFIGURED";
-  const systemStatusTitle = allSystemsReady ? "Everything connected" : "System status";
-  const systemStatusSubtitle = allSystemsReady
-    ? "A clean read on the tools the team depends on every day."
-    : "See what still needs setup across messaging, calendar, and connected integrations.";
-
-  const marketingKpiValue = ads.totals.spendCents > 0 && ads.totals.roas !== null ? `${ads.totals.roas.toFixed(1)}x` : "Setup required";
-  const marketingKpiHint =
-    ads.totals.spendCents > 0
-      ? "Return on ad spend"
-      : "Add ad spend to track ROI";
+  const missedCallRecoveryCount = summaryWeek.missedCallsRecoveredCount || 0;
+  const todayLabel = new Intl.DateTimeFormat(locale, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(now);
+  const leadsWaitingCount = summaryWeek.newLeadsCount;
+  const activeJobsCount = summaryMonth.jobsThisWeekCount;
+  const queueSummary =
+    leadsWaitingCount === 0 && activeJobsCount === 0
+      ? t("dashboard.owner.queueSummaryClear")
+      : t("dashboard.owner.queueSummary", {
+          leadsCount: leadsWaitingCount,
+          jobsCount: activeJobsCount,
+        });
 
   return (
     <div className="dashboard-shell">
       <section className="card dashboard-header">
         <div className="dashboard-header-main">
           <div className="dashboard-header-copy">
-            <span className="dashboard-header-eyebrow">Owner view</span>
-            <h1>Command Center</h1>
-            <p className="muted">Cash flow, lead response, jobs on deck, and marketing performance for {scope.orgName}.</p>
+            <h1>{todayLabel}</h1>
+            <p className="muted">{queueSummary}</p>
           </div>
           <div className="dashboard-actions">
             <Link className="btn primary" href={quickLeadHref} prefetch={false}>
-              + New Lead
+              {t("dashboard.common.newLead")}
             </Link>
             <Link className="btn secondary" href={addJobHref} prefetch={false}>
-              + Add Job
+              {t("dashboard.common.addJob")}
             </Link>
             <Link className="btn secondary" href={inboxHref} prefetch={false}>
-              Inbox
+              {t("dashboard.common.inbox")}
             </Link>
           </div>
         </div>
-        <div className="dashboard-header-band">
-          <article className="dashboard-header-stat">
-            <span>Collected this month</span>
-            <strong>{formatUsdCents(summaryMonth.collectedRevenueThisMonthCents)}</strong>
-            <small>Cash already recorded</small>
-          </article>
-          <article className="dashboard-header-stat">
-            <span>New leads</span>
-            <strong>{summaryWeek.newLeadsCount.toLocaleString("en-US")}</strong>
-            <small>Last 7 days</small>
-          </article>
-          <article className="dashboard-header-stat">
-            <span>Avg first reply</span>
-            <strong>{formatResponseTime(summaryWeek.avgResponseTimeMinutes)}</strong>
-            <small>Response speed this week</small>
-          </article>
-          <article className="dashboard-header-stat">
-            <span>Jobs on deck</span>
-            <strong>{summaryMonth.jobsThisWeekCount.toLocaleString("en-US")}</strong>
-            <small>Scheduled in the next 7 days</small>
-          </article>
-        </div>
-      </section>
-
-      <section className="dashboard-kpi-grid">
-        <RevenueKpiCard
-          href={invoiceHref}
-          userId={viewer.id}
-          grossRevenueThisMonthCents={summaryMonth.grossRevenueThisMonthCents}
-          collectedRevenueThisMonthCents={summaryMonth.collectedRevenueThisMonthCents}
-        />
-        <KpiCard
-          label="New leads"
-          value={summaryWeek.newLeadsCount.toLocaleString("en-US")}
-          hint="Last 7 days"
-          href={inboxHref}
-        />
-        <KpiCard
-          label="Response time"
-          value={formatResponseTime(summaryWeek.avgResponseTimeMinutes)}
-          hint="Avg first reply"
-          href={inboxHref}
-        />
-        <KpiCard
-          label="Marketing"
-          value={marketingKpiValue}
-          hint={marketingKpiHint}
-          href={adsHref}
-        />
       </section>
 
       <section className="dashboard-main-grid">
         <div className="dashboard-stack">
+          <WorkflowGuidanceCard orgId={scope.orgId} internalUser={scope.internalUser} />
+
           <PanelCard
-            eyebrow="Lead Engine"
-            title="Leads coming in"
-            subtitle="New leads and first replies, without the clutter."
+            eyebrow={t("dashboard.owner.leadEngine.eyebrow")}
+            title={t("dashboard.owner.leadEngine.title")}
+            subtitle={t("dashboard.owner.leadEngine.subtitle")}
             actionHref={inboxHref}
-            actionLabel="Go to Inbox"
+            actionLabel={t("dashboard.owner.leadEngine.action")}
           >
-            <div className="dashboard-inline-toolbar">
-              <div className="dashboard-inline-pills">
-                {RANGE_OPTIONS.map((option) => (
-                  <Link
-                    key={option.value}
-                    className={`command-pill ${range === option.value ? "active" : ""}`}
-                    href={buildRangeHref(option.value, scope)}
-                  >
-                    {option.label}
-                  </Link>
-                ))}
-              </div>
-              <div className="dashboard-inline-stats">
-                <div>
-                  <span className="dashboard-inline-label">New leads</span>
-                  <strong>{leadSummary.newLeadsCount.toLocaleString("en-US")}</strong>
-                </div>
-                <div>
-                  <span className="dashboard-inline-label">Response time</span>
-                  <strong>{formatResponseTime(leadSummary.avgResponseTimeMinutes)}</strong>
-                </div>
-                {leadSummary.missedCallsRecoveredCount ? (
-                  <div>
-                    <span className="dashboard-inline-label">Recovered missed calls</span>
-                    <strong>{leadSummary.missedCallsRecoveredCount.toLocaleString("en-US")}</strong>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+            <section className="dashboard-kpi-grid" style={{ gridTemplateColumns: missedCallRecoveryCount ? "repeat(3, minmax(0, 1fr))" : "repeat(2, minmax(0, 1fr))" }}>
+              <KpiCard
+                label={t("dashboard.owner.leadEngine.newLeadsLabel")}
+                value={formatNumber(summaryWeek.newLeadsCount, locale)}
+                hint={t("dashboard.owner.leadEngine.newLeadsHint")}
+                href={inboxHref}
+              />
+              <KpiCard
+                label={t("dashboard.owner.leadEngine.responseTimeLabel")}
+                value={formatResponseTime(summaryWeek.avgResponseTimeMinutes, locale, t)}
+                hint={t("dashboard.owner.leadEngine.responseTimeHint")}
+                href={inboxHref}
+              />
+              {missedCallRecoveryCount ? (
+                <KpiCard
+                  label={t("dashboard.owner.leadEngine.recoveredCallsLabel")}
+                  value={formatNumber(missedCallRecoveryCount, locale)}
+                  hint={t("dashboard.owner.leadEngine.recoveredCallsHint")}
+                  href={inboxHref}
+                />
+              ) : null}
+            </section>
 
             {newestLeads.length === 0 ? (
               <div className="dashboard-empty-state">
-                <strong>No leads yet.</strong>
-                <p className="muted">Leads will appear here when customers reach out.</p>
+                <strong>{t("dashboard.owner.leadEngine.emptyTitle")}</strong>
+                <p className="muted">{t("dashboard.owner.leadEngine.emptyBody")}</p>
                 <div className="portal-empty-actions">
                   <Link className="btn primary" href={quickLeadHref}>
-                    Add your first lead
+                    {t("dashboard.owner.leadEngine.emptyAction")}
                   </Link>
                 </div>
               </div>
@@ -302,11 +253,11 @@ export default async function OwnerCommandCenter({ scope, viewer, range }: Owner
                           {leadLabel}
                         </Link>
                         <div className="dashboard-list-meta">
-                          <StatusPill tone={sourceTone(lead.sourceChannel)}>{SOURCE_LABELS[lead.sourceChannel]}</StatusPill>
+                          <StatusPill tone={sourceTone(lead.sourceChannel)}>{sourceLabel(lead.sourceChannel, t)}</StatusPill>
                           <span>{lead.city || lead.phoneE164}</span>
                         </div>
                       </div>
-                      <span className="dashboard-list-time">{formatDateLabel(lead.createdAt)}</span>
+                      <span className="dashboard-list-time">{formatDateLabel(lead.createdAt, locale)}</span>
                     </li>
                   );
                 })}
@@ -315,26 +266,31 @@ export default async function OwnerCommandCenter({ scope, viewer, range }: Owner
           </PanelCard>
 
           <PanelCard
-            eyebrow="Jobs This Week"
-            title={`${summaryMonth.jobsThisWeekCount.toLocaleString("en-US")} jobs on deck`}
-            subtitle="Upcoming work for the next 7 days."
+            eyebrow={t("dashboard.owner.jobsThisWeek.eyebrow")}
+            title={t("dashboard.owner.jobsThisWeek.title", { count: summaryMonth.jobsThisWeekCount })}
+            subtitle={t("dashboard.owner.jobsThisWeek.subtitle")}
             actionHref={calendarHref}
-            actionLabel="Open Calendar"
+            actionLabel={t("dashboard.owner.jobsThisWeek.action")}
           >
             {upcomingJobs.length === 0 ? (
               <div className="dashboard-empty-state">
-                <strong>No jobs scheduled.</strong>
-                <p className="muted">Add your first job to get started.</p>
+                <strong>{t("dashboard.owner.jobsThisWeek.emptyTitle")}</strong>
+                <p className="muted">{t("dashboard.owner.jobsThisWeek.emptyBody")}</p>
                 <div className="portal-empty-actions">
                   <Link className="btn primary" href={addJobHref}>
-                    Add your first job
+                    {t("dashboard.owner.jobsThisWeek.emptyAction")}
                   </Link>
                 </div>
               </div>
             ) : (
               <ul className="dashboard-list">
                 {upcomingJobs.map((job) => {
-                  const jobLabel = job.customerName || job.lead?.contactName || job.lead?.businessName || job.lead?.phoneE164 || "Scheduled job";
+                  const jobLabel =
+                    job.customerName
+                    || job.lead?.contactName
+                    || job.lead?.businessName
+                    || job.lead?.phoneE164
+                    || t("dashboard.common.scheduledJob");
                   const targetHref = job.leadId
                     ? withOrgQuery(`/app/jobs/${job.leadId}`, scope.orgId, scope.internalUser)
                     : calendarHref;
@@ -345,11 +301,11 @@ export default async function OwnerCommandCenter({ scope, viewer, range }: Owner
                           {jobLabel}
                         </Link>
                         <div className="dashboard-list-meta">
-                          <StatusPill tone="neutral">{job.status.replaceAll("_", " ").toLowerCase()}</StatusPill>
-                          <span>{job.addressLine || "Address not added yet"}</span>
+                          <StatusPill tone="neutral">{translateStatusLabel(job.status, t)}</StatusPill>
+                          <span>{job.addressLine || t("dashboard.common.addressMissing")}</span>
                         </div>
                       </div>
-                      <span className="dashboard-list-time">{formatTimeLabel(job.startAt)}</span>
+                      <span className="dashboard-list-time">{formatTimeLabel(job.startAt, locale)}</span>
                     </li>
                   );
                 })}
@@ -359,93 +315,42 @@ export default async function OwnerCommandCenter({ scope, viewer, range }: Owner
         </div>
 
         <div className="dashboard-stack">
-          <PanelCard
-            eyebrow="Marketing Performance"
-            title="Marketing Performance"
-            subtitle={
-              ads.totals.spendCents > 0
-                ? "Spend, leads, booked jobs, and revenue at a glance."
-                : "Add ad spend to start tracking ROI inside the portal."
-            }
-            actionHref={adsHref}
-            actionLabel={ads.totals.spendCents > 0 ? "View" : "Add Spend"}
-          >
-            {ads.totals.spendCents > 0 ? (
-              <div className="dashboard-marketing-grid">
-                {paidChannels.map((channel) => (
-                  <article key={channel.key} className="dashboard-marketing-card">
-                    <header className="dashboard-marketing-head">
-                      <strong>{channel.key === "GOOGLE_ADS" ? "Google" : "Meta"}</strong>
-                      <StatusPill tone={channel.spendCents > 0 ? "good" : "neutral"}>
-                        {channel.spendCents > 0 ? "Tracking" : "Ready"}
-                      </StatusPill>
-                    </header>
-                    <div className="dashboard-marketing-stats">
-                      <div>
-                        <span>Spend</span>
-                        <strong>{formatUsdCents(channel.spendCents)}</strong>
-                      </div>
-                      <div>
-                        <span>Leads</span>
-                        <strong>{channel.leads.toLocaleString("en-US")}</strong>
-                      </div>
-                      <div>
-                        <span>Booked</span>
-                        <strong>{channel.bookedJobs.toLocaleString("en-US")}</strong>
-                      </div>
-                      <div>
-                        <span>Revenue</span>
-                        <strong>{formatUsdCents(channel.revenueCents)}</strong>
-                      </div>
-                      <div>
-                        <span>ROAS</span>
-                        <strong>{channel.roas === null ? "—" : `${channel.roas.toFixed(2)}x`}</strong>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="dashboard-setup-state">
-                <StatusPill tone="accent">Setup required</StatusPill>
-                <strong>Add ad spend to start tracking ROI.</strong>
-                <div className="portal-empty-actions">
-                  <Link className="btn primary" href={adsHref}>
-                    Add Spend
-                  </Link>
+          {!allSystemsReady ? (
+            <PanelCard
+              eyebrow={t("dashboard.owner.setup.eyebrow")}
+              title={t("dashboard.owner.setup.title")}
+              subtitle={t("dashboard.owner.setup.subtitle")}
+              actionHref={settingsHref}
+              actionLabel={t("dashboard.owner.setup.action")}
+            >
+              <div className="dashboard-status-list">
+                <div className="dashboard-status-row">
+                  <span>{t("dashboard.owner.setup.messaging")}</span>
+                  <StatusPill tone={statusTone(summaryMonth.systemHealth.messaging)}>
+                    {summaryMonth.systemHealth.messaging === "ACTIVE"
+                      ? t("dashboard.owner.setup.active")
+                      : t("dashboard.owner.setup.needsSetup")}
+                  </StatusPill>
+                </div>
+                <div className="dashboard-status-row">
+                  <span>{t("dashboard.owner.setup.calendar")}</span>
+                  <StatusPill tone={statusTone(summaryMonth.systemHealth.calendar)}>
+                    {summaryMonth.systemHealth.calendar === "CONNECTED"
+                      ? t("dashboard.owner.setup.connected")
+                      : t("dashboard.owner.setup.needsSetup")}
+                  </StatusPill>
+                </div>
+                <div className="dashboard-status-row">
+                  <span>{t("dashboard.owner.setup.integrations")}</span>
+                  <StatusPill tone={statusTone(summaryMonth.systemHealth.integrations)}>
+                    {summaryMonth.systemHealth.integrations === "CONFIGURED"
+                      ? t("dashboard.owner.setup.configured")
+                      : t("dashboard.owner.setup.needsSetup")}
+                  </StatusPill>
                 </div>
               </div>
-            )}
-          </PanelCard>
-
-          <PanelCard
-            eyebrow="System Status"
-            title={systemStatusTitle}
-            subtitle={systemStatusSubtitle}
-            actionHref={settingsHref}
-            actionLabel="Open Settings"
-          >
-            <div className="dashboard-status-list">
-              <div className="dashboard-status-row">
-                <span>Messaging</span>
-                <StatusPill tone={statusTone(summaryMonth.systemHealth.messaging)}>
-                  {summaryMonth.systemHealth.messaging === "ACTIVE" ? "Active" : "Needs setup"}
-                </StatusPill>
-              </div>
-              <div className="dashboard-status-row">
-                <span>Calendar</span>
-                <StatusPill tone={statusTone(summaryMonth.systemHealth.calendar)}>
-                  {summaryMonth.systemHealth.calendar === "CONNECTED" ? "Connected" : "Needs setup"}
-                </StatusPill>
-              </div>
-              <div className="dashboard-status-row">
-                <span>Integrations</span>
-                <StatusPill tone={statusTone(summaryMonth.systemHealth.integrations)}>
-                  {summaryMonth.systemHealth.integrations === "CONFIGURED" ? "Configured" : "Needs setup"}
-                </StatusPill>
-              </div>
-            </div>
-          </PanelCard>
+            </PanelCard>
+          ) : null}
         </div>
       </section>
     </div>

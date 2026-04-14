@@ -633,6 +633,9 @@ export default async function ClientSettingsPage({
         fallbackBody: "Deja cualquier campo vacio para usar el pack SMS Voice seleccionado. La logica STOP, la cadencia de seguimiento y el estado de conversacion siguen bloqueados por confiabilidad.",
         stopNotice: "La primera respuesta automatica a llamada perdida siempre incluye la linea STOP requerida.",
         invalidSmsTone: "Selecciona una voz SMS valida.",
+        invoiceTemplatesTitle: "Plantillas de factura",
+        invoiceTemplatesBody: "Elige el diseno predeterminado para vistas previas y PDFs imprimibles.",
+        openInvoiceTemplates: "Abrir plantillas",
       }
     : {
         reviewMessagingSetup: "Review Messaging Setup",
@@ -658,6 +661,9 @@ export default async function ClientSettingsPage({
         fallbackBody: "Leave any field blank to fall back to the selected SMS Voice template pack. STOP handling, follow-up cadence, and conversation state logic remain locked for reliability.",
         stopNotice: "The first automated missed-call reply always includes the required STOP opt-out line.",
         invalidSmsTone: "Invalid SMS voice selection.",
+        invoiceTemplatesTitle: "Invoice Templates",
+        invoiceTemplatesBody: "Choose the default layout used for invoice previews and printable PDFs.",
+        openInvoiceTemplates: "Open Templates",
       };
 
   return (
@@ -701,6 +707,14 @@ export default async function ClientSettingsPage({
             <p className="settings-integration-status">{settingsCopy.brandingBody}</p>
             <Link className="btn secondary" href={withOrgQuery("/app/settings/branding", scope.orgId, scope.internalUser)}>
               {settingsCopy.openBranding}
+            </Link>
+          </article>
+
+          <article className="settings-integration-card">
+            <strong>{settingsCopy.invoiceTemplatesTitle}</strong>
+            <p className="settings-integration-status">{settingsCopy.invoiceTemplatesBody}</p>
+            <Link className="btn secondary" href={withOrgQuery("/app/settings/invoice", scope.orgId, scope.internalUser)}>
+              {settingsCopy.openInvoiceTemplates}
             </Link>
           </article>
         </div>

@@ -92,6 +92,158 @@
       "updated": "Actualizado"
     }
   },
+  "dashboard": {
+    "error": {
+      "title": "El panel no está disponible temporalmente",
+      "body": "Tuvimos un problema del servidor cargando este espacio. Usa el calendario o la bandeja mientras se recupera el panel.",
+      "openCalendar": "Abrir calendario",
+      "openInbox": "Abrir bandeja"
+    },
+    "common": {
+      "emptyValue": "—",
+      "lessThanMinute": "<1m",
+      "hoursShort": "{value}h",
+      "minutesShort": "{value}m",
+      "addressMissing": "Aún no se agregó la dirección",
+      "scheduledJob": "Trabajo programado",
+      "newLead": "+ Nuevo lead",
+      "addJob": "+ Agregar trabajo",
+      "inbox": "Bandeja"
+    },
+    "workflow": {
+      "eyebrow": "Flujo",
+      "title": "Gestiona cada trabajo desde el lead hasta el pago",
+      "subtitle": "Usa el mismo flujo sin importar si el cliente llegó por SMS, llamada, formulario web, referencia o captura manual.",
+      "action": "Abrir leads",
+      "steps": {
+        "capture": {
+          "title": "Captura el lead",
+          "detail": "Empieza desde texto, llamada, formulario web o entrada manual y mantén un solo espacio por cliente.",
+          "action": "Abrir leads"
+        },
+        "reply": {
+          "title": "Responde y da seguimiento",
+          "detail": "Responde por texto, llamada o correo y luego fija el siguiente seguimiento para que nada se escape.",
+          "action": "Abrir bandeja"
+        },
+        "estimate": {
+          "title": "Crea y envía el estimado",
+          "detail": "Cotiza el trabajo, envía el estimado y sigue si fue visto, aprobado o rechazado.",
+          "action": "Abrir estimados"
+        },
+        "schedule": {
+          "title": "Agenda el trabajo",
+          "detail": "Mueve el trabajo aprobado al calendario y pásalo al equipo sin perder contexto.",
+          "action": "Abrir calendario"
+        },
+        "invoice": {
+          "title": "Factura y cobra",
+          "detail": "Crea la factura, envíala y da seguimiento a lo que sigue pendiente.",
+          "action": "Abrir facturas"
+        }
+      }
+    },
+    "owner": {
+      "sources": {
+        "google": "Google",
+        "meta": "Meta",
+        "direct": "Directo",
+        "other": "Otro"
+      },
+      "queueSummaryClear": "Todo al día",
+      "queueSummary": "{leadsCount, plural, one {# lead pendiente} other {# leads pendientes}} · {jobsCount, plural, one {# trabajo activo} other {# trabajos activos}}",
+      "leadEngine": {
+        "eyebrow": "Motor de leads",
+        "title": "Leads para trabajar",
+        "subtitle": "Nuevos leads, velocidad de respuesta y recuperación de llamadas perdidas en un solo lugar.",
+        "action": "Ir a bandeja",
+        "newLeadsLabel": "Nuevos leads",
+        "newLeadsHint": "Últimos 7 días",
+        "responseTimeLabel": "Tiempo de respuesta",
+        "responseTimeHint": "Promedio de la primera respuesta",
+        "recoveredCallsLabel": "Llamadas recuperadas",
+        "recoveredCallsHint": "Llamadas perdidas convertidas en leads",
+        "emptyTitle": "Aún no hay leads.",
+        "emptyBody": "Los leads aparecerán aquí cuando los clientes se comuniquen.",
+        "emptyAction": "Agrega tu primer lead"
+      },
+      "jobsThisWeek": {
+        "eyebrow": "Trabajos de la semana",
+        "title": "{count, plural, one {# trabajo listo} other {# trabajos listos}}",
+        "subtitle": "Trabajo próximo para los siguientes 7 días.",
+        "action": "Abrir calendario",
+        "emptyTitle": "No hay trabajos programados.",
+        "emptyBody": "Agrega tu primer trabajo para empezar.",
+        "emptyAction": "Agrega tu primer trabajo"
+      },
+      "setup": {
+        "eyebrow": "Configuración",
+        "title": "Termina la configuración",
+        "subtitle": "Muestra solo lo que aún necesita atención antes de que el flujo corra limpio.",
+        "action": "Abrir configuración",
+        "messaging": "Mensajería",
+        "calendar": "Calendario",
+        "integrations": "Integraciones",
+        "active": "Activo",
+        "connected": "Conectado",
+        "configured": "Configurado",
+        "needsSetup": "Falta configurar"
+      }
+    },
+    "worker": {
+      "header": {
+        "eyebrow": "Hoy",
+        "title": "Cola de trabajo",
+        "subtitle": "Leads por seguir, trabajos en puerta y capacidad disponible para {orgName} en un solo espacio."
+      },
+      "stats": {
+        "todayLabel": "Hoy",
+        "todayHint": "Trabajos en tu calendario hoy",
+        "nextStopLabel": "Siguiente parada",
+        "nextStopEmpty": "Aún no tienes asignaciones",
+        "replyQueueLabel": "Cola de respuestas",
+        "replyQueueHint": "Clientes esperando tu respuesta",
+        "replyQueueClear": "La bandeja está al día",
+        "openSlotsLabel": "Espacios libres",
+        "openSlotsHint": "Disponibles durante los próximos 7 días"
+      },
+      "kpis": {
+        "assignedJobsLabel": "Trabajos asignados",
+        "assignedJobsHint": "Próximos 7 días",
+        "todayScheduleLabel": "Agenda de hoy",
+        "todayScheduleHint": "Trabajos en el calendario hoy",
+        "messagesNeedingReplyLabel": "Mensajes por responder",
+        "messagesNeedingReplyHint": "Clientes esperando tu respuesta",
+        "messagesNeedingReplyClear": "La bandeja está al día",
+        "openSlotsLabel": "Espacios libres",
+        "openSlotsHint": "Disponibles en los próximos 7 días"
+      },
+      "assignedJobs": {
+        "eyebrow": "Trabajos asignados",
+        "title": "Tus próximos 7 días",
+        "subtitle": "Los trabajos que debes mantener en movimiento.",
+        "action": "Abrir calendario",
+        "nextJobLabel": "Próximo trabajo",
+        "nextJobEmpty": "Aún no tienes asignaciones",
+        "nextJobEmptyHint": "Todavía no hay trabajo asignado",
+        "nextJobBody": "Tu siguiente parada programada aparecerá aquí.",
+        "emptyTitle": "No hay trabajos programados.",
+        "emptyBody": "Agrega tu primer trabajo para empezar.",
+        "emptyAction": "Agrega tu primer trabajo"
+      },
+      "replyQueue": {
+        "eyebrow": "Cola de respuestas",
+        "title": "Mensajes esperando tu respuesta",
+        "subtitle": "Mantente al día con las conversaciones que todavía necesitan respuesta.",
+        "action": "Ir a bandeja",
+        "emptyTitle": "No hay respuestas pendientes.",
+        "emptyBody": "Los mensajes de clientes aparecerán aquí cuando necesiten atención.",
+        "emptyAction": "Abrir bandeja",
+        "needsReply": "Requiere respuesta",
+        "now": "Ahora"
+      }
+    }
+  },
   "settings": {
     "title": "Configuración",
     "subtitle": "Actualiza SMS y preferencias de seguimiento para {organizationName}.",

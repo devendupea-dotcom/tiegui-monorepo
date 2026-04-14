@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useLocale } from "next-intl";
 import { formatEstimateCurrency } from "@/lib/estimates";
 import {
@@ -805,27 +805,7 @@ export default function DispatchManager({
     };
   }, [copy.errors.loadDispatchJob, selectedJobId]);
 
-  useEffect(() => {
-    if (!showCrewManager || !canManage) return;
-    void loadCrewSettings();
-  }, [canManage, showCrewManager]);
-
-  useEffect(() => {
-    setTrackingLink(null);
-    setTrackingLinkError(null);
-    setGeneratingTrackingLink(false);
-  }, [selectedJobId]);
-
-  useEffect(() => {
-    if (!showNotificationSettings || !canManage) return;
-    void loadNotificationSettings();
-  }, [canManage, showNotificationSettings]);
-
-  const columns = buildColumns(snapshot, copy.unassigned);
-  const selectedJobSummary = snapshot?.jobs.find((job) => job.id === selectedJobId) || null;
-  const activeCrews = (snapshot?.crews || []).filter((crew) => crew.active);
-
-  async function loadCrewSettings() {
+  const loadCrewSettings = useCallback(async () => {
     setLoadingCrews(true);
     setCrewError(null);
 
@@ -856,9 +836,9 @@ export default function DispatchManager({
     } finally {
       setLoadingCrews(false);
     }
-  }
+  }, [copy.errors.loadCrews, internalUser, orgId]);
 
-  async function loadNotificationSettings() {
+  const loadNotificationSettings = useCallback(async () => {
     setLoadingNotificationSettings(true);
     setNotificationSettingsError(null);
 
@@ -878,7 +858,27 @@ export default function DispatchManager({
     } finally {
       setLoadingNotificationSettings(false);
     }
-  }
+  }, [copy.errors.loadSettings, internalUser, orgId]);
+
+  useEffect(() => {
+    if (!showCrewManager || !canManage) return;
+    void loadCrewSettings();
+  }, [canManage, loadCrewSettings, showCrewManager]);
+
+  useEffect(() => {
+    setTrackingLink(null);
+    setTrackingLinkError(null);
+    setGeneratingTrackingLink(false);
+  }, [selectedJobId]);
+
+  useEffect(() => {
+    if (!showNotificationSettings || !canManage) return;
+    void loadNotificationSettings();
+  }, [canManage, loadNotificationSettings, showNotificationSettings]);
+
+  const columns = buildColumns(snapshot, copy.unassigned);
+  const selectedJobSummary = snapshot?.jobs.find((job) => job.id === selectedJobId) || null;
+  const activeCrews = (snapshot?.crews || []).filter((crew) => crew.active);
 
   async function handleCreateJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

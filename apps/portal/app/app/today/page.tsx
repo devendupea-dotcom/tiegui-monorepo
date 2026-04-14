@@ -1,16 +1,20 @@
 import Link from "next/link";
-import { Prisma, type LeadStatus } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { endOfToday, formatDateTime, isOverdueFollowUp, startOfToday } from "@/lib/hq";
+import { endOfToday, formatDateTime, startOfToday } from "@/lib/hq";
+import {
+  getContractorWorkflowTone,
+  type ContractorWorkflowStage,
+  resolveContractorWorkflow,
+  resolveContractorWorkflowActionTarget,
+} from "@/lib/contractor-workflow";
 import { buildMapsHrefFromLocation, normalizeLeadCity, resolveLeadLocationLabel } from "@/lib/lead-location";
 import { KpiCard, PanelCard, StatusPill } from "../dashboard-ui";
 import { getParam, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
 import { requireAppPageViewer } from "../_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
-
-const ACTIVE_LEAD_STATUSES: LeadStatus[] = ["NEW", "CALLED_NO_ANSWER", "VOICEMAIL", "INTERESTED", "FOLLOW_UP"];
 
 function buildWorkerLeadScope(userId: string): Prisma.LeadWhereInput {
   return {
@@ -39,20 +43,20 @@ function formatTimeOnly(value: Date) {
   }).format(value);
 }
 
-function formatDayTime(value: Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(value);
-}
-
 function formatDateLabel(value: Date) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+  }).format(value);
+}
+
+function formatTodayLabel(value: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
   }).format(value);
 }
 
@@ -72,6 +76,81 @@ function getEventLabel(input: {
   phoneE164?: string | null;
 }) {
   return input.customerName || input.contactName || input.businessName || input.phoneE164 || input.title || "Scheduled item";
+}
+
+type TodayQueueItem = {
+  id: string;
+  leadLabel: string;
+  leadHref: string;
+  locationLabel: string | null;
+  phoneE164: string | null;
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  updatedAt: Date;
+  nextFollowUpAt: Date | null;
+  lastMessageAt: Date | null;
+  workflow: ReturnType<typeof resolveContractorWorkflow>;
+  workflowAction: ReturnType<typeof resolveContractorWorkflowActionTarget>;
+};
+
+const WORKFLOW_STAGE_ORDER: Record<ContractorWorkflowStage, number> = {
+  reply_needed: 0,
+  follow_up_overdue: 1,
+  estimate_needed: 2,
+  estimate_draft: 3,
+  estimate_revision: 4,
+  ready_to_schedule: 5,
+  waiting_on_approval: 6,
+  awaiting_payment: 7,
+  lead_active: 8,
+  job_scheduled: 9,
+  paid: 10,
+};
+
+function formatCountLabel(count: number, singular: string, plural = `${singular}s`) {
+  return `${count.toLocaleString("en-US")} ${count === 1 ? singular : plural}`;
+}
+
+function renderQueueAction(item: TodayQueueItem) {
+  if (item.workflowAction.external) {
+    return (
+      <a className="table-link" href={item.workflowAction.href}>
+        {item.workflow.nextAction.label}
+      </a>
+    );
+  }
+
+  return (
+    <Link className="table-link" href={item.workflowAction.href} prefetch={false}>
+      {item.workflow.nextAction.label}
+    </Link>
+  );
+}
+
+function getQueueTimeLabel(item: TodayQueueItem) {
+  if (item.workflow.stage === "reply_needed" && item.lastMessageAt) {
+    return formatDateLabel(item.lastMessageAt);
+  }
+
+  if (item.workflow.stage === "follow_up_overdue" && item.nextFollowUpAt) {
+    return formatDateTime(item.nextFollowUpAt);
+  }
+
+  return formatDateLabel(item.updatedAt);
+}
+
+function sortQueueItems(left: TodayQueueItem, right: TodayQueueItem) {
+  const stageDiff = WORKFLOW_STAGE_ORDER[left.workflow.stage] - WORKFLOW_STAGE_ORDER[right.workflow.stage];
+  if (stageDiff !== 0) {
+    return stageDiff;
+  }
+
+  if (left.workflow.stage === "follow_up_overdue" || right.workflow.stage === "follow_up_overdue") {
+    const leftTime = left.nextFollowUpAt?.getTime() || left.updatedAt.getTime();
+    const rightTime = right.nextFollowUpAt?.getTime() || right.updatedAt.getTime();
+    return leftTime - rightTime;
+  }
+
+  return right.updatedAt.getTime() - left.updatedAt.getTime();
 }
 
 export default async function AppTodayMobilePage({
@@ -116,23 +195,7 @@ export default async function AppTodayMobilePage({
     ...(workerId ? buildWorkerEventScope(workerId) : {}),
   };
 
-  const [
-    todayScheduleCount,
-    nextEvent,
-    todaySchedule,
-    conversationCandidates,
-    dueFollowUps,
-    activeLeadCount,
-    activeLeads,
-  ] = await Promise.all([
-    prisma.event.count({
-      where: {
-        ...eventWhere,
-        type: { in: ["JOB", "ESTIMATE", "CALL"] },
-        status: { not: "CANCELLED" },
-        startAt: { gte: todayStart, lte: todayEnd },
-      },
-    }),
+  const [nextEvent, todaySchedule, workQueueCandidates] = await Promise.all([
     prisma.event.findFirst({
       where: {
         ...eventWhere,
@@ -193,55 +256,9 @@ export default async function AppTodayMobilePage({
       where: {
         ...leadWhere,
         status: { notIn: ["DNC", "NOT_INTERESTED"] },
-        lastInboundAt: { not: null },
-      },
-      orderBy: [{ lastInboundAt: "desc" }],
-      take: 100,
-      select: {
-        id: true,
-        contactName: true,
-        businessName: true,
-        phoneE164: true,
-        priority: true,
-        status: true,
-        city: true,
-        nextFollowUpAt: true,
-        lastInboundAt: true,
-        lastOutboundAt: true,
-      },
-    }),
-    prisma.lead.findMany({
-      where: {
-        ...leadWhere,
-        status: { in: ACTIVE_LEAD_STATUSES },
-        nextFollowUpAt: { not: null, lte: todayEnd },
-      },
-      orderBy: [{ nextFollowUpAt: "asc" }, { updatedAt: "desc" }],
-      take: 100,
-      select: {
-        id: true,
-        contactName: true,
-        businessName: true,
-        phoneE164: true,
-        city: true,
-        priority: true,
-        status: true,
-        nextFollowUpAt: true,
-      },
-    }),
-    prisma.lead.count({
-      where: {
-        ...leadWhere,
-        status: { in: ACTIVE_LEAD_STATUSES },
-      },
-    }),
-    prisma.lead.findMany({
-      where: {
-        ...leadWhere,
-        status: { in: ACTIVE_LEAD_STATUSES },
       },
       orderBy: [{ updatedAt: "desc" }],
-      take: 8,
+      take: 80,
       select: {
         id: true,
         contactName: true,
@@ -250,25 +267,152 @@ export default async function AppTodayMobilePage({
         city: true,
         priority: true,
         status: true,
+        nextFollowUpAt: true,
         updatedAt: true,
+        messages: {
+          select: {
+            direction: true,
+            createdAt: true,
+          },
+          orderBy: [{ createdAt: "desc" }],
+          take: 1,
+        },
+        estimates: {
+          select: {
+            id: true,
+            status: true,
+            updatedAt: true,
+          },
+          where: {
+            archivedAt: null,
+          },
+          orderBy: [{ updatedAt: "desc" }],
+          take: 4,
+        },
+        events: {
+          where: {
+            type: "JOB",
+            status: { not: "CANCELLED" },
+          },
+          select: {
+            id: true,
+          },
+          orderBy: [{ startAt: "desc" }, { createdAt: "desc" }],
+          take: 1,
+        },
+        invoices: {
+          select: {
+            status: true,
+            balanceDue: true,
+          },
+          orderBy: [{ createdAt: "desc" }],
+          take: 3,
+        },
+        jobs: {
+          select: {
+            id: true,
+          },
+          orderBy: [{ updatedAt: "desc" }],
+          take: 1,
+        },
       },
     }),
   ]);
 
-  const repliesNeedingAttention = conversationCandidates.filter(
-    (lead) => lead.lastInboundAt && (!lead.lastOutboundAt || lead.lastOutboundAt < lead.lastInboundAt),
-  );
-  const replyLeadIds = new Set(repliesNeedingAttention.map((lead) => lead.id));
-  const followUpsNeedingAttention = dueFollowUps.filter((lead) => !replyLeadIds.has(lead.id));
-  const replyQueueCount = repliesNeedingAttention.length;
-  const followUpCount = followUpsNeedingAttention.length;
-  const repliesNeeded = repliesNeedingAttention.slice(0, 8);
-  const followUpsToWork = followUpsNeedingAttention.slice(0, 8);
-
   const calendarHref = withOrgQuery("/app/calendar", scope.orgId, scope.internalUser);
   const inboxHref = withOrgQuery("/app/inbox", scope.orgId, scope.internalUser);
+  const leadsHref = withOrgQuery("/app/jobs", scope.orgId, scope.internalUser);
   const addLeadHref = withOrgQuery("/app?quickAdd=1", scope.orgId, scope.internalUser);
   const addJobHref = withOrgQuery("/app/calendar?quickAction=schedule", scope.orgId, scope.internalUser);
+  const todayLabel = formatTodayLabel(now);
+
+  const workQueueItems = workQueueCandidates
+    .map((lead) => {
+      const latestEstimate = lead.estimates.find((estimate) => estimate.status !== "CONVERTED") || lead.estimates[0] || null;
+      const latestInvoice = lead.invoices[0] || null;
+      const workflow = resolveContractorWorkflow({
+        now,
+        hasMessagingWorkspace: lead.messages.length > 0,
+        latestMessageDirection: lead.messages[0]?.direction || null,
+        nextFollowUpAt: lead.nextFollowUpAt,
+        latestEstimateStatus: latestEstimate?.status || null,
+        hasScheduledJob: lead.events.length > 0,
+        hasOperationalJob: lead.jobs.length > 0,
+        hasLatestInvoice: Boolean(latestInvoice),
+        hasOpenInvoice: lead.invoices.some((invoice) => invoice.balanceDue.gt(0)),
+        latestInvoicePaid: Boolean(latestInvoice && latestInvoice.balanceDue.lte(0)),
+      });
+      const workflowAction = resolveContractorWorkflowActionTarget({
+        action: workflow.nextAction,
+        messagesHref: withOrgQuery(`/app/jobs/${lead.id}?tab=messages`, scope.orgId, scope.internalUser),
+        phoneHref: lead.phoneE164 ? `tel:${lead.phoneE164}` : null,
+        createEstimateHref: withOrgQuery(
+          `/app/estimates?create=1&leadId=${encodeURIComponent(lead.id)}`,
+          scope.orgId,
+          scope.internalUser,
+        ),
+        latestEstimateHref: latestEstimate
+          ? withOrgQuery(`/app/estimates/${latestEstimate.id}`, scope.orgId, scope.internalUser)
+          : null,
+        scheduleCalendarHref: withOrgQuery(
+          `/app/calendar?quickAction=schedule&leadId=${encodeURIComponent(lead.id)}`,
+          scope.orgId,
+          scope.internalUser,
+        ),
+        operationalJobHref: lead.jobs[0]
+          ? withOrgQuery(`/app/jobs/records/${lead.jobs[0].id}`, scope.orgId, scope.internalUser)
+          : null,
+        invoiceHref: withOrgQuery(`/app/jobs/${lead.id}?tab=invoice`, scope.orgId, scope.internalUser),
+        overviewHref: withOrgQuery(`/app/jobs/${lead.id}`, scope.orgId, scope.internalUser),
+      });
+
+      return {
+        id: lead.id,
+        leadLabel: getLeadLabel(lead),
+        leadHref: withOrgQuery(`/app/jobs/${lead.id}`, scope.orgId, scope.internalUser),
+        locationLabel: normalizeLeadCity(lead.city),
+        phoneE164: lead.phoneE164,
+        priority: lead.priority,
+        updatedAt: lead.updatedAt,
+        nextFollowUpAt: lead.nextFollowUpAt,
+        lastMessageAt: lead.messages[0]?.createdAt || null,
+        workflow,
+        workflowAction,
+      } satisfies TodayQueueItem;
+    })
+    .filter((item) => item.workflow.stage !== "paid");
+
+  const replyNeeded = workQueueItems.filter((item) => item.workflow.stage === "reply_needed");
+  const followUpDue = workQueueItems.filter(
+    (item) => item.workflow.stage === "follow_up_overdue" || item.workflow.stage === "waiting_on_approval",
+  );
+  const estimateWork = workQueueItems.filter(
+    (item) =>
+      item.workflow.stage === "estimate_needed" ||
+      item.workflow.stage === "estimate_draft" ||
+      item.workflow.stage === "estimate_revision",
+  );
+  const readyToSchedule = workQueueItems.filter((item) => item.workflow.stage === "ready_to_schedule");
+  const paymentsDue = workQueueItems.filter((item) => item.workflow.stage === "awaiting_payment");
+  const workQueueNow = workQueueItems
+    .filter(
+      (item) =>
+        item.workflow.stage !== "lead_active" &&
+        item.workflow.stage !== "job_scheduled",
+    )
+    .sort(sortQueueItems)
+    .slice(0, 10);
+  const stillMoving = workQueueItems
+    .filter((item) => item.workflow.stage === "lead_active" || item.workflow.stage === "job_scheduled")
+    .sort(sortQueueItems)
+    .slice(0, 8);
+  const queueSummaryParts: string[] = [];
+  if (replyNeeded.length > 0) queueSummaryParts.push(formatCountLabel(replyNeeded.length, "reply", "replies"));
+  if (followUpDue.length > 0) queueSummaryParts.push(formatCountLabel(followUpDue.length, "follow-up", "follow-ups"));
+  if (estimateWork.length > 0) queueSummaryParts.push(formatCountLabel(estimateWork.length, "estimate"));
+  if (readyToSchedule.length > 0) queueSummaryParts.push(`${readyToSchedule.length.toLocaleString("en-US")} ready to schedule`);
+  if (paymentsDue.length > 0) queueSummaryParts.push(formatCountLabel(paymentsDue.length, "payment due", "payments due"));
+  const queueSummary = queueSummaryParts.length > 0 ? queueSummaryParts.join(" · ") : "All clear";
 
   const nextEventLabel = nextEvent
     ? getEventLabel({
@@ -298,9 +442,8 @@ export default async function AppTodayMobilePage({
       <section className="card dashboard-header">
         <div className="dashboard-header-main">
           <div className="dashboard-header-copy">
-            <span className="dashboard-header-eyebrow">Today</span>
-            <h1>Field Snapshot</h1>
-            <p className="muted">See the calendar, the conversations waiting on a reply, and the work still moving today.</p>
+            <h1>{todayLabel}</h1>
+            <p className="muted">{queueSummary}</p>
           </div>
           <div className="dashboard-actions">
             <Link className="btn secondary" href={calendarHref} prefetch={false}>
@@ -314,63 +457,89 @@ export default async function AppTodayMobilePage({
             </Link>
           </div>
         </div>
-        <div className="dashboard-header-band">
-          <article className="dashboard-header-stat">
-            <span>On calendar</span>
-            <strong>{todayScheduleCount.toLocaleString("en-US")}</strong>
-            <small>Scheduled for today</small>
-          </article>
-          <article className="dashboard-header-stat">
-            <span>Next stop</span>
-            <strong>{nextEvent ? formatDayTime(nextEvent.startAt) : "—"}</strong>
-            <small>{nextEventLabel || "Nothing scheduled yet"}</small>
-          </article>
-          <article className="dashboard-header-stat">
-            <span>Needs reply</span>
-            <strong>{replyQueueCount.toLocaleString("en-US")}</strong>
-            <small>{replyQueueCount > 0 ? "Customers waiting on you" : "Inbox is clear"}</small>
-          </article>
-          <article className="dashboard-header-stat">
-            <span>Follow-ups today</span>
-            <strong>{followUpCount.toLocaleString("en-US")}</strong>
-            <small>{followUpCount > 0 ? "Still needs a touch" : "No follow-ups due"}</small>
-          </article>
-        </div>
       </section>
 
       <section className="dashboard-kpi-grid">
         <KpiCard
-          label="Today’s calendar"
-          value={todayScheduleCount.toLocaleString("en-US")}
-          hint="Jobs, estimates, and calls"
-          href={calendarHref}
-        />
-        <KpiCard
-          label="Reply queue"
-          value={replyQueueCount.toLocaleString("en-US")}
-          hint={replyQueueCount > 0 ? "Open conversations waiting" : "Nothing waiting"}
+          label="Reply needed"
+          value={replyNeeded.length.toLocaleString("en-US")}
+          hint={replyNeeded.length > 0 ? "Customers waiting on you" : "Inbox is clear"}
           href={inboxHref}
         />
         <KpiCard
           label="Follow-ups due"
-          value={followUpCount.toLocaleString("en-US")}
-          hint={followUpCount > 0 ? "Due before end of day" : "Clear for now"}
-          href={inboxHref}
+          value={followUpDue.length.toLocaleString("en-US")}
+          hint={followUpDue.length > 0 ? "Quotes and reminders to touch" : "Nothing due right now"}
+          href={leadsHref}
         />
         <KpiCard
-          label="Active leads"
-          value={activeLeadCount.toLocaleString("en-US")}
-          hint="Still in play"
-          href={inboxHref}
+          label="Estimate work"
+          value={estimateWork.length.toLocaleString("en-US")}
+          hint={estimateWork.length > 0 ? "Create, finish, or revise" : "No estimate work waiting"}
+          href={leadsHref}
+        />
+        <KpiCard
+          label="Ready to schedule"
+          value={readyToSchedule.length.toLocaleString("en-US")}
+          hint={readyToSchedule.length > 0 ? "Approved and ready to book" : "No approved work waiting"}
+          href={calendarHref}
         />
       </section>
 
       <section className="dashboard-main-grid worker">
         <div className="dashboard-stack">
           <PanelCard
+            eyebrow="Work Queue"
+            title="Do next"
+            subtitle="Start here. These leads need the next move from you."
+            actionHref={leadsHref}
+            actionLabel="Open Leads"
+          >
+            {workQueueNow.length === 0 ? (
+              <div className="dashboard-empty-state">
+                <strong>Nothing is blocked right now.</strong>
+                <p className="muted">Move to calendar or open leads to review the rest of the pipeline.</p>
+                <div className="portal-empty-actions">
+                  <Link className="btn primary" href={calendarHref} prefetch={false}>
+                    Open Calendar
+                  </Link>
+                  <Link className="btn secondary" href={leadsHref} prefetch={false}>
+                    Open Leads
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <ul className="dashboard-list">
+                {workQueueNow.map((item) => {
+                  return (
+                    <li key={item.id} className="dashboard-list-row">
+                      <div className="dashboard-list-primary">
+                        <Link className="dashboard-list-link" href={item.leadHref} prefetch={false}>
+                          {item.leadLabel}
+                        </Link>
+                        <div className="dashboard-list-meta">
+                          <StatusPill tone={getContractorWorkflowTone(item.workflow.attentionLevel)}>
+                            {item.workflow.stageLabel}
+                          </StatusPill>
+                          <StatusPill tone={item.priority === "HIGH" ? "warn" : "neutral"}>
+                            {item.priority.toLowerCase()}
+                          </StatusPill>
+                          <span>{item.locationLabel || item.phoneE164}</span>
+                        </div>
+                        <div style={{ marginTop: 6 }}>{renderQueueAction(item)}</div>
+                      </div>
+                      <span className="dashboard-list-time">{getQueueTimeLabel(item)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </PanelCard>
+
+          <PanelCard
             eyebrow="Calendar"
-            title="What’s happening next"
-            subtitle="Your next stop first, then the rest of today’s schedule."
+            title="Today on calendar"
+            subtitle="Your next stop first, then the rest of today."
             actionHref={calendarHref}
             actionLabel="Open Calendar"
           >
@@ -385,7 +554,7 @@ export default async function AppTodayMobilePage({
                   {nextEvent.type.replaceAll("_", " ")}{nextEventMapsHref ? " • address ready" : ""}
                 </p>
               ) : (
-                <p className="muted">Start from calendar so the crew has a clear day plan.</p>
+                <p className="muted">Open calendar and add the next stop when work gets booked.</p>
               )}
               <div className="next-job-actions">
                 <Link className="btn primary" href={nextEventHref} prefetch={false}>
@@ -440,7 +609,6 @@ export default async function AppTodayMobilePage({
                   const targetHref = event.leadId
                     ? withOrgQuery(`/app/jobs/${event.leadId}`, scope.orgId, scope.internalUser)
                     : calendarHref;
-
                   return (
                     <li key={event.id} className="dashboard-list-row">
                       <div className="dashboard-list-primary">
@@ -459,134 +627,42 @@ export default async function AppTodayMobilePage({
               </ul>
             )}
           </PanelCard>
-
-          <PanelCard
-            eyebrow="Pipeline"
-            title="Active leads still moving"
-            subtitle="The leads and open jobs most likely to need work today."
-            actionHref={inboxHref}
-            actionLabel="Open Leads"
-          >
-            {activeLeads.length === 0 ? (
-              <div className="dashboard-empty-state">
-                <strong>No active leads right now.</strong>
-                <p className="muted">When new work comes in, it will show here with the rest of today’s priorities.</p>
-              </div>
-            ) : (
-              <ul className="dashboard-list">
-                {activeLeads.map((lead) => {
-                  const leadLabel = getLeadLabel(lead);
-                  const leadCity = normalizeLeadCity(lead.city);
-                  return (
-                    <li key={lead.id} className="dashboard-list-row">
-                      <div className="dashboard-list-primary">
-                        <Link className="dashboard-list-link" href={withOrgQuery(`/app/jobs/${lead.id}`, scope.orgId, scope.internalUser)} prefetch={false}>
-                          {leadLabel}
-                        </Link>
-                        <div className="dashboard-list-meta">
-                          <StatusPill tone="neutral">{lead.status.replaceAll("_", " ").toLowerCase()}</StatusPill>
-                          <StatusPill tone={lead.priority === "HIGH" ? "warn" : "neutral"}>
-                            {lead.priority.toLowerCase()}
-                          </StatusPill>
-                          <span>{leadCity || lead.phoneE164}</span>
-                        </div>
-                      </div>
-                      <span className="dashboard-list-time">{formatDateLabel(lead.updatedAt)}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </PanelCard>
         </div>
 
         <div className="dashboard-stack">
           <PanelCard
-            eyebrow="Reply Queue"
-            title="Messages that need a response"
-            subtitle="If the customer texted last, it should show up here."
-            actionHref={inboxHref}
-            actionLabel="Go to Inbox"
+            eyebrow="Pipeline"
+            title="Still moving"
+            subtitle="Work that is in motion but not blocked right now."
+            actionHref={leadsHref}
+            actionLabel="Open Leads"
           >
-            {repliesNeeded.length === 0 ? (
+            {stillMoving.length === 0 ? (
               <div className="dashboard-empty-state">
-                <strong>No messages waiting on you.</strong>
-                <p className="muted">The inbox is clear for now.</p>
-                <div className="portal-empty-actions">
-                  <Link className="btn secondary" href={inboxHref} prefetch={false}>
-                    Open Inbox
-                  </Link>
-                </div>
+                <strong>No quiet pipeline work right now.</strong>
+                <p className="muted">Anything still moving without a blocker will show up here.</p>
               </div>
             ) : (
               <ul className="dashboard-list">
-                {repliesNeeded.map((lead) => {
-                  const leadLabel = getLeadLabel(lead);
+                {stillMoving.map((item) => {
                   return (
-                    <li key={lead.id} className="dashboard-list-row">
+                    <li key={item.id} className="dashboard-list-row">
                       <div className="dashboard-list-primary">
-                        <Link
-                          className="dashboard-list-link"
-                          href={withOrgQuery(`/app/jobs/${lead.id}?tab=messages`, scope.orgId, scope.internalUser)}
-                          prefetch={false}
-                        >
-                          {leadLabel}
+                        <Link className="dashboard-list-link" href={item.leadHref} prefetch={false}>
+                          {item.leadLabel}
                         </Link>
                         <div className="dashboard-list-meta">
-                          <StatusPill tone="warn">Needs reply</StatusPill>
-                          <span>{lead.phoneE164}</span>
-                        </div>
-                      </div>
-                      <span className="dashboard-list-time">
-                        {lead.lastInboundAt ? formatDateLabel(lead.lastInboundAt) : "Now"}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </PanelCard>
-
-          <PanelCard
-            eyebrow="Follow-ups"
-            title="Leads to work before the day ends"
-            subtitle="Calls, texts, and reminders that should not slip."
-            actionHref={inboxHref}
-            actionLabel="Work Queue"
-          >
-            {followUpsToWork.length === 0 ? (
-              <div className="dashboard-empty-state">
-                <strong>No follow-ups due right now.</strong>
-                <p className="muted">Anything due later today will show here as it comes up.</p>
-              </div>
-            ) : (
-              <ul className="dashboard-list">
-                {followUpsToWork.map((lead) => {
-                  const leadLabel = getLeadLabel(lead);
-                  const leadCity = normalizeLeadCity(lead.city);
-                  return (
-                    <li key={lead.id} className="dashboard-list-row">
-                      <div className="dashboard-list-primary">
-                        <Link
-                          className="dashboard-list-link"
-                          href={withOrgQuery(`/app/jobs/${lead.id}?tab=messages`, scope.orgId, scope.internalUser)}
-                          prefetch={false}
-                        >
-                          {leadLabel}
-                        </Link>
-                        <div className="dashboard-list-meta">
-                          <StatusPill tone={lead.priority === "HIGH" ? "warn" : "neutral"}>
-                            {lead.priority.toLowerCase()}
+                          <StatusPill tone={getContractorWorkflowTone(item.workflow.attentionLevel)}>
+                            {item.workflow.stageLabel}
                           </StatusPill>
-                          <span>{leadCity || lead.phoneE164}</span>
-                          {lead.nextFollowUpAt && isOverdueFollowUp(lead.nextFollowUpAt) ? (
-                            <StatusPill tone="warn">Overdue</StatusPill>
-                          ) : null}
+                          <StatusPill tone={item.priority === "HIGH" ? "warn" : "neutral"}>
+                            {item.priority.toLowerCase()}
+                          </StatusPill>
+                          <span>{item.locationLabel || item.phoneE164}</span>
                         </div>
+                        <div style={{ marginTop: 6 }}>{renderQueueAction(item)}</div>
                       </div>
-                      <span className="dashboard-list-time">
-                        {lead.nextFollowUpAt ? formatDateTime(lead.nextFollowUpAt) : "Today"}
-                      </span>
+                      <span className="dashboard-list-time">{getQueueTimeLabel(item)}</span>
                     </li>
                   );
                 })}

@@ -1,4 +1,4 @@
-import { Prisma, type EstimateActivityType, type EstimateDraftLineType, type EstimateStatus, type EstimateTaxSource } from "@prisma/client";
+import { Prisma, type EstimateDraftLineType, type EstimateStatus, type EstimateTaxSource } from "@prisma/client";
 import { AppApiError } from "@/lib/app-api-error";
 import {
   canTransitionEstimateStatus,

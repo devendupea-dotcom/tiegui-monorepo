@@ -6,6 +6,12 @@ import { normalizeLeadCity, resolveLeadLocationLabel } from "@/lib/lead-location
 import { operationalJobCandidateSelect, selectReusableOperationalJobCandidate } from "@/lib/operational-jobs";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime, isOverdueFollowUp, leadPriorityOptions, leadStatusOptions } from "@/lib/hq";
+import {
+  getContractorWorkflowTone,
+  resolveContractorWorkflow,
+  resolveContractorWorkflowActionTarget,
+} from "@/lib/contractor-workflow";
+import { StatusPill } from "../dashboard-ui";
 import { getParam, isOpenJobStatus, resolveAppScope, withOrgQuery } from "../_lib/portal-scope";
 import { isWorkerScopedPageViewer, requireAppPageViewer } from "../_lib/portal-viewer";
 
@@ -125,6 +131,24 @@ export default async function JobsPage({
           balanceDue: true,
         },
         orderBy: [{ createdAt: "desc" }],
+        take: 3,
+      },
+      estimates: {
+        select: {
+          id: true,
+          status: true,
+        },
+        where: {
+          archivedAt: null,
+        },
+        orderBy: [{ updatedAt: "desc" }],
+        take: 4,
+      },
+      messages: {
+        select: {
+          direction: true,
+        },
+        orderBy: [{ createdAt: "desc" }],
         take: 1,
       },
       jobs: {
@@ -159,6 +183,43 @@ export default async function JobsPage({
     const operationalJob = selectReusableOperationalJobCandidate({
       candidates: job.jobs,
     });
+    const latestEstimate = job.estimates.find((estimate) => estimate.status !== "CONVERTED") || job.estimates[0] || null;
+    const latestInvoice = job.invoices[0] || null;
+    const overviewHref = withOrgQuery(`/app/jobs/${job.id}`, scope.orgId, scope.internalUser);
+    const workflow = resolveContractorWorkflow({
+      hasMessagingWorkspace: job.messages.length > 0,
+      latestMessageDirection: job.messages[0]?.direction || null,
+      nextFollowUpAt: hasActiveBookedJob ? null : job.nextFollowUpAt,
+      latestEstimateStatus: latestEstimate?.status || null,
+      hasScheduledJob: hasActiveBookedJob,
+      hasOperationalJob: Boolean(operationalJob?.id),
+      hasLatestInvoice: Boolean(latestInvoice),
+      hasOpenInvoice: job.invoices.some((invoice) => invoice.balanceDue.gt(0)),
+      latestInvoicePaid: Boolean(latestInvoice && latestInvoice.balanceDue.lte(0)),
+    });
+    const workflowAction = resolveContractorWorkflowActionTarget({
+      action: workflow.nextAction,
+      messagesHref: withOrgQuery(`/app/jobs/${job.id}?tab=messages`, scope.orgId, scope.internalUser),
+      phoneHref: job.phoneE164 ? `tel:${job.phoneE164}` : null,
+      createEstimateHref: withOrgQuery(
+        `/app/estimates?create=1&leadId=${encodeURIComponent(job.id)}`,
+        scope.orgId,
+        scope.internalUser,
+      ),
+      latestEstimateHref: latestEstimate
+        ? withOrgQuery(`/app/estimates/${latestEstimate.id}`, scope.orgId, scope.internalUser)
+        : null,
+      scheduleCalendarHref: withOrgQuery(
+        `/app/calendar?quickAction=schedule&leadId=${encodeURIComponent(job.id)}`,
+        scope.orgId,
+        scope.internalUser,
+      ),
+      operationalJobHref: operationalJob?.id
+        ? withOrgQuery(`/app/jobs/records/${operationalJob.id}`, scope.orgId, scope.internalUser)
+        : null,
+      invoiceHref: withOrgQuery(`/app/jobs/${job.id}?tab=invoice`, scope.orgId, scope.internalUser),
+      overviewHref,
+    });
 
     return {
       ...job,
@@ -167,6 +228,9 @@ export default async function JobsPage({
       locationLabel,
       workTypeLabel,
       operationalJobId: operationalJob?.id || null,
+      workflow,
+      workflowAction,
+      overviewHref,
     };
   });
 
@@ -284,6 +348,7 @@ export default async function JobsPage({
                     <span className={`badge priority-${job.priority.toLowerCase()}`}>
                       {priorityLabel(job.priority)}
                     </span>
+                    <StatusPill tone={getContractorWorkflowTone(job.workflow.attentionLevel)}>{job.workflow.stageLabel}</StatusPill>
                     {job.invoices[0] ? (
                       <span className={`badge status-${job.invoices[0].status.toLowerCase()}`}>
                         {statusLabel(job.invoices[0].status)}
@@ -300,6 +365,7 @@ export default async function JobsPage({
                     <span className="muted">
                       {job.locationLabel} • {job.workTypeLabel || "-"}
                     </span>
+                    <span className="muted">Next: {job.workflow.nextAction.label}</span>
                     <span className="muted">{t("jobs.updatedLabel", { value: formatDateTime(job.updatedAt) })}</span>
                     {job.nextFollowUpAt ? (
                       <>
@@ -309,6 +375,15 @@ export default async function JobsPage({
                     ) : null}
                   </div>
                   <div className="mobile-list-card-actions">
+                    {job.workflowAction.external ? (
+                      <a className="btn primary" href={job.workflowAction.href}>
+                        {job.workflow.nextAction.label}
+                      </a>
+                    ) : (
+                      <Link className="btn primary" href={job.workflowAction.href}>
+                        {job.workflow.nextAction.label}
+                      </Link>
+                    )}
                     <Link className="btn secondary" href={jobHref}>
                       {job.operationalJobId ? t("buttons.openOperationalJob") : t("buttons.openCrmFolder")}
                     </Link>
@@ -329,7 +404,7 @@ export default async function JobsPage({
                     <th>{t("jobs.table.folderData")}</th>
                     <th>{t("jobs.table.city")}</th>
                     <th>{t("jobs.table.type")}</th>
-                    <th>{t("jobs.table.followUp")}</th>
+                    <th>{t("jobs.table.nextStep")}</th>
                     <th>{t("jobs.table.updated")}</th>
                   </tr>
                 </thead>
@@ -376,14 +451,24 @@ export default async function JobsPage({
                       <td>{job.locationLabel}</td>
                       <td>{job.workTypeLabel || "-"}</td>
                       <td>
-                        {job.nextFollowUpAt ? (
-                          <div className="stack-cell">
-                            <span>{formatDateTime(job.nextFollowUpAt)}</span>
-                            {isOverdueFollowUp(job.nextFollowUpAt) ? <span className="overdue-chip">{t("jobs.overdue")}</span> : null}
-                          </div>
-                        ) : (
-                          "-"
-                        )}
+                        <div className="stack-cell">
+                          <StatusPill tone={getContractorWorkflowTone(job.workflow.attentionLevel)}>{job.workflow.stageLabel}</StatusPill>
+                          {job.workflowAction.external ? (
+                            <a className="table-link" href={job.workflowAction.href}>
+                              {job.workflow.nextAction.label}
+                            </a>
+                          ) : (
+                            <Link className="table-link" href={job.workflowAction.href}>
+                              {job.workflow.nextAction.label}
+                            </Link>
+                          )}
+                          {job.nextFollowUpAt ? (
+                            <span className="muted">{t("jobs.followUpLabel", { value: formatDateTime(job.nextFollowUpAt) })}</span>
+                          ) : null}
+                          {job.nextFollowUpAt && isOverdueFollowUp(job.nextFollowUpAt) ? (
+                            <span className="overdue-chip">{t("jobs.overdue")}</span>
+                          ) : null}
+                        </div>
                       </td>
                       <td>{formatDateTime(job.updatedAt)}</td>
                     </tr>

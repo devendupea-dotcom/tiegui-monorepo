@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import type { CalendarAccessRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import BrandingSaveStatus from "./branding-save-status";
 import OrgLogoUploader from "./org-logo-uploader";
 
 export const dynamic = "force-dynamic";
@@ -129,6 +130,8 @@ export default async function BrandingSettingsPage({
   }
 
   const settingsPath = withOrgQuery("/app/settings", scope.orgId, scope.internalUser);
+  const invoicePrefixError =
+    error === "invoicePrefix" ? "Invoice prefix must be 2-8 letters/numbers (example: INV)." : null;
 
   return (
     <section className="card">
@@ -239,10 +242,11 @@ export default async function BrandingSettingsPage({
             </button>
           </form>
 
-          {saved === "1" ? <p className="form-status">Branding saved.</p> : null}
-          {error === "invoicePrefix" ? (
-            <p className="form-status">Invoice prefix must be 2-8 letters/numbers (example: INV).</p>
-          ) : null}
+          <BrandingSaveStatus
+            errorMessage={invoicePrefixError}
+            saved={saved === "1"}
+            successMessage="Branding saved."
+          />
         </article>
       </div>
     </section>

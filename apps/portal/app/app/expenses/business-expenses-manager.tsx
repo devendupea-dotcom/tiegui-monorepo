@@ -8,7 +8,6 @@ import {
   businessExpenseCategorySuggestions,
   formatExpenseAmountInput,
   type BusinessExpenseListItem,
-  type BusinessExpensePurchaseOrderSummary,
 } from "@/lib/business-expenses";
 import type { PurchaseOrderListItem } from "@/lib/purchase-orders";
 

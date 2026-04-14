@@ -3,6 +3,7 @@ type PortalEventName =
   | "Onboarding Completed"
   | "Lead Created"
   | "Job Created"
+  | "Invoice Sent"
   | "Invoice Printed"
   | "SMS Connected";
 

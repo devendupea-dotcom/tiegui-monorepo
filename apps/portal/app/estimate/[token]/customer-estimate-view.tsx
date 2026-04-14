@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatEstimateCurrency, formatEstimateStatusLabel } from "@/lib/estimates";
 import type { CustomerEstimateShareDetail, CustomerEstimateShareLineItem } from "@/lib/estimate-share";
@@ -213,10 +214,14 @@ export default function CustomerEstimateView({
               <div className="estimate-sales-main">
                 <div className="estimate-share-brand">
                   {estimate.branding.logoUrl ? (
-                    <img
+                    <Image
                       src={estimate.branding.logoUrl}
                       alt={`${estimate.branding.name} logo`}
                       className="estimate-share-logo"
+                      width={72}
+                      height={72}
+                      unoptimized
+                      loader={({ src }) => src}
                     />
                   ) : null}
                   <div className="stack-cell">

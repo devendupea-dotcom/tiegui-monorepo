@@ -716,11 +716,9 @@ async function main() {
         label: "GET /app (owner)",
         validate: ({ html }) => {
           const text = extractVisibleText(html);
-          assert(text.includes("Command Center"), "Expected Command Center heading");
-          assert(text.includes("Revenue"), "Expected revenue card content");
-          assert(text.includes("Gross"), "Expected gross revenue toggle");
-          assert(text.includes("Collected"), "Expected collected revenue toggle");
+          assert(text.includes("Workflow"), "Expected workflow guidance content");
           assert(text.includes("Lead Engine"), "Expected lead engine panel content");
+          assert(text.includes("Jobs This Week"), "Expected jobs panel content");
         },
       }),
   });
@@ -736,7 +734,8 @@ async function main() {
         label: "GET /app (worker)",
         validate: ({ html }) => {
           const text = extractVisibleText(html);
-          assert(text.includes("Ops Dashboard"), "Expected Ops Dashboard heading");
+          assert(text.includes("Work Queue"), "Expected Work Queue heading");
+          assert(text.includes("Assigned Jobs"), "Expected assigned jobs panel content");
           assert(!text.includes("Revenue"), "Worker HTML should not include Revenue");
           assert(!text.includes("Gross"), "Worker HTML should not include Gross");
           assert(!text.includes("Collected"), "Worker HTML should not include Collected");

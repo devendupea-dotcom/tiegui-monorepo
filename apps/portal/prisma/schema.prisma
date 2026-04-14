@@ -44,6 +44,7 @@ model Organization {
   invoicePrefix               String          @default("INV")
   invoiceNextNumber           Int             @default(1)
   invoicePaymentInstructions  String?
+  invoiceTemplate             String          @default("classic")
   logoPhotoId                 String?         @unique
   invoiceSequence             Int             @default(0)
   ghostBustingEnabled         Boolean         @default(false)
@@ -624,6 +625,7 @@ model Invoice {
   issueDate        DateTime
   dueDate          DateTime
   notes            String?
+  sentAt           DateTime?
   createdByUserId  String?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt

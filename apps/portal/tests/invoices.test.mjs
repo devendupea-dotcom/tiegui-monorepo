@@ -9,6 +9,7 @@ import {
   selectConservativeInvoiceSourceJobCandidate,
   shouldRenderInvoicePaidIndicator,
 } from "../lib/invoices.ts";
+import { DEFAULT_INVOICE_TEMPLATE, isInvoiceTemplate, normalizeInvoiceTemplate } from "../lib/invoice-template.ts";
 
 test("deriveInvoiceStatus keeps zero-total drafts editable", () => {
   const status = deriveInvoiceStatus({
@@ -38,6 +39,14 @@ test("shouldRenderInvoicePaidIndicator only returns true for paid invoices", () 
   assert.equal(shouldRenderInvoicePaidIndicator({ status: "PAID" }), true);
   assert.equal(shouldRenderInvoicePaidIndicator({ status: "SENT" }), false);
   assert.equal(shouldRenderInvoicePaidIndicator({ status: "OVERDUE" }), false);
+});
+
+test("invoice template helpers validate and normalize supported values", () => {
+  assert.equal(isInvoiceTemplate("classic"), true);
+  assert.equal(isInvoiceTemplate("bold"), true);
+  assert.equal(isInvoiceTemplate("minimal"), true);
+  assert.equal(isInvoiceTemplate("retro"), false);
+  assert.equal(normalizeInvoiceTemplate("retro"), DEFAULT_INVOICE_TEMPLATE);
 });
 
 test("getInvoiceReadJobContext prefers the operational job when sourceJob is linked", () => {

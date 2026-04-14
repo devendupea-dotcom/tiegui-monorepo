@@ -35,7 +35,7 @@ export default function OrgLogoUploader({ orgId, disabled }: OrgLogoUploaderProp
         throw new Error(data?.error || "Couldn't load logo preview.");
       }
       setLogoUrl(typeof data.url === "string" ? data.url : null);
-    } catch (err) {
+    } catch {
       setLogoUrl(null);
     }
   }

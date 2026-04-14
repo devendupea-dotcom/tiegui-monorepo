@@ -6,7 +6,6 @@ import {
   dispatchStatusFromDb,
   formatDispatchScheduledWindow,
   isDispatchStatusValue,
-  type DispatchStatusValue,
 } from "@/lib/dispatch";
 import {
   buildJobTrackingProgressSteps,

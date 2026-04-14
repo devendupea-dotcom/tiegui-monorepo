@@ -28,6 +28,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false);
+  const [magicLinkSubmitting, setMagicLinkSubmitting] = useState(false);
   const [nextPath, setNextPath] = useState("/");
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [verify, setVerify] = useState(false);
@@ -73,36 +77,72 @@ export default function LoginPage() {
 
   const handlePasswordSignIn = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setStatus("Signing in…");
+    if (passwordSubmitting) return;
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-      callbackUrl: nextPath,
-    });
-
-    if (result?.error) {
-      setStatus(getFriendlyAuthError(result.error));
+    const trimmedEmail = email.trim();
+    const nextEmailError = trimmedEmail ? null : "Enter your email.";
+    const nextPasswordError = password ? null : "Enter your password.";
+    setEmailError(nextEmailError);
+    setPasswordError(nextPasswordError);
+    if (nextEmailError || nextPasswordError) {
+      setStatus("Complete the required fields to continue.");
       return;
     }
 
-    router.push(result?.url || nextPath);
+    setPasswordSubmitting(true);
+    setStatus("Signing in…");
+
+    try {
+      const result = await signIn("credentials", {
+        email: trimmedEmail,
+        password,
+        redirect: false,
+        callbackUrl: nextPath,
+      });
+
+      if (result?.error) {
+        setStatus(getFriendlyAuthError(result.error));
+        return;
+      }
+
+      router.push(result?.url || nextPath);
+    } catch {
+      setStatus("Sign-in failed. Please try again.");
+    } finally {
+      setPasswordSubmitting(false);
+    }
   };
 
   const handleMagicLink = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setStatus("Sending login link...");
-    const result = await signIn("email", {
-      email,
-      redirect: false,
-      callbackUrl: nextPath,
-    });
-    if (result?.error) {
-      setStatus(getFriendlyAuthError(result.error));
+    if (magicLinkSubmitting) return;
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setEmailError("Enter your email before requesting a login link.");
+      setStatus("Enter your email before requesting a login link.");
       return;
     }
-    setStatus("Check your email for a secure sign-in link.");
+
+    setEmailError(null);
+    setMagicLinkSubmitting(true);
+    setStatus("Sending login link...");
+    try {
+      const result = await signIn("email", {
+        email: trimmedEmail,
+        redirect: false,
+        callbackUrl: nextPath,
+      });
+      if (result?.error) {
+        setStatus(getFriendlyAuthError(result.error));
+        return;
+      }
+      setStatus("Check your email for a secure sign-in link.");
+    } catch {
+      setStatus("We couldn’t send the email. Double-check your SMTP credentials and sender settings.");
+    } finally {
+      setMagicLinkSubmitting(false);
+    }
   };
 
   return (
@@ -116,10 +156,16 @@ export default function LoginPage() {
             <input
               type="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                if (emailError) setEmailError(null);
+              }}
               placeholder="you@business.com"
               required
+              disabled={passwordSubmitting || magicLinkSubmitting}
+              aria-invalid={Boolean(emailError)}
             />
+            {emailError ? <span className="form-status">{emailError}</span> : null}
           </label>
           <label>
             Password
@@ -127,10 +173,15 @@ export default function LoginPage() {
               <input
                 type={showPassword ? "text" : "password"}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  if (passwordError) setPasswordError(null);
+                }}
                 placeholder="Your password"
                 autoComplete="current-password"
                 required
+                disabled={passwordSubmitting}
+                aria-invalid={Boolean(passwordError)}
               />
               <button
                 type="button"
@@ -138,10 +189,12 @@ export default function LoginPage() {
                 onClick={() => setShowPassword((current) => !current)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
                 aria-pressed={showPassword}
+                disabled={passwordSubmitting}
               >
                 {showPassword ? "Hide" : "Show"}
               </button>
             </div>
+            {passwordError ? <span className="form-status">{passwordError}</span> : null}
           </label>
 
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
@@ -150,7 +203,9 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <button className="btn primary" type="submit">Access Dashboard</button>
+          <button className="btn primary" type="submit" disabled={passwordSubmitting}>
+            {passwordSubmitting ? "Signing in…" : "Access Dashboard"}
+          </button>
           <p className="form-status">
             New here? We’ll send you a temporary password when your account is created — you can change it after your
             first login.
@@ -164,7 +219,9 @@ export default function LoginPage() {
           <p className="auth-secondary-kicker">Prefer passwordless access?</p>
           <p className="muted">Use a secure sign-in link (magic link).</p>
           <form onSubmit={handleMagicLink} className="auth-form" style={{ marginTop: 12 }}>
-            <button className="btn secondary" type="submit">Send login link</button>
+            <button className="btn secondary" type="submit" disabled={magicLinkSubmitting}>
+              {magicLinkSubmitting ? "Sending login link…" : "Send login link"}
+            </button>
           </form>
         </div>
 

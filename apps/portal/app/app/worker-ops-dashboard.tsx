@@ -2,11 +2,14 @@ import Link from "next/link";
 import { addDays, endOfDay, startOfDay } from "date-fns";
 import type { Prisma } from "@prisma/client";
 import type { AnalyticsViewer } from "@/lib/portal-analytics";
+import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
+import { translateStatusLabel } from "@/lib/i18n-labels";
 import { getPortalSummaryMetrics } from "@/lib/portal-analytics";
 import { prisma } from "@/lib/prisma";
 import type { AppScope } from "./_lib/portal-scope";
 import { withOrgQuery } from "./_lib/portal-scope";
 import { KpiCard, PanelCard, StatusPill } from "./dashboard-ui";
+import WorkflowGuidanceCard from "./workflow-guidance-card";
 
 type WorkerOpsDashboardProps = {
   scope: AppScope;
@@ -33,16 +36,20 @@ function buildWorkerEventScope(userId: string): Prisma.EventWhereInput {
   };
 }
 
-function formatTimeLabel(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+function formatNumber(value: number, locale: string): string {
+  return new Intl.NumberFormat(locale).format(value);
+}
+
+function formatTimeLabel(value: Date, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     weekday: "short",
     hour: "numeric",
     minute: "2-digit",
   }).format(value);
 }
 
-function formatDateLabel(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+function formatDateLabel(value: Date, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -51,6 +58,8 @@ function formatDateLabel(value: Date): string {
 }
 
 export default async function WorkerOpsDashboard({ scope, viewer }: WorkerOpsDashboardProps) {
+  const t = await getRequestTranslator();
+  const locale = getRequestLocale();
   const now = new Date();
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
@@ -168,111 +177,124 @@ export default async function WorkerOpsDashboard({ scope, viewer }: WorkerOpsDas
   const calendarHref = withOrgQuery("/app/calendar", scope.orgId, scope.internalUser);
 
   const nextJobLabel =
-    nextJob?.customerName || nextJob?.lead?.contactName || nextJob?.lead?.businessName || nextJob?.lead?.phoneE164 || "—";
+    nextJob?.customerName
+    || nextJob?.lead?.contactName
+    || nextJob?.lead?.businessName
+    || nextJob?.lead?.phoneE164
+    || t("dashboard.common.emptyValue");
   const nextJobHint = nextJob
-    ? `${nextJob.addressLine || "Address not added yet"}`
-    : "No assigned job yet";
+    ? `${nextJob.addressLine || t("dashboard.common.addressMissing")}`
+    : t("dashboard.worker.assignedJobs.nextJobEmptyHint");
 
   return (
     <div className="dashboard-shell">
       <section className="card dashboard-header">
         <div className="dashboard-header-main">
           <div className="dashboard-header-copy">
-            <span className="dashboard-header-eyebrow">Crew view</span>
-            <h1>Ops Dashboard</h1>
-            <p className="muted">Your jobs, reply queue, and open capacity for {scope.orgName} in one clean workspace.</p>
+            <span className="dashboard-header-eyebrow">{t("dashboard.worker.header.eyebrow")}</span>
+            <h1>{t("dashboard.worker.header.title")}</h1>
+            <p className="muted">{t("dashboard.worker.header.subtitle", { orgName: scope.orgName })}</p>
           </div>
           <div className="dashboard-actions">
             <Link className="btn primary" href={quickLeadHref}>
-              + New Lead
+              {t("dashboard.common.newLead")}
             </Link>
             <Link className="btn secondary" href={addJobHref}>
-              + Add Job
+              {t("dashboard.common.addJob")}
             </Link>
             <Link className="btn secondary" href={inboxHref}>
-              Inbox
+              {t("dashboard.common.inbox")}
             </Link>
           </div>
         </div>
         <div className="dashboard-header-band">
           <article className="dashboard-header-stat">
-            <span>Today</span>
-            <strong>{todayScheduleCount.toLocaleString("en-US")}</strong>
-            <small>Jobs on your calendar today</small>
+            <span>{t("dashboard.worker.stats.todayLabel")}</span>
+            <strong>{formatNumber(todayScheduleCount, locale)}</strong>
+            <small>{t("dashboard.worker.stats.todayHint")}</small>
           </article>
           <article className="dashboard-header-stat">
-            <span>Next stop</span>
-            <strong>{nextJob ? formatTimeLabel(nextJob.startAt) : "—"}</strong>
-            <small>{nextJob ? nextJobLabel : "Nothing assigned yet"}</small>
+            <span>{t("dashboard.worker.stats.nextStopLabel")}</span>
+            <strong>{nextJob ? formatTimeLabel(nextJob.startAt, locale) : t("dashboard.common.emptyValue")}</strong>
+            <small>{nextJob ? nextJobLabel : t("dashboard.worker.stats.nextStopEmpty")}</small>
           </article>
           <article className="dashboard-header-stat">
-            <span>Reply queue</span>
-            <strong>{repliesNeeded.length.toLocaleString("en-US")}</strong>
-            <small>{repliesNeeded.length > 0 ? "Customers waiting on you" : "Inbox is clear"}</small>
+            <span>{t("dashboard.worker.stats.replyQueueLabel")}</span>
+            <strong>{formatNumber(repliesNeeded.length, locale)}</strong>
+            <small>{repliesNeeded.length > 0 ? t("dashboard.worker.stats.replyQueueHint") : t("dashboard.worker.stats.replyQueueClear")}</small>
           </article>
           <article className="dashboard-header-stat">
-            <span>Open slots</span>
-            <strong>{workerSummary.openSlotsNext7Days.toLocaleString("en-US")}</strong>
-            <small>Available over the next 7 days</small>
+            <span>{t("dashboard.worker.stats.openSlotsLabel")}</span>
+            <strong>{formatNumber(workerSummary.openSlotsNext7Days, locale)}</strong>
+            <small>{t("dashboard.worker.stats.openSlotsHint")}</small>
           </article>
         </div>
       </section>
 
       <section className="dashboard-kpi-grid">
         <KpiCard
-          label="Assigned jobs"
-          value={assignedJobsCount.toLocaleString("en-US")}
-          hint="Next 7 days"
+          label={t("dashboard.worker.kpis.assignedJobsLabel")}
+          value={formatNumber(assignedJobsCount, locale)}
+          hint={t("dashboard.worker.kpis.assignedJobsHint")}
           href={calendarHref}
         />
         <KpiCard
-          label="Today’s schedule"
-          value={todayScheduleCount.toLocaleString("en-US")}
-          hint="Jobs on the calendar today"
+          label={t("dashboard.worker.kpis.todayScheduleLabel")}
+          value={formatNumber(todayScheduleCount, locale)}
+          hint={t("dashboard.worker.kpis.todayScheduleHint")}
           href={calendarHref}
         />
         <KpiCard
-          label="Messages needing reply"
-          value={repliesNeeded.length.toLocaleString("en-US")}
-          hint={repliesNeeded.length > 0 ? "Customers waiting on you" : "Inbox is clear"}
+          label={t("dashboard.worker.kpis.messagesNeedingReplyLabel")}
+          value={formatNumber(repliesNeeded.length, locale)}
+          hint={repliesNeeded.length > 0 ? t("dashboard.worker.kpis.messagesNeedingReplyHint") : t("dashboard.worker.kpis.messagesNeedingReplyClear")}
           href={inboxHref}
         />
         <KpiCard
-          label="Open slots"
-          value={workerSummary.openSlotsNext7Days.toLocaleString("en-US")}
-          hint="Available in the next 7 days"
+          label={t("dashboard.worker.kpis.openSlotsLabel")}
+          value={formatNumber(workerSummary.openSlotsNext7Days, locale)}
+          hint={t("dashboard.worker.kpis.openSlotsHint")}
           href={calendarHref}
         />
       </section>
 
       <section className="dashboard-main-grid worker">
         <div className="dashboard-stack">
+          <WorkflowGuidanceCard orgId={scope.orgId} internalUser={scope.internalUser} />
+
           <PanelCard
-            eyebrow="Assigned Jobs"
-            title="Your next 7 days"
-            subtitle="The jobs you need to keep moving."
+            eyebrow={t("dashboard.worker.assignedJobs.eyebrow")}
+            title={t("dashboard.worker.assignedJobs.title")}
+            subtitle={t("dashboard.worker.assignedJobs.subtitle")}
             actionHref={calendarHref}
-            actionLabel="Open Calendar"
+            actionLabel={t("dashboard.worker.assignedJobs.action")}
           >
             <div className="dashboard-ops-highlight">
-              <span className="dashboard-inline-label">Next job</span>
-              <strong>{nextJob ? formatTimeLabel(nextJob.startAt) : "Nothing assigned yet"}</strong>
-              <p className="muted">{nextJob ? `${nextJobLabel} • ${nextJobHint}` : "Your next scheduled stop will show here."}</p>
+              <span className="dashboard-inline-label">{t("dashboard.worker.assignedJobs.nextJobLabel")}</span>
+              <strong>{nextJob ? formatTimeLabel(nextJob.startAt, locale) : t("dashboard.worker.assignedJobs.nextJobEmpty")}</strong>
+              <p className="muted">
+                {nextJob ? `${nextJobLabel} • ${nextJobHint}` : t("dashboard.worker.assignedJobs.nextJobBody")}
+              </p>
             </div>
             {upcomingJobs.length === 0 ? (
               <div className="dashboard-empty-state">
-                <strong>No jobs scheduled.</strong>
-                <p className="muted">Add your first job to get started.</p>
+                <strong>{t("dashboard.worker.assignedJobs.emptyTitle")}</strong>
+                <p className="muted">{t("dashboard.worker.assignedJobs.emptyBody")}</p>
                 <div className="portal-empty-actions">
                   <Link className="btn primary" href={addJobHref}>
-                    Add your first job
+                    {t("dashboard.worker.assignedJobs.emptyAction")}
                   </Link>
                 </div>
               </div>
             ) : (
               <ul className="dashboard-list">
                 {upcomingJobs.map((job) => {
-                  const jobLabel = job.customerName || job.lead?.contactName || job.lead?.businessName || job.lead?.phoneE164 || "Scheduled job";
+                  const jobLabel =
+                    job.customerName
+                    || job.lead?.contactName
+                    || job.lead?.businessName
+                    || job.lead?.phoneE164
+                    || t("dashboard.common.scheduledJob");
                   const targetHref = job.leadId
                     ? withOrgQuery(`/app/jobs/${job.leadId}`, scope.orgId, scope.internalUser)
                     : calendarHref;
@@ -283,11 +305,11 @@ export default async function WorkerOpsDashboard({ scope, viewer }: WorkerOpsDas
                           {jobLabel}
                         </Link>
                         <div className="dashboard-list-meta">
-                          <StatusPill tone="neutral">{job.status.replaceAll("_", " ").toLowerCase()}</StatusPill>
-                          <span>{job.addressLine || "Address not added yet"}</span>
+                          <StatusPill tone="neutral">{translateStatusLabel(job.status, t)}</StatusPill>
+                          <span>{job.addressLine || t("dashboard.common.addressMissing")}</span>
                         </div>
                       </div>
-                      <span className="dashboard-list-time">{formatTimeLabel(job.startAt)}</span>
+                      <span className="dashboard-list-time">{formatTimeLabel(job.startAt, locale)}</span>
                     </li>
                   );
                 })}
@@ -298,19 +320,19 @@ export default async function WorkerOpsDashboard({ scope, viewer }: WorkerOpsDas
 
         <div className="dashboard-stack">
           <PanelCard
-            eyebrow="Reply Queue"
-            title="Messages waiting on you"
-            subtitle="Stay on top of the conversations that still need a response."
+            eyebrow={t("dashboard.worker.replyQueue.eyebrow")}
+            title={t("dashboard.worker.replyQueue.title")}
+            subtitle={t("dashboard.worker.replyQueue.subtitle")}
             actionHref={inboxHref}
-            actionLabel="Go to Inbox"
+            actionLabel={t("dashboard.worker.replyQueue.action")}
           >
             {repliesNeeded.length === 0 ? (
               <div className="dashboard-empty-state">
-                <strong>No replies needed.</strong>
-                <p className="muted">Customer messages will appear here when they need attention.</p>
+                <strong>{t("dashboard.worker.replyQueue.emptyTitle")}</strong>
+                <p className="muted">{t("dashboard.worker.replyQueue.emptyBody")}</p>
                 <div className="portal-empty-actions">
                   <Link className="btn secondary" href={inboxHref}>
-                    Open Inbox
+                    {t("dashboard.worker.replyQueue.emptyAction")}
                   </Link>
                 </div>
               </div>
@@ -325,11 +347,13 @@ export default async function WorkerOpsDashboard({ scope, viewer }: WorkerOpsDas
                           {leadLabel}
                         </Link>
                         <div className="dashboard-list-meta">
-                          <StatusPill tone="warn">Needs reply</StatusPill>
+                          <StatusPill tone="warn">{t("dashboard.worker.replyQueue.needsReply")}</StatusPill>
                           <span>{lead.phoneE164}</span>
                         </div>
                       </div>
-                      <span className="dashboard-list-time">{lead.lastInboundAt ? formatDateLabel(lead.lastInboundAt) : "Now"}</span>
+                      <span className="dashboard-list-time">
+                        {lead.lastInboundAt ? formatDateLabel(lead.lastInboundAt, locale) : t("dashboard.worker.replyQueue.now")}
+                      </span>
                     </li>
                   );
                 })}

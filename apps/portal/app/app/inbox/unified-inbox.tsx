@@ -131,8 +131,8 @@ function getInboxCopy(locale: string): InboxCopy {
       },
       title: "Bandeja",
       subtitle: "Conversaciones, llamadas y seguimiento en una sola bandeja operativa.",
-      openJobFolder: "Abrir carpeta CRM",
-      openJob: "Abrir carpeta CRM",
+      openJobFolder: "Abrir lead",
+      openJob: "Abrir lead",
       activeThreads: "Conversaciones activas",
       activeThreadsBody: "Clientes con actividad reciente",
       unread: "No leidos",
@@ -187,9 +187,9 @@ function getInboxCopy(locale: string): InboxCopy {
       sendMessage: "Could not send message.",
     },
     title: "Inbox",
-    subtitle: "Conversations, calls, and follow-up in one operating inbox.",
-    openJobFolder: "Open CRM Folder",
-    openJob: "Open CRM Folder",
+    subtitle: "Leads, calls, and follow-up in one communication workspace.",
+    openJobFolder: "Open Lead",
+    openJob: "Open Lead",
     activeThreads: "Active threads",
     activeThreadsBody: "Customers with recent activity",
     unread: "Unread",
@@ -405,7 +405,7 @@ export default function UnifiedInbox({
       output.push({ kind: "event", id: event.id, event });
     }
     return output;
-  }, [events]);
+  }, [copy, events, locale]);
 
   function markConversationSeen(leadId: string, eventAt: string | null | undefined) {
     if (!eventAt) return;

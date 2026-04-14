@@ -389,6 +389,73 @@ export default function PremiumJobCalendar({
     void fetchEvents();
   }, [fetchEvents]);
 
+  const saveResizedEvent = useCallback(
+    async (target: CalendarEvent, requestedDuration: number) => {
+      const canEdit = canEditEvent({
+        internalUser,
+        currentUserId,
+        currentUserRole: currentUserCalendarRole,
+        event: target,
+      });
+      if (!canEdit || !canWrite) return;
+
+      const nextDuration = Math.max(slotMinutes, requestedDuration);
+      if (nextDuration === target.durationMinutes && !target.localPending) {
+        return;
+      }
+
+      const nextEndAt = addMinutes(new Date(target.startAt), nextDuration).toISOString();
+      setEvents((current) =>
+        current.map((item) =>
+          item.id === target.id
+            ? {
+                ...item,
+                durationMinutes: nextDuration,
+                endAt: nextEndAt,
+                localPending: true,
+              }
+            : item,
+        ),
+      );
+
+      const response = await fetch(`/api/calendar/events/${target.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          orgId,
+          endAt: nextEndAt,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; suggestedSlots?: string[]; event?: CalendarEvent }
+        | null;
+      if (response.status === 409 && payload?.suggestedSlots && payload.suggestedSlots.length > 0) {
+        setConflict({
+          eventId: target.id,
+          suggestedSlots: payload.suggestedSlots,
+          durationMinutes: nextDuration,
+        });
+        setEvents((current) =>
+          current.map((item) => (item.id === target.id ? { ...item, localPending: false } : item)),
+        );
+        return;
+      }
+
+      if (!response.ok || !payload?.ok || !payload.event) {
+        setError(payload?.error || "Couldn't save - retry.");
+        setFailedMutation({
+          kind: "resize",
+          eventId: target.id,
+          endAt: nextEndAt,
+        });
+        return;
+      }
+
+      mergeEventFromServer(payload.event);
+    },
+    [canWrite, currentUserCalendarRole, currentUserId, internalUser, orgId, slotMinutes],
+  );
+
   useEffect(() => {
     if (resizeState === null) return;
     const activeResize = resizeState;
@@ -760,70 +827,6 @@ export default function PremiumJobCalendar({
       ),
     );
     setFailedMutation(null);
-  }
-
-  async function saveResizedEvent(target: CalendarEvent, requestedDuration: number) {
-    const canEdit = canEditEvent({
-      internalUser,
-      currentUserId,
-      currentUserRole: currentUserCalendarRole,
-      event: target,
-    });
-    if (!canEdit || !canWrite) return;
-
-    const nextDuration = Math.max(slotMinutes, requestedDuration);
-    if (nextDuration === target.durationMinutes && !target.localPending) {
-      return;
-    }
-
-    const nextEndAt = addMinutes(new Date(target.startAt), nextDuration).toISOString();
-    setEvents((current) =>
-      current.map((item) =>
-        item.id === target.id
-          ? {
-              ...item,
-              durationMinutes: nextDuration,
-              endAt: nextEndAt,
-              localPending: true,
-            }
-          : item,
-      ),
-    );
-
-    const response = await fetch(`/api/calendar/events/${target.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        orgId,
-        endAt: nextEndAt,
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | { ok?: boolean; error?: string; suggestedSlots?: string[]; event?: CalendarEvent }
-      | null;
-    if (response.status === 409 && payload?.suggestedSlots && payload.suggestedSlots.length > 0) {
-      setConflict({
-        eventId: target.id,
-        suggestedSlots: payload.suggestedSlots,
-        durationMinutes: nextDuration,
-      });
-      setEvents((current) =>
-        current.map((item) => (item.id === target.id ? { ...item, localPending: false } : item)),
-      );
-      return;
-    }
-
-    if (!response.ok || !payload?.ok || !payload.event) {
-      setError(payload?.error || "Couldn't save - retry.");
-      setFailedMutation({
-        kind: "resize",
-        eventId: target.id,
-        endAt: nextEndAt,
-      });
-      return;
-    }
-
-    mergeEventFromServer(payload.event);
   }
 
   async function submitEventForm(event: React.FormEvent<HTMLFormElement>) {

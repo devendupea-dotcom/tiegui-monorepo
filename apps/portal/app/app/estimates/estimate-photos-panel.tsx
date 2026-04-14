@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
 type EstimatePhotosPanelProps = {
@@ -368,7 +369,15 @@ export default function EstimatePhotosPanel({
                 {photos.map((photo) => (
                   <figure key={photo.id} className="photo-item">
                     {photo.resolvedUrl ? (
-                      <img src={photo.resolvedUrl} alt={photo.caption || photo.fileName} loading="lazy" />
+                      <Image
+                        src={photo.resolvedUrl}
+                        alt={photo.caption || photo.fileName}
+                        width={800}
+                        height={600}
+                        loading="lazy"
+                        unoptimized
+                        loader={({ src }) => src}
+                      />
                     ) : (
                       <div className="muted" style={{ padding: 12 }}>Photo unavailable.</div>
                     )}

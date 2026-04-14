@@ -29,7 +29,7 @@ export type TwilioOrgRuntimeConfig = {
 type TwilioApiResult = {
   ok: boolean;
   status: number;
-  payload: any;
+  payload: Record<string, unknown> | null;
 };
 
 type ValidateConfigInput = {
@@ -51,6 +51,22 @@ export type ValidateConfigResult =
       error: string;
     };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readArray(record: Record<string, unknown> | null, key: string): unknown[] {
+  const value = record?.[key];
+  return Array.isArray(value) ? value : [];
+}
+
 async function twilioRequest(input: TwilioRequestInput): Promise<TwilioApiResult> {
   const baseUrl = input.baseUrl || `https://api.twilio.com/2010-04-01/Accounts/${input.accountSid}`;
   const response = await fetch(`${baseUrl}${input.path}`, {
@@ -62,7 +78,7 @@ async function twilioRequest(input: TwilioRequestInput): Promise<TwilioApiResult
     ...(input.formBody ? { body: input.formBody } : {}),
   });
 
-  const payload = await response.json().catch(() => null);
+  const payload = asRecord(await response.json().catch(() => null));
   return {
     ok: response.ok,
     status: response.status,
@@ -70,9 +86,10 @@ async function twilioRequest(input: TwilioRequestInput): Promise<TwilioApiResult
   };
 }
 
-function twilioErrorMessage(payload: any, status: number, fallback: string): string {
-  if (payload && typeof payload.message === "string" && payload.message.trim()) {
-    return payload.message.trim();
+function twilioErrorMessage(payload: Record<string, unknown> | null, status: number, fallback: string): string {
+  const message = readString(payload?.message);
+  if (message) {
+    return message;
   }
   return `${fallback} (${status})`;
 }
@@ -205,16 +222,16 @@ export async function validateTwilioOrgConfig(input: ValidateConfigInput): Promi
     };
   }
 
-  const incomingNumbers = Array.isArray(incoming.payload?.incoming_phone_numbers)
-    ? incoming.payload.incoming_phone_numbers
-    : [];
+  const incomingNumbers = readArray(incoming.payload, "incoming_phone_numbers");
 
-  const incomingNumber = incomingNumbers.find((item: any) => {
-    const candidate = typeof item?.phone_number === "string" ? normalizeTwilioPhone(item.phone_number) : null;
+  const incomingNumber = incomingNumbers.find((item) => {
+    const itemRecord = asRecord(item);
+    const candidate = normalizeTwilioPhone(readString(itemRecord?.phone_number) || "");
     return candidate === normalizedPhoneNumber;
   });
 
-  if (!incomingNumber || typeof incomingNumber.sid !== "string") {
+  const incomingNumberSid = readString(asRecord(incomingNumber)?.sid);
+  if (!incomingNumberSid) {
     return {
       ok: false,
       error: "Phone number was not found in this Twilio account.",
@@ -239,11 +256,8 @@ export async function validateTwilioOrgConfig(input: ValidateConfigInput): Promi
     };
   }
 
-  const assignedNumbers = Array.isArray(servicePhoneNumbers.payload?.phone_numbers)
-    ? servicePhoneNumbers.payload.phone_numbers
-    : [];
-
-  const isAssigned = assignedNumbers.some((item: any) => item?.sid === incomingNumber.sid);
+  const assignedNumbers = readArray(servicePhoneNumbers.payload, "phone_numbers");
+  const isAssigned = assignedNumbers.some((item) => readString(asRecord(item)?.sid) === incomingNumberSid);
   if (!isAssigned) {
     return {
       ok: false,
@@ -254,9 +268,8 @@ export async function validateTwilioOrgConfig(input: ValidateConfigInput): Promi
   return {
     ok: true,
     normalizedPhoneNumber,
-    serviceFriendlyName:
-      typeof service.payload?.friendly_name === "string" ? service.payload.friendly_name : null,
-    phoneNumberSid: incomingNumber.sid,
+    serviceFriendlyName: readString(service.payload?.friendly_name),
+    phoneNumberSid: incomingNumberSid,
   };
 }
 

@@ -109,10 +109,6 @@ type JobCostingListRecord = Prisma.JobGetPayload<{
   include: typeof jobCostingListInclude;
 }>;
 
-type JobCostingUpdatePayload = {
-  costingNotes?: unknown;
-};
-
 type JobCostingMaterialPayload = {
   materialId?: unknown;
   name?: unknown;

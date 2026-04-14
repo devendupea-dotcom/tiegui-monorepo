@@ -18,6 +18,7 @@ import {
   getInvoiceReadJobContext,
   normalizeInvoiceTerms,
 } from "@/lib/invoices";
+import { normalizeInvoiceTemplate } from "@/lib/invoice-template";
 import { buildInvoicePdfV2, type InvoicePdfImageSource } from "@/lib/invoice-pdf";
 import { getPhotoStorageRecord } from "@/lib/photo-storage";
 import { isR2Configured, requireR2 } from "@/lib/r2";
@@ -244,6 +245,7 @@ export async function GET(req: Request, { params }: RouteContext) {
             licenseNumber: true,
             ein: true,
             invoicePaymentInstructions: true,
+            invoiceTemplate: true,
             logoPhotoId: true,
           },
         },
@@ -387,6 +389,7 @@ export async function GET(req: Request, { params }: RouteContext) {
       invoiceNumber: invoice.invoiceNumber,
       status: invoice.status,
       terms,
+      template: normalizeInvoiceTemplate(invoice.org.invoiceTemplate),
       issueDate: invoice.issueDate,
       dueDate: invoice.dueDate,
       org: {

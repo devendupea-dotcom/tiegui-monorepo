@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { JobStatus } from "@prisma/client";
 import {
@@ -447,20 +447,27 @@ export default function OperationalJobActionPanel({
       : null;
   const inboundResponseAtLabel = formatDateTimeLabel(inboundResponseContext?.occurredAt);
 
-  function triggerStatusRefresh() {
+  const triggerStatusRefresh = useCallback(() => {
     lastAutoRefreshAtRef.current = Date.now();
     startRefreshTransition(() => {
       router.refresh();
     });
-  }
+  }, [router, startRefreshTransition]);
 
-  function maybeRefreshAfterReturn() {
+  const maybeRefreshAfterReturn = useCallback(() => {
     if (!shouldAutoRefreshOnReturn && !pendingCallHandoffRefreshRef.current) return;
     if (hasUnsavedLocalChanges || savingDispatch || savingJobStatus || sendingCustomerUpdate) return;
     if (Date.now() - lastAutoRefreshAtRef.current < 2500) return;
     pendingCallHandoffRefreshRef.current = false;
     triggerStatusRefresh();
-  }
+  }, [
+    hasUnsavedLocalChanges,
+    savingDispatch,
+    savingJobStatus,
+    sendingCustomerUpdate,
+    shouldAutoRefreshOnReturn,
+    triggerStatusRefresh,
+  ]);
 
   useEffect(() => {
     const previousIssueKey = previousIssueKeyRef.current;
@@ -549,7 +556,14 @@ export default function OperationalJobActionPanel({
       window.removeEventListener("pageshow", onPageShow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [hasUnsavedLocalChanges, savingDispatch, savingJobStatus, sendingCustomerUpdate, shouldAutoRefreshOnReturn]);
+  }, [
+    hasUnsavedLocalChanges,
+    maybeRefreshAfterReturn,
+    savingDispatch,
+    savingJobStatus,
+    sendingCustomerUpdate,
+    shouldAutoRefreshOnReturn,
+  ]);
 
   async function handleSaveDispatch() {
     if (!dispatchDirty || savingDispatch) return;

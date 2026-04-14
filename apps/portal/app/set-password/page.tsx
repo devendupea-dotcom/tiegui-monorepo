@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import { SessionProvider, signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
+type SessionUserWithPasswordGate = {
+  email?: string | null;
+  mustChangePassword?: boolean;
+};
+
 function SetPasswordScreen() {
   const router = useRouter();
   const { data: session, status: sessionStatus } = useSession();
@@ -14,7 +19,8 @@ function SetPasswordScreen() {
   const [nextPath, setNextPath] = useState("/");
   const [submitting, setSubmitting] = useState(false);
 
-  const mustChangePassword = Boolean((session?.user as any)?.mustChangePassword);
+  const sessionUser = session?.user as SessionUserWithPasswordGate | undefined;
+  const mustChangePassword = Boolean(sessionUser?.mustChangePassword);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -63,7 +69,7 @@ function SetPasswordScreen() {
       }
 
       // Re-issue a clean JWT (mustChangePassword=false) by signing in with the new password.
-      const email = session?.user?.email || "";
+      const email = sessionUser?.email || "";
       const signInResult = await signIn("credentials", {
         email,
         password,

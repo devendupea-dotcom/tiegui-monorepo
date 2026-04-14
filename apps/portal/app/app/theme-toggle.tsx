@@ -14,10 +14,16 @@ function resolveSystemTheme(): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function resolveTheme(preference: ThemePreference): "light" | "dark" {
+  return preference === "system" ? resolveSystemTheme() : preference;
+}
+
 function applyTheme(preference: ThemePreference) {
-  const resolved = preference === "system" ? resolveSystemTheme() : preference;
-  document.documentElement.dataset.theme = resolved;
-  document.documentElement.style.colorScheme = resolved;
+  const resolved = resolveTheme(preference);
+  const root = document.documentElement;
+  root.dataset.theme = resolved;
+  root.style.colorScheme = resolved;
+  root.classList.toggle("dark", resolved === "dark");
 }
 
 export default function ThemeToggle() {

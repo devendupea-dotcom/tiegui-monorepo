@@ -34,8 +34,18 @@ export const metadata: Metadata = {
 const THEME_INIT_SCRIPT = `
 (() => {
   try {
-    document.documentElement.dataset.theme = "dark";
-    document.documentElement.style.colorScheme = "dark";
+    const storageKey = "tiegui-theme";
+    const stored = window.localStorage.getItem(storageKey);
+    const preference =
+      stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+    const resolved =
+      preference === "system"
+        ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+        : preference;
+    const root = document.documentElement;
+    root.dataset.theme = resolved;
+    root.style.colorScheme = resolved;
+    root.classList.toggle("dark", resolved === "dark");
   } catch (_error) {}
 })();
 `;
@@ -46,7 +56,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning data-theme="dark">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>

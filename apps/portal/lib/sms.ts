@@ -1,3 +1,6 @@
+// TODO: Opt-out model currently uses lead.status === "DNC".
+// Future: migrate to dedicated smsOptedOut boolean on contact record
+//         for finer-grained control independent of lead status.
 import { Prisma, type MessageStatus } from "@prisma/client";
 import { normalizeEnvValue } from "./env";
 import { prisma } from "@/lib/prisma";

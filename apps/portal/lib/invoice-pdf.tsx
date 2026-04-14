@@ -19,6 +19,7 @@ import {
   taxRateToPercent,
   toMoneyDecimal,
 } from "@/lib/invoices";
+import type { InvoiceTemplate } from "@/lib/invoice-template";
 
 export type InvoicePdfImageSource = string | { data: Buffer; format: "png" | "jpg" };
 
@@ -58,6 +59,7 @@ export type InvoicePdfV2Input = {
   invoiceNumber: string;
   status: BillingInvoiceStatus;
   terms?: InvoiceTerms | null;
+  template: InvoiceTemplate;
   issueDate: Date;
   dueDate: Date;
   org: PdfOrgBranding;
@@ -219,14 +221,12 @@ function splitIntoPages(items: PdfLineItem[]): PdfLineItem[][] {
   const pages: PdfLineItem[][] = [];
   let current: PdfLineItem[] = [];
   let remaining = pageItemCapacity({ firstPage: true });
-  let firstPage = true;
 
   for (const item of items) {
     const itemHeight = item.estimatedHeight;
     if (current.length > 0 && itemHeight > remaining) {
       pages.push(current);
       current = [];
-      firstPage = false;
       remaining = pageItemCapacity({ firstPage: false });
     }
 
@@ -281,6 +281,7 @@ function ensureLastPageFits(input: {
 }
 
 const styles = StyleSheet.create({
+  noop: {},
   page: {
     padding: PAGE_MARGIN,
     fontSize: BASE_FONT,
@@ -292,6 +293,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 16,
+  },
+  headerPanel: {
+    padding: 0,
+  },
+  headerPanelBold: {
+    backgroundColor: "#111827",
+    borderRadius: 18,
+    padding: 18,
+    gap: 14,
+  },
+  headerPanelMinimal: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderStyle: "solid",
   },
   headerLeft: {
     flexGrow: 1,
@@ -319,8 +337,17 @@ const styles = StyleSheet.create({
     fontWeight: 700,
     letterSpacing: 0.4,
   },
+  invoiceTitleBold: {
+    color: "#FFFFFF",
+  },
   muted: {
     color: "#6B7280",
+  },
+  mutedInverse: {
+    color: "#E5E7EB",
+  },
+  strongInverse: {
+    color: "#FFFFFF",
   },
   divider: {
     marginTop: 14,
@@ -328,15 +355,72 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: "#E5E7EB",
   },
+  dividerMinimal: {
+    backgroundColor: "#D6DEE8",
+  },
   billToWrap: {
     marginBottom: 14,
     gap: 4,
+  },
+  billToCard: {
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderStyle: "solid",
+    backgroundColor: "#FAFBFC",
+  },
+  billToCardBold: {
+    borderColor: "#FED7AA",
+    backgroundColor: "#FFF7ED",
+  },
+  billToCardMinimal: {
+    borderColor: "#E5E7EB",
+    backgroundColor: "#FCFCFD",
   },
   label: {
     fontSize: 10,
     fontWeight: 600,
     color: "#111111",
     marginBottom: 2,
+  },
+  labelInverse: {
+    color: "#F9FAFB",
+  },
+  heroRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    gap: 16,
+  },
+  heroCopy: {
+    gap: 4,
+    maxWidth: 320,
+  },
+  heroTitle: {
+    fontSize: 22,
+    fontWeight: 700,
+    color: "#FFFFFF",
+    lineHeight: 1.15,
+  },
+  heroTotalCard: {
+    minWidth: 150,
+    paddingTop: 10,
+    paddingBottom: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: "#F97316",
+    gap: 3,
+  },
+  heroTotalLabel: {
+    fontSize: 9,
+    textTransform: "uppercase",
+    color: "#FED7AA",
+  },
+  heroTotalValue: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: "#FFFFFF",
   },
   table: {
     width: "100%",
@@ -349,10 +433,25 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
     borderBottomStyle: "solid",
   },
+  tableHeaderBold: {
+    backgroundColor: "#FFF7ED",
+    borderBottomColor: "#FDBA74",
+    paddingTop: 8,
+    paddingHorizontal: 8,
+  },
+  tableHeaderMinimal: {
+    borderBottomColor: "#E5E7EB",
+  },
   th: {
     fontSize: 10,
     fontWeight: 600,
     color: "#111111",
+  },
+  thBold: {
+    color: "#9A3412",
+  },
+  thMinimal: {
+    color: "#475467",
   },
   row: {
     flexDirection: "row",
@@ -361,6 +460,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#F1F5F9",
     borderBottomStyle: "solid",
+  },
+  rowBold: {
+    borderBottomColor: "#FFEDD5",
+  },
+  rowMinimal: {
+    borderBottomColor: "#F2F4F7",
   },
   colDesc: {
     flexGrow: 1,
@@ -384,6 +489,21 @@ const styles = StyleSheet.create({
     alignSelf: "flex-end",
     width: 240,
     gap: 6,
+  },
+  totalsWrapBold: {
+    width: 250,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "#111827",
+  },
+  totalsWrapMinimal: {
+    width: 250,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderStyle: "solid",
   },
   totalsRow: {
     flexDirection: "row",
@@ -410,9 +530,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 700,
   },
+  totalDueValueInverse: {
+    color: "#FFFFFF",
+  },
   notesWrap: {
     marginTop: 16,
     gap: 8,
+  },
+  notesWrapCard: {
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderStyle: "solid",
+    backgroundColor: "#FAFBFC",
+  },
+  notesWrapMinimal: {
+    backgroundColor: "#FCFCFD",
   },
   watermark: {
     position: "absolute",
@@ -433,10 +567,66 @@ const styles = StyleSheet.create({
     bottom: PAGE_MARGIN - 10,
     fontSize: 9,
     color: "#6B7280",
-    flexDirection: "row",
-    justifyContent: "space-between",
+    textAlign: "center",
   },
 });
+
+function resolveTemplateStyles(template: InvoiceTemplate) {
+  switch (template) {
+    case "bold":
+      return {
+        headerPanel: styles.headerPanelBold,
+        title: styles.invoiceTitleBold,
+        muted: styles.mutedInverse,
+        label: styles.labelInverse,
+        value: styles.strongInverse,
+        billToCard: styles.billToCardBold,
+        tableHeader: styles.tableHeaderBold,
+        tableHeaderText: styles.thBold,
+        row: styles.rowBold,
+        totalsWrap: styles.totalsWrapBold,
+        totalDueValue: styles.totalDueValueInverse,
+        notesCard: styles.billToCardBold,
+        divider: styles.divider,
+        showHero: true,
+      };
+    case "minimal":
+      return {
+        headerPanel: styles.headerPanelMinimal,
+        title: styles.noop,
+        muted: styles.muted,
+        label: styles.label,
+        value: styles.noop,
+        billToCard: styles.billToCardMinimal,
+        tableHeader: styles.tableHeaderMinimal,
+        tableHeaderText: styles.thMinimal,
+        row: styles.rowMinimal,
+        totalsWrap: styles.totalsWrapMinimal,
+        totalDueValue: styles.noop,
+        notesCard: styles.notesWrapMinimal,
+        divider: styles.dividerMinimal,
+        showHero: false,
+      };
+    case "classic":
+    default:
+      return {
+        headerPanel: styles.headerPanel,
+        title: styles.noop,
+        muted: styles.muted,
+        label: styles.label,
+        value: styles.noop,
+        billToCard: styles.billToCard,
+        tableHeader: styles.noop,
+        tableHeaderText: styles.noop,
+        row: styles.noop,
+        totalsWrap: styles.noop,
+        totalDueValue: styles.noop,
+        notesCard: styles.notesWrapCard,
+        divider: styles.divider,
+        showHero: false,
+      };
+  }
+}
 
 function InvoicePdfPage(props: {
   pageIndex: number;
@@ -448,6 +638,7 @@ function InvoicePdfPage(props: {
   input: InvoicePdfV2Input;
 }) {
   const { input } = props;
+  const templateStyles = resolveTemplateStyles(input.template);
   const orgName = input.org.legalName || input.org.name;
   const orgAddress = formatOrgAddress(input.org);
   const contactLine = joinNonEmpty(
@@ -460,76 +651,97 @@ function InvoicePdfPage(props: {
 
   const paidLabel = props.paid ? "PAID" : null;
   const showTax = toMoneyDecimal(input.taxAmount).gt(0) || toMoneyDecimal(input.taxRate).gt(0);
+  const showAmountPaid = toMoneyDecimal(input.amountPaid).gt(0);
+  const totalDue = toMoneyDecimal(input.balanceDue).gt(0) ? input.balanceDue : input.total;
+  const footerText = joinNonEmpty(
+    ["Thank you for your business", orgName, input.org.phone ? input.org.phone.trim() : null],
+    " · ",
+  );
 
   return (
     <Page size={PAGE_SIZE} style={styles.page}>
       {paidLabel ? <Text style={styles.watermark}>{paidLabel}</Text> : null}
 
-      <View style={styles.headerRow}>
-        <View style={styles.headerLeft}>
-          {input.org.logo ? <Image style={styles.logo} src={input.org.logo} /> : null}
-          <Text style={styles.orgName}>{orgName}</Text>
-          {orgAddress ? <Text style={styles.muted}>{orgAddress}</Text> : null}
-          {contactLine ? <Text style={styles.muted}>{contactLine}</Text> : null}
-          {input.org.website ? <Text style={styles.muted}>{input.org.website}</Text> : null}
-          {input.org.licenseNumber ? (
-            <Text style={styles.muted}>License: {input.org.licenseNumber}</Text>
-          ) : null}
-          {input.org.ein ? <Text style={styles.muted}>EIN: {input.org.ein}</Text> : null}
+      <View style={[styles.headerPanel, templateStyles.headerPanel]}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            {input.org.logo ? <Image style={styles.logo} src={input.org.logo} /> : null}
+            <Text style={[styles.orgName, templateStyles.value]}>{orgName}</Text>
+            {orgAddress ? <Text style={[styles.muted, templateStyles.muted]}>{orgAddress}</Text> : null}
+            {contactLine ? <Text style={[styles.muted, templateStyles.muted]}>{contactLine}</Text> : null}
+            {input.org.website ? <Text style={[styles.muted, templateStyles.muted]}>{input.org.website}</Text> : null}
+            {input.org.licenseNumber ? (
+              <Text style={[styles.muted, templateStyles.muted]}>License: {input.org.licenseNumber}</Text>
+            ) : null}
+            {input.org.ein ? <Text style={[styles.muted, templateStyles.muted]}>EIN: {input.org.ein}</Text> : null}
+          </View>
+
+          <View style={styles.headerRight}>
+            <Text style={[styles.invoiceTitle, templateStyles.title]}>INVOICE</Text>
+            <View style={styles.totalsRow}>
+              <Text style={[styles.label, templateStyles.label]}>Invoice #</Text>
+              <Text style={templateStyles.value}>{input.invoiceNumber}</Text>
+            </View>
+            <View style={styles.totalsRow}>
+              <Text style={[styles.muted, templateStyles.muted]}>Issue Date</Text>
+              <Text style={templateStyles.value}>{formatDate(input.issueDate)}</Text>
+            </View>
+            <View style={styles.totalsRow}>
+              <Text style={[styles.muted, templateStyles.muted]}>Due Date</Text>
+              <Text style={templateStyles.value}>{formatDate(input.dueDate)}</Text>
+            </View>
+            <View style={styles.totalsRow}>
+              <Text style={[styles.muted, templateStyles.muted]}>Terms</Text>
+              <Text style={templateStyles.value}>{formatTerms(input.terms)}</Text>
+            </View>
+          </View>
         </View>
 
-        <View style={styles.headerRight}>
-          <Text style={styles.invoiceTitle}>INVOICE</Text>
-          <View style={styles.totalsRow}>
-            <Text style={styles.label}>Invoice #</Text>
-            <Text style={{ fontWeight: 700 }}>{input.invoiceNumber}</Text>
+        {templateStyles.showHero && input.jobLabel ? (
+          <View style={styles.heroRow}>
+            <View style={styles.heroCopy}>
+              <Text style={[styles.label, styles.labelInverse]}>Project</Text>
+              <Text style={styles.heroTitle}>{input.jobLabel}</Text>
+            </View>
+            <View style={styles.heroTotalCard}>
+              <Text style={styles.heroTotalLabel}>Total Due</Text>
+              <Text style={styles.heroTotalValue}>{formatCurrency(totalDue)}</Text>
+            </View>
           </View>
-          <View style={styles.totalsRow}>
-            <Text style={styles.muted}>Invoice Date</Text>
-            <Text>{formatDate(input.issueDate)}</Text>
-          </View>
-          <View style={styles.totalsRow}>
-            <Text style={styles.muted}>Due Date</Text>
-            <Text>{formatDate(input.dueDate)}</Text>
-          </View>
-          <View style={styles.totalsRow}>
-            <Text style={styles.muted}>Terms</Text>
-            <Text>{formatTerms(input.terms)}</Text>
-          </View>
-        </View>
+        ) : null}
       </View>
 
-      <View style={styles.divider} />
+      <View style={[styles.divider, templateStyles.divider]} />
 
       {props.showBillTo ? (
-        <View style={styles.billToWrap}>
+        <View style={[styles.billToWrap, styles.billToCard, templateStyles.billToCard]}>
           <Text style={styles.label}>Bill To</Text>
           <Text style={{ fontWeight: 700 }}>{input.customer.name}</Text>
           {input.customer.addressLine ? <Text style={styles.muted}>{input.customer.addressLine}</Text> : null}
-          {input.jobLabel ? <Text style={styles.muted}>Job: {input.jobLabel}</Text> : null}
+          {!templateStyles.showHero && input.jobLabel ? <Text style={styles.muted}>Job: {input.jobLabel}</Text> : null}
           {input.customer.phoneE164 ? <Text style={styles.muted}>Phone: {input.customer.phoneE164}</Text> : null}
           {input.customer.email ? <Text style={styles.muted}>Email: {input.customer.email}</Text> : null}
         </View>
       ) : null}
 
       <View style={styles.table}>
-        <View style={styles.tableHeader}>
+        <View style={[styles.tableHeader, templateStyles.tableHeader]}>
           <View style={styles.colDesc}>
-            <Text style={styles.th}>Description</Text>
+            <Text style={[styles.th, templateStyles.tableHeaderText]}>Description</Text>
           </View>
           <View style={styles.colQty}>
-            <Text style={[styles.th, styles.textRight]}>Qty</Text>
+            <Text style={[styles.th, templateStyles.tableHeaderText, styles.textRight]}>Qty</Text>
           </View>
           <View style={styles.colUnit}>
-            <Text style={[styles.th, styles.textRight]}>Unit</Text>
+            <Text style={[styles.th, templateStyles.tableHeaderText, styles.textRight]}>Unit Price</Text>
           </View>
           <View style={styles.colAmount}>
-            <Text style={[styles.th, styles.textRight]}>Amount</Text>
+            <Text style={[styles.th, templateStyles.tableHeaderText, styles.textRight]}>Subtotal</Text>
           </View>
         </View>
 
         {props.lineItems.map((item, index) => (
-          <View key={`${props.pageIndex}-${index}`} style={styles.row} wrap={false}>
+          <View key={`${props.pageIndex}-${index}`} style={[styles.row, templateStyles.row]} wrap={false}>
             <View style={styles.colDesc}>
               <Text>{item.description}</Text>
             </View>
@@ -548,33 +760,35 @@ function InvoicePdfPage(props: {
 
       {props.showTotals ? (
         <>
-          <View style={styles.totalsWrap}>
+          <View style={[styles.totalsWrap, templateStyles.totalsWrap]}>
             <View style={styles.totalsRow}>
-              <Text style={styles.totalsLabel}>Subtotal</Text>
-              <Text style={styles.totalsValue}>{formatCurrency(input.subtotal)}</Text>
+              <Text style={[styles.totalsLabel, templateStyles.value]}>Subtotal</Text>
+              <Text style={[styles.totalsValue, templateStyles.value]}>{formatCurrency(input.subtotal)}</Text>
             </View>
             {showTax ? (
               <View style={styles.totalsRow}>
-                <Text style={styles.totalsLabel}>Tax ({taxRateToPercent(input.taxRate)}%)</Text>
-                <Text style={styles.totalsValue}>{formatCurrency(input.taxAmount)}</Text>
+                <Text style={[styles.totalsLabel, templateStyles.value]}>Tax ({taxRateToPercent(input.taxRate)}%)</Text>
+                <Text style={[styles.totalsValue, templateStyles.value]}>{formatCurrency(input.taxAmount)}</Text>
+              </View>
+            ) : null}
+            {showAmountPaid ? (
+              <View style={styles.totalsRow}>
+                <Text style={[styles.totalsLabel, templateStyles.value]}>Paid to Date</Text>
+                <Text style={[styles.totalsValue, templateStyles.value]}>{formatCurrency(input.amountPaid)}</Text>
               </View>
             ) : null}
             <View style={styles.totalsRow}>
-              <Text style={styles.totalsLabel}>Total</Text>
-              <Text style={styles.totalsValue}>{formatCurrency(input.total)}</Text>
-            </View>
-            <View style={styles.totalsRow}>
-              <Text style={styles.totalsLabel}>Amount Paid</Text>
-              <Text style={styles.totalsValue}>{formatCurrency(input.amountPaid)}</Text>
+              <Text style={[styles.totalsLabel, templateStyles.value]}>Total</Text>
+              <Text style={[styles.totalsValue, templateStyles.value]}>{formatCurrency(input.total)}</Text>
             </View>
             <View style={[styles.totalsRow, styles.totalDueRow]}>
-              <Text style={styles.totalDueLabel}>Balance Due</Text>
-              <Text style={styles.totalDueValue}>{formatCurrency(input.balanceDue)}</Text>
+              <Text style={[styles.totalDueLabel, templateStyles.value]}>Total Due</Text>
+              <Text style={[styles.totalDueValue, templateStyles.totalDueValue]}>{formatCurrency(totalDue)}</Text>
             </View>
           </View>
 
           {input.notes?.trim() || input.org.invoicePaymentInstructions?.trim() ? (
-            <View style={styles.notesWrap}>
+            <View style={[styles.notesWrap, styles.notesWrapCard, templateStyles.notesCard]}>
               {input.notes?.trim() ? (
                 <View>
                   <Text style={styles.label}>Notes</Text>
@@ -583,7 +797,7 @@ function InvoicePdfPage(props: {
               ) : null}
               {input.org.invoicePaymentInstructions?.trim() ? (
                 <View>
-                  <Text style={styles.label}>Payment Instructions</Text>
+                  <Text style={styles.label}>Payment Terms</Text>
                   <Text style={styles.muted}>{input.org.invoicePaymentInstructions.trim()}</Text>
                 </View>
               ) : null}
@@ -592,12 +806,9 @@ function InvoicePdfPage(props: {
         </>
       ) : null}
 
-      <View style={styles.footer} fixed>
-        <Text>
-          {props.pageIndex + 1} / {props.totalPages}
-        </Text>
-        <Text>{orgName}</Text>
-      </View>
+      <Text style={styles.footer} fixed>
+        {footerText || `Thank you for your business · ${orgName}`}
+      </Text>
     </Page>
   );
 }

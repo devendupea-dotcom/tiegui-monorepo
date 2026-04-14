@@ -18,11 +18,11 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  const role = (token as any).role;
+  const role = token.role;
   const isInternal = role === "INTERNAL";
 
   // Force password reset
-  if ((token as any).mustChangePassword && pathname !== "/set-password") {
+  if (token.mustChangePassword && pathname !== "/set-password") {
     return NextResponse.redirect(new URL("/set-password", req.url));
   }
 

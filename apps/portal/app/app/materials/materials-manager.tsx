@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   calculateMaterialSellPrice,
   materialUnitSuggestions,
@@ -108,7 +108,7 @@ export default function MaterialsManager({
     }, {});
   }, [materials]);
 
-  function buildQuery() {
+  const buildQuery = useCallback(() => {
     const params = new URLSearchParams();
     if (internalUser) {
       params.set("orgId", orgId);
@@ -124,7 +124,7 @@ export default function MaterialsManager({
     }
     const query = params.toString();
     return query ? `?${query}` : "";
-  }
+  }, [activeFilter, categoryFilter, deferredSearch, internalUser, orgId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,7 +162,7 @@ export default function MaterialsManager({
     return () => {
       cancelled = true;
     };
-  }, [orgId, internalUser, deferredSearch, categoryFilter, activeFilter, refreshToken]);
+  }, [buildQuery, refreshToken]);
 
   function resetEditor() {
     setEditingId(null);

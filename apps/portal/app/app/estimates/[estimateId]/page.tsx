@@ -45,6 +45,7 @@ export default async function EstimateDetailPage({
       canManage={canManage}
       initialEstimateId={params.estimateId}
       initialCreate={false}
+      initialLeadId={null}
       leadOptions={references.leads}
       materials={references.materials}
     />

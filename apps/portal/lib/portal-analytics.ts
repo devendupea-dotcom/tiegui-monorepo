@@ -1,7 +1,7 @@
 import "server-only";
 
 import { addDays, addMonths, startOfDay, startOfMonth, startOfWeek, subMonths } from "date-fns";
-import type { CalendarAccessRole, LeadSourceChannel, MarketingChannel, Prisma as PrismaNamespace } from "@prisma/client";
+import type { CalendarAccessRole, MarketingChannel, Prisma as PrismaNamespace } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import {
   DEFAULT_CALENDAR_TIMEZONE,

@@ -1356,7 +1356,7 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
     },
   });
 
-  let scanned = dueStates.length;
+  const scanned = dueStates.length;
   let sent = 0;
   let skipped = 0;
   let failed = 0;

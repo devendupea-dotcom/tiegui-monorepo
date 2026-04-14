@@ -4,7 +4,6 @@ import { notFound, redirect } from "next/navigation";
 import type { BillingInvoiceStatus, InvoicePaymentMethod, InvoiceTerms } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
-  billingInvoiceStatusOptions,
   buildInvoiceWorkerLeadAccessWhere,
   computeLineTotal,
   formatCurrency,
@@ -21,10 +20,14 @@ import {
   taxRateToPercent,
   toMoneyDecimal,
 } from "@/lib/invoices";
+import { normalizeInvoiceTemplate } from "@/lib/invoice-template";
+import { resolveOrganizationLogoUrl } from "@/lib/organization-logo";
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
+import SendInvoiceModal from "@/components/invoices/send-invoice-modal";
 import { formatDateTime, formatLabel } from "@/lib/hq";
 import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
 import { requireAppPageViewer } from "../../_lib/portal-viewer";
+import InvoicePreview from "../../_components/invoice-preview";
 
 export const dynamic = "force-dynamic";
 
@@ -43,15 +46,6 @@ function appendQuery(path: string, key: string, value: string): string {
 function toDateInputValue(value: Date | null | undefined): string {
   if (!value) return "";
   return value.toISOString().slice(0, 10);
-}
-
-function formatDateOnly(value: Date | null | undefined): string {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-  }).format(value);
 }
 
 function parseDateInput(value: string): Date | null {
@@ -90,32 +84,40 @@ function isPaymentMethod(value: string): value is InvoicePaymentMethod {
   return invoicePaymentMethodOptions.some((option) => option === value);
 }
 
-function formatOrgAddress(input: {
-  addressLine1: string | null;
-  addressLine2: string | null;
-  city: string | null;
-  state: string | null;
-  zip: string | null;
-}): string | null {
-  const line1 = input.addressLine1?.trim() || "";
-  const line2 = input.addressLine2?.trim() || "";
-  const line3 = [input.city, input.state, input.zip]
-    .map((part) => (part || "").trim())
-    .filter(Boolean)
-    .join(", ")
-    .replace(", ,", ",");
-
-  const lines = [line1, line2, line3].filter(Boolean);
-  return lines.length > 0 ? lines.join(" • ") : null;
+function buildAddressLines(input: {
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+}): string[] {
+  const locality = [input.city, input.state, input.zip].map((part) => (part || "").trim()).filter(Boolean).join(", ");
+  return [input.addressLine1, input.addressLine2, locality].map((part) => (part || "").trim()).filter(Boolean);
 }
 
-function formatOrgContact(input: {
-  phone: string | null;
-  email: string | null;
-  website: string | null;
-}): string | null {
-  const parts = [input.phone, input.email, input.website].map((part) => (part || "").trim()).filter(Boolean);
-  return parts.length > 0 ? parts.join(" • ") : null;
+function isPastToday(value: Date, today = new Date()): boolean {
+  return toDateInputValue(value) < toDateInputValue(today);
+}
+
+function formatInvoiceSentDate(value: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(value);
+}
+
+function resolveInvoiceDisplayStatus(input: {
+  dueDate: Date;
+  hasBalance: boolean;
+  isPaid: boolean;
+  status: BillingInvoiceStatus;
+}): BillingInvoiceStatus {
+  if (!input.isPaid && input.hasBalance && isPastToday(input.dueDate)) {
+    return "OVERDUE";
+  }
+
+  return input.status;
 }
 
 function revalidateInvoiceMutationPaths(input: {
@@ -513,11 +515,11 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
       orgId: scope.orgId,
     },
     include: {
-      org: {
-        select: {
-          id: true,
-          name: true,
-          legalName: true,
+        org: {
+          select: {
+            id: true,
+            name: true,
+            legalName: true,
           addressLine1: true,
           addressLine2: true,
           city: true,
@@ -525,12 +527,14 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
           zip: true,
           phone: true,
           email: true,
-          website: true,
-          licenseNumber: true,
-          ein: true,
-          invoicePaymentInstructions: true,
+            website: true,
+            licenseNumber: true,
+            ein: true,
+            invoicePaymentInstructions: true,
+            invoiceTemplate: true,
+            logoPhotoId: true,
+          },
         },
-      },
       customer: {
         select: {
           id: true,
@@ -611,6 +615,8 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
 
   const invoicePath = withOrgQuery(`/app/invoices/${invoice.id}`, scope.orgId, scope.internalUser);
   const invoicesPath = withOrgQuery("/app/invoices", scope.orgId, scope.internalUser);
+  const pdfDownloadPath = `/api/invoices/${invoice.id}/pdf`;
+  const pdfPreviewPath = `${pdfDownloadPath}?inline=1`;
   const jobContext = getInvoiceReadJobContext({
     legacyLeadId: invoice.legacyLeadId,
     sourceJobId: invoice.sourceJobId,
@@ -623,25 +629,58 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
   const crmJobPath = jobContext.crmLeadId
     ? withOrgQuery(`/app/jobs/${jobContext.crmLeadId}?tab=invoice`, scope.orgId, scope.internalUser)
     : null;
-  const pdfPath = `/api/invoices/${invoice.id}/pdf`;
   const paymentDefault = Number(toMoneyDecimal(invoice.balanceDue).toString()).toFixed(2);
-  const orgDisplayName = invoice.org.legalName?.trim() || invoice.org.name;
-  const orgAddress = formatOrgAddress({
-    addressLine1: invoice.org.addressLine1,
-    addressLine2: invoice.org.addressLine2,
-    city: invoice.org.city,
-    state: invoice.org.state,
-    zip: invoice.org.zip,
-  });
-  const orgContact = formatOrgContact({
-    phone: invoice.org.phone,
-    email: invoice.org.email,
-    website: invoice.org.website,
-  });
   const hasTax = invoice.taxAmount.gt(0) || invoice.taxRate.gt(0);
   const isPaidInvoice = shouldRenderInvoicePaidIndicator({ status: invoice.status });
+  const displayStatus = resolveInvoiceDisplayStatus({
+    status: invoice.status,
+    dueDate: invoice.dueDate,
+    isPaid: isPaidInvoice,
+    hasBalance: invoice.balanceDue.gt(0),
+  });
   const balanceBadgeClass = isPaidInvoice ? "status-paid" : invoice.balanceDue.gt(0) ? "status-overdue" : "";
+  const sentAtLabel = invoice.sentAt ? formatInvoiceSentDate(invoice.sentAt) : null;
   const jobLabel = jobContext.primaryLabel;
+  const logoUrl = await resolveOrganizationLogoUrl({
+    orgId: invoice.org.id,
+    logoPhotoId: invoice.org.logoPhotoId,
+  });
+  const previewData = {
+    invoiceNumber: formatInvoiceNumber(invoice.invoiceNumber),
+    issueDate: invoice.issueDate.toISOString(),
+    dueDate: invoice.dueDate.toISOString(),
+    status: invoice.status,
+    jobTitle: jobLabel,
+    termsLabel: formatInvoiceTermsLabel(invoice.terms),
+    business: {
+      name: invoice.org.legalName?.trim() || invoice.org.name,
+      logoUrl,
+      addressLines: buildAddressLines({
+        addressLine1: invoice.org.addressLine1,
+        addressLine2: invoice.org.addressLine2,
+        city: invoice.org.city,
+        state: invoice.org.state,
+        zip: invoice.org.zip,
+      }),
+      phone: invoice.org.phone,
+    },
+    customer: {
+      name: invoice.customer.name,
+      addressLines: [invoice.customer.addressLine || ""].filter(Boolean),
+    },
+    lineItems: invoice.lineItems.map((lineItem) => ({
+      description: lineItem.description,
+      quantity: lineItem.quantity.toString(),
+      unitPrice: lineItem.unitPrice.toString(),
+      subtotal: lineItem.lineTotal.toString(),
+    })),
+    subtotal: invoice.subtotal.toString(),
+    taxLabel: hasTax ? `Tax (${taxRateToPercent(invoice.taxRate)}%)` : null,
+    taxAmount: hasTax ? invoice.taxAmount.toString() : null,
+    total: invoice.total.toString(),
+    notes: invoice.notes,
+    paymentTerms: invoice.org.invoicePaymentInstructions,
+  };
 
   return (
     <div className="invoice-detail-shell">
@@ -656,12 +695,15 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
               {invoice.customer.name} • {invoice.org.name}
             </p>
             <div className="quick-meta">
-              <span className={`badge status-${invoice.status.toLowerCase()}`}>{formatLabel(invoice.status)}</span>
+              <span className={`badge invoice-status-badge status-${displayStatus.toLowerCase()}`}>
+                {formatLabel(displayStatus)}
+              </span>
               <span className="badge">Total {formatCurrency(invoice.total)}</span>
               <span className={`badge${balanceBadgeClass ? ` ${balanceBadgeClass}` : ""}`}>
                 Balance {formatCurrency(invoice.balanceDue)}
               </span>
             </div>
+            {sentAtLabel ? <p className="invoice-sent-meta">Sent on {sentAtLabel}</p> : null}
           </div>
           <div className="quick-links">
             {operationalJobPath ? (
@@ -671,17 +713,34 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
             ) : null}
             {!operationalJobPath && crmJobPath ? (
               <Link className="btn secondary" href={crmJobPath}>
-                Open CRM Folder
+                Open Lead
               </Link>
             ) : null}
             {operationalJobPath && crmJobPath ? (
               <Link className="btn secondary" href={crmJobPath}>
-                Open CRM Folder
+                Open Lead
               </Link>
             ) : null}
-            <a className="btn secondary" href={pdfPath}>
+            <a className="btn secondary" href={pdfDownloadPath}>
               Download PDF
             </a>
+            <SendInvoiceModal
+              businessName={invoice.org.legalName?.trim() || invoice.org.name}
+              customerEmail={invoice.customer.email}
+              customerName={invoice.customer.name}
+              invoiceNumber={formatInvoiceNumber(invoice.invoiceNumber)}
+              previewHref={pdfPreviewPath}
+              sendHref={`/api/invoices/${invoice.id}/send`}
+            />
+            <form action={markInvoicePaidAction}>
+              <input type="hidden" name="invoiceId" value={invoice.id} />
+              <input type="hidden" name="orgId" value={scope.orgId} />
+              <input type="hidden" name="returnPath" value={invoicePath} />
+              <input type="hidden" name="note" value="Marked paid from invoice detail." />
+              <button className="btn secondary" type="submit" disabled={invoice.balanceDue.lte(0)}>
+                Mark as Paid
+              </button>
+            </form>
           </div>
         </div>
       </section>
@@ -690,140 +749,20 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
         <div className="invoice-header-row">
           <div className="stack-cell">
             <h2>Client-Ready Invoice</h2>
-            <p className="muted">Official layout preview before downloading the PDF.</p>
+            <p className="muted">Official layout preview using your saved invoice template preference.</p>
           </div>
           <div className="quick-links">
-            <a className="btn secondary" href={`${pdfPath}?inline=1`} target="_blank" rel="noreferrer">
-              Open PDF
+            <a className="btn secondary" href={pdfPreviewPath} target="_blank" rel="noreferrer">
+              Preview PDF
             </a>
-            <a className="btn primary" href={pdfPath}>
+            <a className="btn primary" href={pdfDownloadPath}>
               Download PDF
             </a>
           </div>
         </div>
 
         <div className="invoice-sheet-wrap">
-          <article className={`invoice-sheet ${isPaidInvoice ? "paid" : ""}`}>
-            {isPaidInvoice ? <div className="invoice-sheet-watermark">PAID</div> : null}
-
-            <header className="invoice-sheet-header">
-              <div className="invoice-sheet-org">
-                <h3>{orgDisplayName}</h3>
-                {orgAddress ? <p>{orgAddress}</p> : null}
-                {orgContact ? <p>{orgContact}</p> : null}
-                {invoice.org.licenseNumber ? <p>License: {invoice.org.licenseNumber}</p> : null}
-                {invoice.org.ein ? <p>EIN: {invoice.org.ein}</p> : null}
-              </div>
-
-              <div className="invoice-sheet-meta">
-                <p className="invoice-sheet-title">INVOICE</p>
-                <dl>
-                  <div>
-                    <dt>Invoice #</dt>
-                    <dd>{formatInvoiceNumber(invoice.invoiceNumber)}</dd>
-                  </div>
-                  <div>
-                    <dt>Invoice Date</dt>
-                    <dd>{formatDateOnly(invoice.issueDate)}</dd>
-                  </div>
-                  <div>
-                    <dt>Due Date</dt>
-                    <dd>{formatDateOnly(invoice.dueDate)}</dd>
-                  </div>
-                  <div>
-                    <dt>Terms</dt>
-                    <dd>{formatInvoiceTermsLabel(invoice.terms)}</dd>
-                  </div>
-                </dl>
-              </div>
-            </header>
-
-            <div className="invoice-sheet-divider" />
-
-            <section className="invoice-sheet-billto">
-              <h4>Bill To</h4>
-              <p className="invoice-sheet-strong">{invoice.customer.name}</p>
-              {invoice.customer.addressLine ? <p>{invoice.customer.addressLine}</p> : null}
-              {jobContext.operationalLabel ? <p>Operational Job: {jobContext.operationalLabel}</p> : null}
-              {!jobContext.operationalLabel && jobLabel ? <p>Job: {jobLabel}</p> : null}
-              {jobContext.operationalLabel && jobContext.crmLabel ? <p>CRM Folder: {jobContext.crmLabel}</p> : null}
-              {invoice.customer.phoneE164 ? <p>Phone: {invoice.customer.phoneE164}</p> : null}
-              {invoice.customer.email ? <p>Email: {invoice.customer.email}</p> : null}
-            </section>
-
-            <section className="invoice-sheet-table-wrap">
-              <table className="invoice-sheet-table">
-                <thead>
-                  <tr>
-                    <th>Description</th>
-                    <th className="right">Qty</th>
-                    <th className="right">Unit</th>
-                    <th className="right">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoice.lineItems.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="empty">
-                        No line items yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    invoice.lineItems.map((lineItem) => (
-                      <tr key={lineItem.id}>
-                        <td>{lineItem.description}</td>
-                        <td className="right">{lineItem.quantity.toString()}</td>
-                        <td className="right">{formatCurrency(lineItem.unitPrice)}</td>
-                        <td className="right">{formatCurrency(lineItem.lineTotal)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </section>
-
-            <section className="invoice-sheet-bottom">
-              <div className="invoice-sheet-notes">
-                {invoice.notes?.trim() ? (
-                  <div>
-                    <h4>Notes</h4>
-                    <p>{invoice.notes.trim()}</p>
-                  </div>
-                ) : null}
-                {invoice.org.invoicePaymentInstructions?.trim() ? (
-                  <div>
-                    <h4>Payment Instructions</h4>
-                    <p>{invoice.org.invoicePaymentInstructions.trim()}</p>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="invoice-sheet-totals">
-                <div>
-                  <span>Subtotal</span>
-                  <strong>{formatCurrency(invoice.subtotal)}</strong>
-                </div>
-                {hasTax ? (
-                  <div>
-                    <span>Tax ({taxRateToPercent(invoice.taxRate)}%)</span>
-                    <strong>{formatCurrency(invoice.taxAmount)}</strong>
-                  </div>
-                ) : null}
-                <div>
-                  <span>Total</span>
-                  <strong>{formatCurrency(invoice.total)}</strong>
-                </div>
-                <div>
-                  <span>Amount Paid</span>
-                  <strong>{formatCurrency(invoice.amountPaid)}</strong>
-                </div>
-                <div className="due">
-                  <span>Balance Due</span>
-                  <strong>{formatCurrency(invoice.balanceDue)}</strong>
-                </div>
-              </div>
-            </section>
-          </article>
+          <InvoicePreview template={normalizeInvoiceTemplate(invoice.org.invoiceTemplate)} invoice={previewData} />
         </div>
       </section>
 
@@ -876,16 +815,6 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
 
             <button className="btn primary" type="submit">
               Save Invoice
-            </button>
-          </form>
-
-          <form action={markInvoicePaidAction} style={{ marginTop: 12 }}>
-            <input type="hidden" name="invoiceId" value={invoice.id} />
-            <input type="hidden" name="orgId" value={scope.orgId} />
-            <input type="hidden" name="returnPath" value={invoicePath} />
-            <input type="hidden" name="note" value="Marked paid from invoice detail." />
-            <button className="btn secondary" type="submit" disabled={invoice.balanceDue.lte(0)}>
-              Mark Paid
             </button>
           </form>
 

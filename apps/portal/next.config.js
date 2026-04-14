@@ -1,3 +1,4 @@
+import process from "node:process";
 import withSerwistInit from "@serwist/next";
 import createNextIntlPlugin from "next-intl/plugin";
 

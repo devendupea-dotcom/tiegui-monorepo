@@ -117,10 +117,6 @@ const dispatchJobDetailSelect = {
   },
 } satisfies Prisma.JobSelect;
 
-type DispatchJobDetailRecord = Prisma.JobGetPayload<{
-  select: typeof dispatchJobDetailSelect;
-}>;
-
 async function writeJobEvents(input: {
   tx: Prisma.TransactionClient;
   orgId: string;
