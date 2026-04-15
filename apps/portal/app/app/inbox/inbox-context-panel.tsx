@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { useLocale } from "next-intl";
 import { formatLabel } from "@/lib/hq";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
@@ -117,6 +118,14 @@ type InboxContextCopy = {
   saveContext: string;
   cancel: string;
 };
+
+function updateFormField<K extends keyof ContextFormState>(
+  setForm: Dispatch<SetStateAction<ContextFormState>>,
+  field: K,
+  value: ContextFormState[K],
+) {
+  setForm((current) => ({ ...current, [field]: value }));
+}
 
 function getInboxContextCopy(locale: string): InboxContextCopy {
   if (locale.startsWith("es")) {
@@ -418,7 +427,7 @@ export default function InboxContextPanel({
               {copy.contactName}
               <input
                 value={form.contactName}
-                onChange={(event) => setForm((current) => ({ ...current, contactName: event.currentTarget.value }))}
+                onChange={(event) => updateFormField(setForm, "contactName", event.currentTarget.value)}
                 maxLength={160}
               />
             </label>
@@ -427,7 +436,7 @@ export default function InboxContextPanel({
               {copy.businessName}
               <input
                 value={form.businessName}
-                onChange={(event) => setForm((current) => ({ ...current, businessName: event.currentTarget.value }))}
+                onChange={(event) => updateFormField(setForm, "businessName", event.currentTarget.value)}
                 maxLength={160}
               />
             </label>
@@ -438,7 +447,7 @@ export default function InboxContextPanel({
               {copy.phone}
               <input
                 value={form.phone}
-                onChange={(event) => setForm((current) => ({ ...current, phone: event.currentTarget.value }))}
+                onChange={(event) => updateFormField(setForm, "phone", event.currentTarget.value)}
                 placeholder="+12065551212"
                 maxLength={20}
               />
@@ -448,7 +457,7 @@ export default function InboxContextPanel({
               {copy.city}
               <input
                 value={form.city}
-                onChange={(event) => setForm((current) => ({ ...current, city: event.currentTarget.value }))}
+                onChange={(event) => updateFormField(setForm, "city", event.currentTarget.value)}
                 maxLength={120}
               />
             </label>
@@ -459,7 +468,7 @@ export default function InboxContextPanel({
               {copy.status}
               <select
                 value={form.status}
-                onChange={(event) => setForm((current) => ({ ...current, status: event.currentTarget.value }))}
+                onChange={(event) => updateFormField(setForm, "status", event.currentTarget.value)}
               >
                 {LEAD_STATUS_OPTIONS.map((status) => (
                   <option key={status} value={status}>
@@ -473,7 +482,7 @@ export default function InboxContextPanel({
               {copy.priority}
               <select
                 value={form.priority}
-                onChange={(event) => setForm((current) => ({ ...current, priority: event.currentTarget.value }))}
+                onChange={(event) => updateFormField(setForm, "priority", event.currentTarget.value)}
               >
                 {LEAD_PRIORITY_OPTIONS.map((priority) => (
                   <option key={priority} value={priority}>
@@ -490,7 +499,7 @@ export default function InboxContextPanel({
               <input
                 type="datetime-local"
                 value={form.nextFollowUpAt}
-                onChange={(event) => setForm((current) => ({ ...current, nextFollowUpAt: event.currentTarget.value }))}
+                onChange={(event) => updateFormField(setForm, "nextFollowUpAt", event.currentTarget.value)}
               />
             </label>
 
@@ -498,7 +507,7 @@ export default function InboxContextPanel({
               {copy.estimatedValue}
               <input
                 value={form.estimatedRevenue}
-                onChange={(event) => setForm((current) => ({ ...current, estimatedRevenue: event.currentTarget.value }))}
+                onChange={(event) => updateFormField(setForm, "estimatedRevenue", event.currentTarget.value)}
                 placeholder="4200"
               />
             </label>
@@ -508,7 +517,7 @@ export default function InboxContextPanel({
             {copy.workType}
             <input
               value={form.businessType}
-              onChange={(event) => setForm((current) => ({ ...current, businessType: event.currentTarget.value }))}
+              onChange={(event) => updateFormField(setForm, "businessType", event.currentTarget.value)}
               maxLength={160}
             />
           </label>
@@ -517,7 +526,7 @@ export default function InboxContextPanel({
             {copy.notes}
             <textarea
               value={form.notes}
-              onChange={(event) => setForm((current) => ({ ...current, notes: event.currentTarget.value }))}
+              onChange={(event) => updateFormField(setForm, "notes", event.currentTarget.value)}
               rows={4}
               maxLength={4000}
             />
