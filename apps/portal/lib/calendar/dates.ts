@@ -17,6 +17,12 @@ export const DEFAULT_SLOT_MINUTES = 30;
 const TIMEZONE_CACHE = new Map<string, boolean>();
 
 export type CalendarView = "day" | "week" | "month";
+type DisplayDateValue = Date | string | number | null | undefined;
+type DisplayDateFormatInput = {
+  locale?: string;
+  timeZone?: string | null;
+  fallback?: string;
+};
 
 export function clampSlotMinutes(value: number | null | undefined): 15 | 30 | 60 | 90 {
   if (value === 15 || value === 60 || value === 90) {
@@ -78,8 +84,65 @@ export function parseIsoDateOnly(value: string): Date | null {
   return parsed;
 }
 
+function coerceDisplayDate(value: DisplayDateValue): Date | null {
+  if (value instanceof Date) {
+    return isValid(value) ? value : null;
+  }
+
+  if (typeof value === "number") {
+    const parsed = new Date(value);
+    return isValid(parsed) ? parsed : null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = new Date(trimmed);
+    return isValid(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
 export function formatDateOnly(date: Date): string {
   return format(date, "yyyy-MM-dd");
+}
+
+export function formatDateTimeForDisplay(
+  value: DisplayDateValue,
+  options: Intl.DateTimeFormatOptions,
+  input: DisplayDateFormatInput = {},
+): string {
+  const date = coerceDisplayDate(value);
+  if (!date) {
+    return input.fallback ?? "-";
+  }
+
+  const resolvedTimeZone = ensureTimeZone(
+    input.timeZone || (typeof options.timeZone === "string" ? options.timeZone : undefined),
+  );
+
+  return new Intl.DateTimeFormat(input.locale || "en-US", {
+    ...options,
+    timeZone: resolvedTimeZone,
+  }).format(date);
+}
+
+export function formatDateForDisplay(
+  value: DisplayDateValue,
+  input: DisplayDateFormatInput = {},
+): string {
+  return formatDateTimeForDisplay(
+    value,
+    {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    },
+    input,
+  );
 }
 
 export function isoToZonedDate(utcDate: Date, timeZone: string): Date {

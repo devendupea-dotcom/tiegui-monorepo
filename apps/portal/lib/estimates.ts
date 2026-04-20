@@ -449,6 +449,10 @@ export function getEstimateCustomerFacingIssues(input: {
   return issues;
 }
 
+export function requiresEstimateCustomerFacingReadiness(status: EstimateStatus): boolean {
+  return status !== "DRAFT" && status !== "CONVERTED";
+}
+
 export function describeEstimateActivityType(type: EstimateActivityType): string {
   switch (type) {
     case "CREATED":
