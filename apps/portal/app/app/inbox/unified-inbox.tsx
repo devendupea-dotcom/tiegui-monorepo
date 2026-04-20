@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "next-intl";
+import {
+  formatDateTimeForDisplay,
+  localDateFromUtc,
+} from "@/lib/calendar/dates";
 import { formatLabel } from "@/lib/hq";
+import { matchesInboxConversationSearch } from "@/lib/inbox-search";
 import { mergeInboxTimelineEvents } from "@/lib/inbox-ui";
 import InboxContextPanel, { type InboxLeadContext } from "./inbox-context-panel";
 
@@ -95,6 +100,9 @@ type InboxCopy = {
   conversations: string;
   searchPlaceholder: string;
   searchAria: string;
+  noSearchResultsTitle: string;
+  noSearchResultsBody: string;
+  clearSearch: string;
   overdue: string;
   atRisk: string;
   noMessagesYet: string;
@@ -153,6 +161,9 @@ function getInboxCopy(locale: string): InboxCopy {
       conversations: "Conversaciones",
       searchPlaceholder: "Buscar cliente o telefono",
       searchAria: "Buscar conversaciones",
+      noSearchResultsTitle: "No hay resultados para esta busqueda.",
+      noSearchResultsBody: "Prueba otro nombre o numero de telefono.",
+      clearSearch: "Limpiar busqueda",
       overdue: "Vencido",
       atRisk: "En riesgo",
       noMessagesYet: "Aun no hay mensajes.",
@@ -210,6 +221,9 @@ function getInboxCopy(locale: string): InboxCopy {
     conversations: "Conversations",
     searchPlaceholder: "Search customer or phone",
     searchAria: "Search conversations",
+    noSearchResultsTitle: "No conversations match this search.",
+    noSearchResultsBody: "Try a different customer name or phone number.",
+    clearSearch: "Clear search",
     overdue: "Overdue",
     atRisk: "At risk",
     noMessagesYet: "No messages yet.",
@@ -259,36 +273,35 @@ function formatRelativeTimestamp(value: string, locale: string, copy: InboxCopy,
   if (hours < 24) return `${hours}h`;
   const dayDiff = Math.floor(hours / 24);
   if (dayDiff === 1) return copy.yesterday;
-  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(date);
+  return formatDateTimeForDisplay(date, { month: "short", day: "numeric" }, { locale });
 }
 
 function formatMessageTime(value: string, locale: string): string {
-  const date = new Date(value);
-  return new Intl.DateTimeFormat(locale, {
+  return formatDateTimeForDisplay(value, {
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
+  }, { locale });
 }
 
 function formatDayLabel(date: Date, locale: string, copy: InboxCopy, now = new Date()): string {
-  const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-  const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  const todayKey = localDateFromUtc(now, "America/Los_Angeles");
+  const dateKey = localDateFromUtc(date, "America/Los_Angeles");
   if (dateKey === todayKey) return copy.today;
 
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  const yesterdayKey = `${yesterday.getFullYear()}-${yesterday.getMonth()}-${yesterday.getDate()}`;
+  const yesterdayKey = localDateFromUtc(yesterday, "America/Los_Angeles");
   if (dateKey === yesterdayKey) return copy.yesterday;
 
-  return new Intl.DateTimeFormat(locale, {
+  return formatDateTimeForDisplay(date, {
     weekday: "short",
     month: "short",
     day: "numeric",
-  }).format(date);
+  }, { locale });
 }
 
 function toDayKey(date: Date): string {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  return localDateFromUtc(date, "America/Los_Angeles");
 }
 
 function isOverdue(value: string | null | undefined): boolean {
@@ -364,6 +377,7 @@ export default function UnifiedInbox({
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [showContextDrawer, setShowContextDrawer] = useState(false);
 
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const selectedLeadIdRef = useRef<string | null>(null);
   const shouldStickThreadToBottomRef = useRef(true);
@@ -383,12 +397,51 @@ export default function UnifiedInbox({
   const events = useMemo(() => mergeInboxTimelineEvents(serverEvents, pendingEvents), [serverEvents, pendingEvents]);
 
   const filteredConversations = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return conversations;
-    return conversations.filter((row) => {
-      return row.contactName.toLowerCase().includes(term) || row.phoneE164.toLowerCase().includes(term);
-    });
+    return conversations.filter((row) => matchesInboxConversationSearch(row, search));
   }, [conversations, search]);
+
+  useEffect(() => {
+    if (!search.trim()) return;
+
+    const nextLead = filteredConversations[0] || null;
+    const selectionStillVisible = selectedLeadId
+      ? filteredConversations.some((row) => row.leadId === selectedLeadId)
+      : false;
+
+    if (selectionStillVisible) {
+      return;
+    }
+
+    if (!nextLead) {
+      setSelectedLeadId(null);
+      if (isNarrow) {
+        setView("list");
+      }
+      return;
+    }
+
+    shouldStickThreadToBottomRef.current = true;
+    setShowContextDrawer(false);
+    const currentSeenAt = seenConversationAtRef.current[nextLead.leadId];
+    if (!currentSeenAt || new Date(nextLead.lastEventAt).getTime() > new Date(currentSeenAt).getTime()) {
+      seenConversationAtRef.current[nextLead.leadId] = nextLead.lastEventAt;
+    }
+    setSelectedLeadId(nextLead.leadId);
+    setConversations((current) =>
+      current.map((row) =>
+        row.leadId === nextLead.leadId
+          ? {
+              ...row,
+              unreadCount: 0,
+              atRisk: false,
+            }
+          : row,
+      ),
+    );
+    if (isNarrow) {
+      setView("thread");
+    }
+  }, [filteredConversations, isNarrow, search, selectedLeadId]);
 
   const renderItems: RenderItem[] = useMemo(() => {
     if (!events.length) return [];
@@ -407,13 +460,13 @@ export default function UnifiedInbox({
     return output;
   }, [copy, events, locale]);
 
-  function markConversationSeen(leadId: string, eventAt: string | null | undefined) {
+  const markConversationSeen = useCallback((leadId: string, eventAt: string | null | undefined) => {
     if (!eventAt) return;
     const current = seenConversationAtRef.current[leadId];
     if (!current || new Date(eventAt).getTime() > new Date(current).getTime()) {
       seenConversationAtRef.current[leadId] = eventAt;
     }
-  }
+  }, []);
 
   function applyConversationSeenState(rows: ConversationRow[]): ConversationRow[] {
     return rows.map((row) => {
@@ -732,7 +785,7 @@ export default function UnifiedInbox({
     }
   }
 
-  function handleSelectLead(nextLeadId: string) {
+  const handleSelectLead = useCallback((nextLeadId: string) => {
     shouldStickThreadToBottomRef.current = true;
     setShowContextDrawer(false);
     const existingRow = conversations.find((row) => row.leadId === nextLeadId);
@@ -752,7 +805,7 @@ export default function UnifiedInbox({
     if (isNarrow) {
       setView("thread");
     }
-  }
+  }, [conversations, isNarrow, markConversationSeen]);
 
   function handleLeadContextSaved(nextLead: InboxLeadContext) {
     setLeadContext(nextLead);
@@ -775,7 +828,9 @@ export default function UnifiedInbox({
     );
   }
 
-  const emptyState = !loadingList && filteredConversations.length === 0;
+  const hasConversations = conversations.length > 0;
+  const emptyState = !loadingList && hasConversations === false;
+  const noSearchResults = !loadingList && hasConversations && filteredConversations.length === 0;
   const unreadThreadsCount = filteredConversations.filter((row) => row.unreadCount > 0).length;
   const attentionThreadsCount = filteredConversations.filter((row) => row.atRisk || isOverdue(row.nextFollowUpAt)).length;
   const callThreadsCount = filteredConversations.filter((row) => row.channels.call).length;
@@ -874,6 +929,14 @@ export default function UnifiedInbox({
                   <span className="muted">{filteredConversations.length}</span>
                 </div>
                 <input
+                  ref={searchInputRef}
+                  type="search"
+                  inputMode="search"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="search"
                   className="unified-inbox-search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
@@ -883,52 +946,71 @@ export default function UnifiedInbox({
               </header>
 
               <div className="unified-inbox-panel-scroll">
-                <ul className="thread-list inbox-thread-list">
-                  {filteredConversations.map((row) => {
-                    const active = row.leadId === selectedLeadId;
-                    const overdueFollowUp = isOverdue(row.nextFollowUpAt);
-                    const sourceClass = sourceBadgeClass(row.sourceType);
-
-                    return (
-                      <li
-                        key={row.leadId}
-                        className={`thread-item inbox-thread-item ${active ? "active" : ""} ${row.unreadCount ? "unread" : ""}`}
+                {noSearchResults ? (
+                  <div className="portal-empty-state" style={{ marginTop: 0 }}>
+                    <strong>{copy.noSearchResultsTitle}</strong>
+                    <p className="muted">{copy.noSearchResultsBody}</p>
+                    <div className="portal-empty-actions">
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={() => {
+                          setSearch("");
+                          searchInputRef.current?.focus();
+                        }}
                       >
-                        <button
-                          type="button"
-                          className="thread-link inbox-thread-button"
-                          onClick={() => handleSelectLead(row.leadId)}
+                        {copy.clearSearch}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <ul className="thread-list inbox-thread-list">
+                    {filteredConversations.map((row) => {
+                      const active = row.leadId === selectedLeadId;
+                      const overdueFollowUp = isOverdue(row.nextFollowUpAt);
+                      const sourceClass = sourceBadgeClass(row.sourceType);
+
+                      return (
+                        <li
+                          key={row.leadId}
+                          className={`thread-item inbox-thread-item ${active ? "active" : ""} ${row.unreadCount ? "unread" : ""}`}
                         >
-                          <div className="thread-top">
-                            <div className="inbox-thread-title">
-                              <strong>{row.contactName}</strong>
-                              {row.unreadCount ? <span className="inbox-unread-badge">{row.unreadCount}</span> : null}
+                          <button
+                            type="button"
+                            className="thread-link inbox-thread-button"
+                            onClick={() => handleSelectLead(row.leadId)}
+                          >
+                            <div className="thread-top">
+                              <div className="inbox-thread-title">
+                                <strong>{row.contactName}</strong>
+                                {row.unreadCount ? <span className="inbox-unread-badge">{row.unreadCount}</span> : null}
+                              </div>
+                              <span className="muted">{formatRelativeTimestamp(row.lastEventAt, locale, copy)}</span>
                             </div>
-                            <span className="muted">{formatRelativeTimestamp(row.lastEventAt, locale, copy)}</span>
-                          </div>
 
-                          <div className="inbox-thread-badges">
-                            <span className={`badge status-${row.status.toLowerCase()}`}>{formatLabel(row.status)}</span>
-                            <span className={`badge priority-${row.priority.toLowerCase()}`}>{formatLabel(row.priority)}</span>
-                            <span className={`badge ${sourceClass}`}>{formatLabel(row.sourceType)}</span>
-                            {overdueFollowUp ? <span className="badge status-overdue">{copy.overdue}</span> : null}
-                            {row.atRisk ? <span className="badge status-overdue">{copy.atRisk}</span> : null}
-                          </div>
+                            <div className="inbox-thread-badges">
+                              <span className={`badge status-${row.status.toLowerCase()}`}>{formatLabel(row.status)}</span>
+                              <span className={`badge priority-${row.priority.toLowerCase()}`}>{formatLabel(row.priority)}</span>
+                              <span className={`badge ${sourceClass}`}>{formatLabel(row.sourceType)}</span>
+                              {overdueFollowUp ? <span className="badge status-overdue">{copy.overdue}</span> : null}
+                              {row.atRisk ? <span className="badge status-overdue">{copy.atRisk}</span> : null}
+                            </div>
 
-                          <p className={`inbox-thread-snippet ${row.unreadCount ? "" : "muted"}`}>
-                            {row.lastSnippet || copy.noMessagesYet}
-                          </p>
+                            <p className={`inbox-thread-snippet ${row.unreadCount ? "" : "muted"}`}>
+                              {row.lastSnippet || copy.noMessagesYet}
+                            </p>
 
-                          <div className="inbox-thread-channels">
-                            {row.channels.sms ? <span className="inbox-channel-chip">SMS</span> : null}
-                            {row.channels.call ? <span className="inbox-channel-chip">{copy.call}</span> : null}
-                            {row.channels.meta ? <span className="inbox-channel-chip">Meta</span> : null}
-                          </div>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                            <div className="inbox-thread-channels">
+                              {row.channels.sms ? <span className="inbox-channel-chip">SMS</span> : null}
+                              {row.channels.call ? <span className="inbox-channel-chip">{copy.call}</span> : null}
+                              {row.channels.meta ? <span className="inbox-channel-chip">Meta</span> : null}
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             </section>
           )}

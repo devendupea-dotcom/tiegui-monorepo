@@ -402,6 +402,7 @@
       "folderData": "Datos CRM",
       "city": "Ciudad",
       "type": "Tipo",
+      "nextStep": "Próximo paso",
       "followUp": "Seguimiento",
       "updated": "Actualizado"
     }
@@ -471,6 +472,11 @@
     "overdue": "Vencido",
     "draft": "Borrador",
     "sent": "Enviado",
+    "viewed": "Visto",
+    "approved": "Aprobado",
+    "declined": "Rechazado",
+    "expired": "Vencido",
+    "converted": "Convertido",
     "paid": "Pagado",
     "partial": "Pago parcial",
     "answered": "Contestada",

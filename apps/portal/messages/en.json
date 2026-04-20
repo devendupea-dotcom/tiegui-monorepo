@@ -402,6 +402,7 @@
       "folderData": "CRM Data",
       "city": "City",
       "type": "Type",
+      "nextStep": "Next Step",
       "followUp": "Follow-up",
       "updated": "Updated"
     }
@@ -471,6 +472,11 @@
     "overdue": "Overdue",
     "draft": "Draft",
     "sent": "Sent",
+    "viewed": "Viewed",
+    "approved": "Approved",
+    "declined": "Declined",
+    "expired": "Expired",
+    "converted": "Converted",
     "paid": "Paid",
     "partial": "Partially Paid",
     "answered": "Answered",
