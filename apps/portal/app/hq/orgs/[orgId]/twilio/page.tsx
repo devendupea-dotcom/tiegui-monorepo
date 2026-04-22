@@ -7,7 +7,11 @@ import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { requireInternalUser } from "@/lib/session";
 import { sendOutboundSms } from "@/lib/sms";
-import { decryptTwilioAuthToken, encryptTwilioAuthToken, maskSecretTail } from "@/lib/twilio-config-crypto";
+import {
+  decryptTwilioAuthToken,
+  encryptTwilioAuthToken,
+  maskSecretTail,
+} from "@/lib/twilio-config-crypto";
 import { validateTwilioOrgConfig } from "@/lib/twilio-org";
 
 export const dynamic = "force-dynamic";
@@ -49,14 +53,18 @@ async function saveTwilioConfigAction(formData: FormData) {
   const messagingServiceSid = getString(formData.get("messagingServiceSid"));
   const authTokenRaw = getString(formData.get("twilioAuthToken"));
   const phoneNumberRaw = getString(formData.get("phoneNumber"));
-  const voiceForwardingNumberRaw = getString(formData.get("voiceForwardingNumber"));
+  const voiceForwardingNumberRaw = getString(
+    formData.get("voiceForwardingNumber"),
+  );
   const status = parseStatus(getString(formData.get("status")));
 
   if (!twilioSubaccountSid.startsWith("AC")) {
     redirect(statusUrl(orgId, { error: "Account SID must start with AC." }));
   }
   if (!messagingServiceSid.startsWith("MG")) {
-    redirect(statusUrl(orgId, { error: "Messaging Service SID must start with MG." }));
+    redirect(
+      statusUrl(orgId, { error: "Messaging Service SID must start with MG." }),
+    );
   }
   if (!status) {
     redirect(statusUrl(orgId, { error: "Invalid Twilio status." }));
@@ -67,9 +75,13 @@ async function saveTwilioConfigAction(formData: FormData) {
     redirect(statusUrl(orgId, { error: "Phone number must be valid E.164." }));
   }
 
-  const voiceForwardingNumber = voiceForwardingNumberRaw ? normalizeE164(voiceForwardingNumberRaw) : null;
+  const voiceForwardingNumber = voiceForwardingNumberRaw
+    ? normalizeE164(voiceForwardingNumberRaw)
+    : null;
   if (voiceForwardingNumberRaw && !voiceForwardingNumber) {
-    redirect(statusUrl(orgId, { error: "Forwarding number must be valid E.164." }));
+    redirect(
+      statusUrl(orgId, { error: "Forwarding number must be valid E.164." }),
+    );
   }
 
   const existing = await prisma.organizationTwilioConfig.findUnique({
@@ -82,7 +94,11 @@ async function saveTwilioConfigAction(formData: FormData) {
   });
 
   if (!existing && !authTokenRaw) {
-    redirect(statusUrl(orgId, { error: "Auth token is required for first-time setup." }));
+    redirect(
+      statusUrl(orgId, {
+        error: "Auth token is required for first-time setup.",
+      }),
+    );
   }
 
   let tokenToEncrypt: string | null = null;
@@ -90,9 +106,16 @@ async function saveTwilioConfigAction(formData: FormData) {
     tokenToEncrypt = authTokenRaw;
   } else if (existing) {
     try {
-      tokenToEncrypt = decryptTwilioAuthToken(existing.twilioAuthTokenEncrypted);
+      tokenToEncrypt = decryptTwilioAuthToken(
+        existing.twilioAuthTokenEncrypted,
+      );
     } catch {
-      redirect(statusUrl(orgId, { error: "Unable to decrypt existing token. Check TWILIO_TOKEN_ENCRYPTION_KEY." }));
+      redirect(
+        statusUrl(orgId, {
+          error:
+            "Unable to decrypt existing token. Check TWILIO_TOKEN_ENCRYPTION_KEY.",
+        }),
+      );
     }
   }
 
@@ -104,7 +127,11 @@ async function saveTwilioConfigAction(formData: FormData) {
   try {
     encryptedToken = encryptTwilioAuthToken(tokenToEncrypt);
   } catch {
-    redirect(statusUrl(orgId, { error: "Unable to encrypt token. Check TWILIO_TOKEN_ENCRYPTION_KEY." }));
+    redirect(
+      statusUrl(orgId, {
+        error: "Unable to encrypt token. Check TWILIO_TOKEN_ENCRYPTION_KEY.",
+      }),
+    );
   }
 
   const saved = await prisma.$transaction(async (tx) => {
@@ -207,20 +234,31 @@ async function validateTwilioConfigAction(formData: FormData) {
     },
   });
 
-  const subaccountSid = twilioSubaccountSid || existing?.twilioSubaccountSid || "";
-  const messagingSid = messagingServiceSid || existing?.messagingServiceSid || "";
+  const subaccountSid =
+    twilioSubaccountSid || existing?.twilioSubaccountSid || "";
+  const messagingSid =
+    messagingServiceSid || existing?.messagingServiceSid || "";
   const phoneNumber = phoneNumberRaw || existing?.phoneNumber || "";
   let authToken = authTokenRaw;
   if (!authToken && existing) {
     try {
       authToken = decryptTwilioAuthToken(existing.twilioAuthTokenEncrypted);
     } catch {
-      redirect(statusUrl(orgId, { error: "Unable to decrypt saved token. Check TWILIO_TOKEN_ENCRYPTION_KEY." }));
+      redirect(
+        statusUrl(orgId, {
+          error:
+            "Unable to decrypt saved token. Check TWILIO_TOKEN_ENCRYPTION_KEY.",
+        }),
+      );
     }
   }
 
   if (!subaccountSid || !messagingSid || !phoneNumber || !authToken) {
-    redirect(statusUrl(orgId, { error: "Provide Twilio fields (or save config) before validation." }));
+    redirect(
+      statusUrl(orgId, {
+        error: "Provide Twilio fields (or save config) before validation.",
+      }),
+    );
   }
 
   const validation = await validateTwilioOrgConfig({
@@ -268,10 +306,14 @@ async function sendTestSmsAction(formData: FormData) {
 
   const actor = await requireInternalUser(`/hq/orgs/${orgId}/twilio`);
   const destinationRaw = getString(formData.get("testToNumber"));
-  const body = getString(formData.get("testBody")) || "TieGui test SMS: Twilio org routing is active.";
+  const body =
+    getString(formData.get("testBody")) ||
+    "TieGui test SMS: Twilio org routing is active.";
   const destination = normalizeE164(destinationRaw);
   if (!destination) {
-    redirect(statusUrl(orgId, { error: "Test destination must be valid E.164." }));
+    redirect(
+      statusUrl(orgId, { error: "Test destination must be valid E.164." }),
+    );
   }
 
   const result = await sendOutboundSms({
@@ -359,14 +401,20 @@ export default async function HqOrgTwilioPage({
 
   const error = getString((searchParams?.error as string) || null);
   const saved = getString((searchParams?.saved as string) || null) === "1";
-  const validated = getString((searchParams?.validated as string) || null) === "1";
+  const validated =
+    getString((searchParams?.validated as string) || null) === "1";
   const tested = getString((searchParams?.tested as string) || null) === "1";
   const notice = getString((searchParams?.notice as string) || null);
 
   let maskedToken = "";
   if (organization.twilioConfig?.twilioAuthTokenEncrypted) {
     try {
-      maskedToken = maskSecretTail(decryptTwilioAuthToken(organization.twilioConfig.twilioAuthTokenEncrypted), 4);
+      maskedToken = maskSecretTail(
+        decryptTwilioAuthToken(
+          organization.twilioConfig.twilioAuthTokenEncrypted,
+        ),
+        4,
+      );
     } catch {
       maskedToken = "(unavailable)";
     }
@@ -379,24 +427,39 @@ export default async function HqOrgTwilioPage({
           ← Back to Business Folder
         </Link>
         <h2 style={{ marginTop: 10 }}>Twilio Config · {organization.name}</h2>
-        <p className="muted">Per-org Twilio account setup for inbound routing, outbound messaging, and test sends.</p>
+        <p className="muted">
+          Per-org Twilio account setup for inbound routing, outbound messaging,
+          and test sends.
+        </p>
 
         {error ? <p className="form-error">{error}</p> : null}
         {saved ? <p className="form-status">Twilio config saved.</p> : null}
-        {validated ? <p className="form-status">Twilio validation passed.</p> : null}
-        {tested ? <p className="form-status">Test SMS sent {notice ? `(${notice})` : ""}.</p> : null}
+        {validated ? (
+          <p className="form-status">Twilio validation passed.</p>
+        ) : null}
+        {tested ? (
+          <p className="form-status">
+            Test SMS sent {notice ? `(${notice})` : ""}.
+          </p>
+        ) : null}
       </section>
 
       <section className="card">
         <h3>Organization Twilio Credentials</h3>
-        <form action={saveTwilioConfigAction} className="stack" style={{ marginTop: 12 }}>
+        <form
+          action={saveTwilioConfigAction}
+          className="stack"
+          style={{ marginTop: 12 }}
+        >
           <input type="hidden" name="orgId" value={organization.id} />
           <div className="form-grid">
             <label>
               Twilio Account SID
               <input
                 name="twilioSubaccountSid"
-                defaultValue={organization.twilioConfig?.twilioSubaccountSid || ""}
+                defaultValue={
+                  organization.twilioConfig?.twilioSubaccountSid || ""
+                }
                 placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                 required
               />
@@ -405,7 +468,9 @@ export default async function HqOrgTwilioPage({
               Messaging Service SID
               <input
                 name="messagingServiceSid"
-                defaultValue={organization.twilioConfig?.messagingServiceSid || ""}
+                defaultValue={
+                  organization.twilioConfig?.messagingServiceSid || ""
+                }
                 placeholder="MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                 required
               />
@@ -423,13 +488,20 @@ export default async function HqOrgTwilioPage({
               Voice Forwarding Number (E.164)
               <input
                 name="voiceForwardingNumber"
-                defaultValue={organization.twilioConfig?.voiceForwardingNumber || ""}
+                defaultValue={
+                  organization.twilioConfig?.voiceForwardingNumber || ""
+                }
                 placeholder="+12065550199"
               />
             </label>
             <label>
               Status
-              <select name="status" defaultValue={organization.twilioConfig?.status || "PENDING_A2P"}>
+              <select
+                name="status"
+                defaultValue={
+                  organization.twilioConfig?.status || "PENDING_A2P"
+                }
+              >
                 {STATUS_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
@@ -443,22 +515,32 @@ export default async function HqOrgTwilioPage({
                 name="twilioAuthToken"
                 type="password"
                 autoComplete="new-password"
-                placeholder={maskedToken ? `Leave blank to keep token (${maskedToken})` : "Enter auth token"}
+                placeholder={
+                  maskedToken
+                    ? `Leave blank to keep token (${maskedToken})`
+                    : "Enter auth token"
+                }
               />
             </label>
           </div>
 
           <p className="muted" style={{ marginTop: 0 }}>
-            Use the Twilio account SID, auth token, messaging service SID, and phone number that all belong to the
-            same Twilio account. Calls to the Twilio line ring this number first. Leave it blank to fall back to the
-            first owner or admin phone on file.
+            Use the Twilio account SID, auth token, messaging service SID, and
+            phone number that all belong to the same Twilio account. Calls to
+            the Twilio line ring this number first. Leave it blank to fall back
+            to the first owner or admin phone on file. That same destination is
+            also used for internal schedule alerts and pre-visit reminders.
           </p>
 
           <div className="quick-links">
             <button type="submit" className="btn primary">
               Save Config
             </button>
-            <button type="submit" formAction={validateTwilioConfigAction} className="btn secondary">
+            <button
+              type="submit"
+              formAction={validateTwilioConfigAction}
+              className="btn secondary"
+            >
               Validate
             </button>
           </div>
@@ -468,10 +550,14 @@ export default async function HqOrgTwilioPage({
       <section className="card">
         <h3>Send Test SMS</h3>
         <p className="muted">
-          Uses this organization&apos;s Twilio account + Messaging Service credentials. Works in ACTIVE or
-          PENDING_A2P mode.
+          Uses this organization&apos;s Twilio account + Messaging Service
+          credentials. Works in ACTIVE or PENDING_A2P mode.
         </p>
-        <form action={sendTestSmsAction} className="stack" style={{ marginTop: 12 }}>
+        <form
+          action={sendTestSmsAction}
+          className="stack"
+          style={{ marginTop: 12 }}
+        >
           <input type="hidden" name="orgId" value={organization.id} />
           <div className="form-grid">
             <label>
@@ -514,15 +600,21 @@ export default async function HqOrgTwilioPage({
               <tbody>
                 {organization.twilioConfigAuditLogs.map((entry) => (
                   <tr key={entry.id}>
-                    <td>{formatDateTimeForDisplay(entry.createdAt, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}</td>
+                    <td>
+                      {formatDateTimeForDisplay(entry.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </td>
                     <td>{entry.action}</td>
                     <td>
                       {entry.previousStatus || "-"} → {entry.nextStatus || "-"}
                     </td>
-                    <td>{entry.actorUser?.name || entry.actorUser?.email || "System"}</td>
+                    <td>
+                      {entry.actorUser?.name ||
+                        entry.actorUser?.email ||
+                        "System"}
+                    </td>
                   </tr>
                 ))}
               </tbody>

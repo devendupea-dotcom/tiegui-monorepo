@@ -299,6 +299,7 @@
     "intakeCompletionPlaceholderEn": "Perfect, you're set for {{time}}. We'll follow up then.",
     "intakeCompletionPlaceholderEs": "Perfecto, te agendamos para {{time}}. Te contactamos entonces.",
     "reminderTimingLabel": "Tiempo del recordatorio (minutos antes)",
+    "reminderTimingNote": "Se usa para recordatorios por texto al owner antes de trabajos y estimados. El destinatario usa el número de desvío de Twilio o el primer teléfono owner/admin guardado.",
     "googleReviewLinkLabel": "Enlace de reseña de Google",
     "googleReviewPlaceholder": "https://g.page/r/.../review",
     "calendarTimezoneLabel": "Zona horaria del calendario (IANA)",

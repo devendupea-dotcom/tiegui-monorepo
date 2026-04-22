@@ -1,6 +1,10 @@
 import "server-only";
 
-import { Prisma, type EstimateActivityType, type JobStatus } from "@prisma/client";
+import {
+  Prisma,
+  type EstimateActivityType,
+  type JobStatus,
+} from "@prisma/client";
 import {
   ESTIMATE_DESCRIPTION_MAX,
   ESTIMATE_LINE_DESCRIPTION_MAX,
@@ -29,14 +33,27 @@ import {
   type NormalizedEstimatePayload,
 } from "@/lib/estimates-store-core";
 import { formatDispatchStatusLabel } from "@/lib/dispatch";
-import { maybeSendDispatchCustomerNotifications, type DispatchPersistedJobEvent } from "@/lib/dispatch-notifications";
+import {
+  maybeSendDispatchCustomerNotifications,
+  type DispatchPersistedJobEvent,
+} from "@/lib/dispatch-notifications";
 import { extractEstimateZipCode } from "@/lib/estimate-tax";
-import { DEFAULT_INVOICE_TERMS, computeInvoiceDueDate, recomputeInvoiceTotals, reserveNextInvoiceNumber, roundMoney } from "@/lib/invoices";
+import {
+  DEFAULT_INVOICE_TERMS,
+  computeInvoiceDueDate,
+  recomputeInvoiceTotals,
+  reserveNextInvoiceNumber,
+  roundMoney,
+} from "@/lib/invoices";
 import {
   buildEstimateAttachmentData,
   buildEstimateConversionJobLinkData,
 } from "@/lib/estimate-job-linking";
-import { bookingEventTypes, deriveJobBookingProjection } from "@/lib/booking-read-model";
+import {
+  bookingEventTypes,
+  deriveJobBookingProjection,
+} from "@/lib/booking-read-model";
+import { maybeSendOrgDispatchNotifications } from "@/lib/org-owner-notifications";
 import { findOperationalJobForLead } from "@/lib/operational-jobs";
 import { prisma } from "@/lib/prisma";
 import { AppApiError } from "@/lib/app-api-permissions";
@@ -44,10 +61,13 @@ import { roundMaterialNumber, type MaterialListItem } from "@/lib/materials";
 
 const ZERO = new Prisma.Decimal(0);
 
-async function getActiveBookingScheduleForJob(tx: Prisma.TransactionClient, input: {
-  orgId: string;
-  jobId: string | null;
-}) {
+async function getActiveBookingScheduleForJob(
+  tx: Prisma.TransactionClient,
+  input: {
+    orgId: string;
+    jobId: string | null;
+  },
+) {
   if (!input.jobId) {
     return {
       scheduledDateKey: null,
@@ -156,7 +176,10 @@ type EstimateRecord = Prisma.EstimateGetPayload<{
   include: typeof estimateDetailInclude;
 }>;
 
-async function resolveEstimateLeadDefaults(orgId: string, leadId: string | null) {
+async function resolveEstimateLeadDefaults(
+  orgId: string,
+  leadId: string | null,
+) {
   if (!leadId) return null;
 
   const lead = await prisma.lead.findFirst({
@@ -176,14 +199,22 @@ async function resolveEstimateLeadDefaults(orgId: string, leadId: string | null)
   });
 
   if (!lead) {
-    throw new AppApiError("Selected lead was not found for this organization.", 400);
+    throw new AppApiError(
+      "Selected lead was not found for this organization.",
+      400,
+    );
   }
 
   return lead;
 }
 
-async function validateEstimateMaterials(orgId: string, lineItems: EstimateItemRow[]) {
-  const materialIds = [...new Set(lineItems.map((line) => line.materialId).filter(Boolean))] as string[];
+async function validateEstimateMaterials(
+  orgId: string,
+  lineItems: EstimateItemRow[],
+) {
+  const materialIds = [
+    ...new Set(lineItems.map((line) => line.materialId).filter(Boolean)),
+  ] as string[];
   if (materialIds.length === 0) return;
 
   const matches = await prisma.material.findMany({
@@ -195,7 +226,10 @@ async function validateEstimateMaterials(orgId: string, lineItems: EstimateItemR
   });
 
   if (matches.length !== materialIds.length) {
-    throw new AppApiError("One or more selected materials are not available for this organization.", 400);
+    throw new AppApiError(
+      "One or more selected materials are not available for this organization.",
+      400,
+    );
   }
 }
 
@@ -239,7 +273,10 @@ export async function reserveNextEstimateNumber(
   throw new Error("Failed to reserve estimate number. Try again.");
 }
 
-async function recomputeLeadEstimateStats(tx: Prisma.TransactionClient, leadId: string | null) {
+async function recomputeLeadEstimateStats(
+  tx: Prisma.TransactionClient,
+  leadId: string | null,
+) {
   if (!leadId) return;
 
   const estimates = await tx.estimate.findMany({
@@ -297,10 +334,17 @@ async function normalizeEstimatePayload(input: {
         ? existing?.leadId || null
         : normalizeOptionalId(payload.leadId);
   const lead = await resolveEstimateLeadDefaults(input.orgId, rawLeadId);
-  const rawLineItems = normalizeEstimateLineItems(payload.lineItems, fallbackLines);
+  const rawLineItems = normalizeEstimateLineItems(
+    payload.lineItems,
+    fallbackLines,
+  );
   await validateEstimateMaterials(input.orgId, rawLineItems);
   const siteAddressCandidate =
-    normalizeOptionalText(payload.siteAddress, "Site address", ESTIMATE_SITE_ADDRESS_MAX) ||
+    normalizeOptionalText(
+      payload.siteAddress,
+      "Site address",
+      ESTIMATE_SITE_ADDRESS_MAX,
+    ) ||
     existing?.siteAddress ||
     lead?.intakeLocationText ||
     null;
@@ -343,7 +387,10 @@ async function normalizeEstimatePayload(input: {
   });
 }
 
-async function recomputeEstimateTotals(tx: Prisma.TransactionClient, estimateId: string) {
+async function recomputeEstimateTotals(
+  tx: Prisma.TransactionClient,
+  estimateId: string,
+) {
   const estimate = await tx.estimate.findUnique({
     where: { id: estimateId },
     include: {
@@ -372,7 +419,9 @@ async function recomputeEstimateTotals(tx: Prisma.TransactionClient, estimateId:
     select: { total: true },
   });
 
-  const subtotal = roundMoney(freshItems.reduce((sum, line) => sum.plus(line.total), ZERO));
+  const subtotal = roundMoney(
+    freshItems.reduce((sum, line) => sum.plus(line.total), ZERO),
+  );
   const tax = roundMoney(subtotal.mul(estimate.taxRate));
   const total = roundMoney(subtotal.plus(tax));
 
@@ -447,11 +496,18 @@ export async function saveEstimate(input: {
     existingEstimate: existing,
   });
   if (requiresEstimateCustomerFacingReadiness(normalized.status)) {
-    const readinessLead = await resolveEstimateLeadDefaults(input.orgId, normalized.leadId);
+    const readinessLead = await resolveEstimateLeadDefaults(
+      input.orgId,
+      normalized.leadId,
+    );
     const customerFacingIssues = getEstimateCustomerFacingIssues({
       title: normalized.title,
       customerName: normalized.customerName,
-      leadLabel: readinessLead?.contactName || readinessLead?.businessName || readinessLead?.phoneE164 || "",
+      leadLabel:
+        readinessLead?.contactName ||
+        readinessLead?.businessName ||
+        readinessLead?.phoneE164 ||
+        "",
       lineItemCount: normalized.lineItems.length,
       total: Number(normalized.total),
     });
@@ -465,68 +521,79 @@ export async function saveEstimate(input: {
 
   const saved = await prisma.$transaction(async (tx) => {
     const now = new Date();
-    const estimate =
-      existing
-        ? await tx.estimate.update({
-            where: { id: existing.id },
-            data: {
-              leadId: normalized.leadId,
-              title: normalized.title,
-              customerName: normalized.customerName,
-              siteAddress: normalized.siteAddress,
-              projectType: normalized.projectType,
-              description: normalized.description,
-              notes: normalized.notes,
-              terms: normalized.terms,
-              taxRate: normalized.taxRate,
-              taxRateSource: normalized.taxRateSource,
-              taxZipCode: normalized.taxZipCode,
-              taxJurisdiction: normalized.taxJurisdiction,
-              taxLocationCode: normalized.taxLocationCode,
-              taxCalculatedAt: normalized.taxCalculatedAt,
-              subtotal: normalized.subtotal,
-              tax: normalized.tax,
-              total: normalized.total,
-              validUntil: normalized.validUntil,
-              status: normalized.status,
-              sentAt: normalized.status === "SENT" ? existing.sentAt || now : existing.sentAt,
-              viewedAt: normalized.status === "VIEWED" ? existing.viewedAt || now : existing.viewedAt,
-              approvedAt: normalized.status === "APPROVED" ? existing.approvedAt || now : existing.approvedAt,
-              declinedAt: normalized.status === "DECLINED" ? existing.declinedAt || now : existing.declinedAt,
-            },
-            include: estimateDetailInclude,
-          })
-        : await tx.estimate.create({
-            data: {
-              orgId: input.orgId,
-              createdByUserId: input.actorId,
-              estimateNumber: await reserveNextEstimateNumber(tx, input.orgId),
-              leadId: normalized.leadId,
-              title: normalized.title,
-              customerName: normalized.customerName,
-              siteAddress: normalized.siteAddress,
-              projectType: normalized.projectType,
-              description: normalized.description,
-              notes: normalized.notes,
-              terms: normalized.terms,
-              taxRate: normalized.taxRate,
-              taxRateSource: normalized.taxRateSource,
-              taxZipCode: normalized.taxZipCode,
-              taxJurisdiction: normalized.taxJurisdiction,
-              taxLocationCode: normalized.taxLocationCode,
-              taxCalculatedAt: normalized.taxCalculatedAt,
-              subtotal: normalized.subtotal,
-              tax: normalized.tax,
-              total: normalized.total,
-              validUntil: normalized.validUntil,
-              status: normalized.status,
-              sentAt: normalized.status === "SENT" ? now : null,
-              viewedAt: normalized.status === "VIEWED" ? now : null,
-              approvedAt: normalized.status === "APPROVED" ? now : null,
-              declinedAt: normalized.status === "DECLINED" ? now : null,
-            },
-            include: estimateDetailInclude,
-          });
+    const estimate = existing
+      ? await tx.estimate.update({
+          where: { id: existing.id },
+          data: {
+            leadId: normalized.leadId,
+            title: normalized.title,
+            customerName: normalized.customerName,
+            siteAddress: normalized.siteAddress,
+            projectType: normalized.projectType,
+            description: normalized.description,
+            notes: normalized.notes,
+            terms: normalized.terms,
+            taxRate: normalized.taxRate,
+            taxRateSource: normalized.taxRateSource,
+            taxZipCode: normalized.taxZipCode,
+            taxJurisdiction: normalized.taxJurisdiction,
+            taxLocationCode: normalized.taxLocationCode,
+            taxCalculatedAt: normalized.taxCalculatedAt,
+            subtotal: normalized.subtotal,
+            tax: normalized.tax,
+            total: normalized.total,
+            validUntil: normalized.validUntil,
+            status: normalized.status,
+            sentAt:
+              normalized.status === "SENT"
+                ? existing.sentAt || now
+                : existing.sentAt,
+            viewedAt:
+              normalized.status === "VIEWED"
+                ? existing.viewedAt || now
+                : existing.viewedAt,
+            approvedAt:
+              normalized.status === "APPROVED"
+                ? existing.approvedAt || now
+                : existing.approvedAt,
+            declinedAt:
+              normalized.status === "DECLINED"
+                ? existing.declinedAt || now
+                : existing.declinedAt,
+          },
+          include: estimateDetailInclude,
+        })
+      : await tx.estimate.create({
+          data: {
+            orgId: input.orgId,
+            createdByUserId: input.actorId,
+            estimateNumber: await reserveNextEstimateNumber(tx, input.orgId),
+            leadId: normalized.leadId,
+            title: normalized.title,
+            customerName: normalized.customerName,
+            siteAddress: normalized.siteAddress,
+            projectType: normalized.projectType,
+            description: normalized.description,
+            notes: normalized.notes,
+            terms: normalized.terms,
+            taxRate: normalized.taxRate,
+            taxRateSource: normalized.taxRateSource,
+            taxZipCode: normalized.taxZipCode,
+            taxJurisdiction: normalized.taxJurisdiction,
+            taxLocationCode: normalized.taxLocationCode,
+            taxCalculatedAt: normalized.taxCalculatedAt,
+            subtotal: normalized.subtotal,
+            tax: normalized.tax,
+            total: normalized.total,
+            validUntil: normalized.validUntil,
+            status: normalized.status,
+            sentAt: normalized.status === "SENT" ? now : null,
+            viewedAt: normalized.status === "VIEWED" ? now : null,
+            approvedAt: normalized.status === "APPROVED" ? now : null,
+            declinedAt: normalized.status === "DECLINED" ? now : null,
+          },
+          include: estimateDetailInclude,
+        });
 
     await tx.estimateLineItem.deleteMany({
       where: { estimateId: estimate.id },
@@ -687,7 +754,13 @@ export async function addEstimateLineItem(input: {
 
   const payload = input.payload || {};
   const materialId = normalizeOptionalId(payload.materialId);
-  let material: { id: string; name: string; unit: string; sellPrice: number; notes: string | null } | null = null;
+  let material: {
+    id: string;
+    name: string;
+    unit: string;
+    sellPrice: number;
+    notes: string | null;
+  } | null = null;
   if (materialId) {
     material = await prisma.material.findFirst({
       where: {
@@ -711,16 +784,31 @@ export async function addEstimateLineItem(input: {
   const type = material ? "MATERIAL" : normalizeLineType(payload.type);
   const sortOrder = (estimate.lineItems[0]?.sortOrder || 0) + 1;
   const name =
-    normalizeOptionalText(payload.name, "Line item name", ESTIMATE_LINE_DESCRIPTION_MAX) ||
+    normalizeOptionalText(
+      payload.name,
+      "Line item name",
+      ESTIMATE_LINE_DESCRIPTION_MAX,
+    ) ||
     material?.name ||
     (type === "LABOR" ? "Labor" : "New Line Item");
   const description =
-    normalizeOptionalText(payload.description, "Line item description", ESTIMATE_DESCRIPTION_MAX) ||
+    normalizeOptionalText(
+      payload.description,
+      "Line item description",
+      ESTIMATE_DESCRIPTION_MAX,
+    ) ||
     material?.notes ||
     null;
-  const quantity = normalizeNonNegativeDecimal(payload.quantity ?? "1", "Line item quantity");
+  const quantity = normalizeNonNegativeDecimal(
+    payload.quantity ?? "1",
+    "Line item quantity",
+  );
   const unit =
-    normalizeOptionalText(payload.unit, "Line item unit", ESTIMATE_LINE_UNIT_MAX) ||
+    normalizeOptionalText(
+      payload.unit,
+      "Line item unit",
+      ESTIMATE_LINE_UNIT_MAX,
+    ) ||
     material?.unit ||
     (type === "LABOR" ? "hours" : "each");
   const unitPrice = normalizeNonNegativeDecimal(
@@ -827,7 +915,10 @@ export async function markEstimateSent(input: {
   }
 
   if (existing.status === "CONVERTED" || existing.status === "APPROVED") {
-    throw new AppApiError("This estimate is no longer sendable from the internal portal flow.", 400);
+    throw new AppApiError(
+      "This estimate is no longer sendable from the internal portal flow.",
+      400,
+    );
   }
 
   const sent = await prisma.$transaction(async (tx) => {
@@ -862,7 +953,10 @@ async function resolveCustomerForEstimateConversion(input: {
   actorId: string | null;
 }) {
   if (!input.estimate.leadId) {
-    throw new AppApiError("Attach a lead before sending this estimate into dispatch or invoicing.", 400);
+    throw new AppApiError(
+      "Attach a lead before sending this estimate into dispatch or invoicing.",
+      400,
+    );
   }
 
   const lead = await input.tx.lead.findUnique({
@@ -894,9 +988,14 @@ async function resolveCustomerForEstimateConversion(input: {
     data: {
       orgId: lead.orgId,
       createdByUserId: input.actorId,
-      name: input.estimate.customerName || lead.contactName || lead.businessName || input.estimate.title,
+      name:
+        input.estimate.customerName ||
+        lead.contactName ||
+        lead.businessName ||
+        input.estimate.title,
       phoneE164: lead.phoneE164,
-      addressLine: input.estimate.siteAddress || lead.intakeLocationText || null,
+      addressLine:
+        input.estimate.siteAddress || lead.intakeLocationText || null,
     },
     select: { id: true },
   });
@@ -945,11 +1044,17 @@ export async function convertEstimate(input: {
   }
 
   if (existing.lineItems.length === 0) {
-    throw new AppApiError("Add at least one line item before converting this estimate.", 400);
+    throw new AppApiError(
+      "Add at least one line item before converting this estimate.",
+      400,
+    );
   }
 
   if (input.createInvoice && existing.total.lte(0)) {
-    throw new AppApiError("Set a positive total before creating an invoice from this estimate.", 400);
+    throw new AppApiError(
+      "Set a positive total before creating an invoice from this estimate.",
+      400,
+    );
   }
 
   const result = await prisma.$transaction(async (tx) => {
@@ -962,14 +1067,13 @@ export async function convertEstimate(input: {
     };
     const dispatchEvents: DispatchPersistedJobEvent[] = [];
     const shouldEnsureOperationalJob = input.createJob || input.createInvoice;
-    const resolvedCustomer =
-      shouldEnsureOperationalJob
-        ? await resolveCustomerForEstimateConversion({
-            tx,
-            estimate: existing,
-            actorId: input.actorId,
-          })
-        : null;
+    const resolvedCustomer = shouldEnsureOperationalJob
+      ? await resolveCustomerForEstimateConversion({
+          tx,
+          estimate: existing,
+          actorId: input.actorId,
+        })
+      : null;
     const reusableOperationalJob =
       shouldEnsureOperationalJob && resolvedCustomer
         ? await findOperationalJobForLead(tx, {
@@ -982,13 +1086,28 @@ export async function convertEstimate(input: {
 
     if (shouldEnsureOperationalJob) {
       const jobStatus: JobStatus = "DRAFT";
-      const mergedNotes = mergeJobNotes(reusableOperationalJob?.notes, existing.description, existing.notes);
+      const mergedNotes = mergeJobNotes(
+        reusableOperationalJob?.notes,
+        existing.description,
+        existing.notes,
+      );
       const customerName =
-        existing.customerName || existing.lead?.contactName || existing.lead?.businessName || existing.title;
-      const phone = resolvedCustomer?.phoneE164 || existing.lead?.phoneE164 || null;
-      const address = existing.siteAddress || reusableOperationalJob?.address || "";
-      const serviceType = existing.projectType || reusableOperationalJob?.serviceType || "Project";
-      const projectType = existing.projectType || reusableOperationalJob?.projectType || "Project";
+        existing.customerName ||
+        existing.lead?.contactName ||
+        existing.lead?.businessName ||
+        existing.title;
+      const phone =
+        resolvedCustomer?.phoneE164 || existing.lead?.phoneE164 || null;
+      const address =
+        existing.siteAddress || reusableOperationalJob?.address || "";
+      const serviceType =
+        existing.projectType ||
+        reusableOperationalJob?.serviceType ||
+        "Project";
+      const projectType =
+        existing.projectType ||
+        reusableOperationalJob?.projectType ||
+        "Project";
 
       if (reusableOperationalJob) {
         createdJobId = reusableOperationalJob.id;
@@ -1005,7 +1124,8 @@ export async function convertEstimate(input: {
             projectType,
             notes: mergedNotes,
             status:
-              reusableOperationalJob.status === "COMPLETED" || reusableOperationalJob.status === "CANCELLED"
+              reusableOperationalJob.status === "COMPLETED" ||
+              reusableOperationalJob.status === "CANCELLED"
                 ? "DRAFT"
                 : reusableOperationalJob.status,
           },
@@ -1032,12 +1152,20 @@ export async function convertEstimate(input: {
         createdJobId = job.id;
       }
 
-      const materialLines = existing.lineItems.filter((line) => line.type !== "LABOR");
-      const laborLines = existing.lineItems.filter((line) => line.type === "LABOR");
+      const materialLines = existing.lineItems.filter(
+        (line) => line.type !== "LABOR",
+      );
+      const laborLines = existing.lineItems.filter(
+        (line) => line.type === "LABOR",
+      );
       const targetJobId = createdJobId;
       const [materialCount, laborCount] = await Promise.all([
-        targetJobId ? tx.jobMaterial.count({ where: { jobId: targetJobId } }) : Promise.resolve(0),
-        targetJobId ? tx.jobLabor.count({ where: { jobId: targetJobId } }) : Promise.resolve(0),
+        targetJobId
+          ? tx.jobMaterial.count({ where: { jobId: targetJobId } })
+          : Promise.resolve(0),
+        targetJobId
+          ? tx.jobLabor.count({ where: { jobId: targetJobId } })
+          : Promise.resolve(0),
       ]);
 
       if (targetJobId && materialLines.length > 0 && materialCount === 0) {
@@ -1127,19 +1255,29 @@ export async function convertEstimate(input: {
       }
       const issueDate = new Date();
       const dueDate = computeInvoiceDueDate(issueDate, DEFAULT_INVOICE_TERMS);
-      const invoiceNumber = await reserveNextInvoiceNumber(tx, existing.orgId, issueDate);
+      const invoiceNumber = await reserveNextInvoiceNumber(
+        tx,
+        existing.orgId,
+        issueDate,
+      );
       const invoice = await tx.invoice.create({
         data: {
           orgId: existing.orgId,
           legacyLeadId: resolvedCustomer.leadId,
           sourceEstimateId: existing.id,
-          sourceJobId: createdJobId || reusableOperationalJob?.id || existing.jobId || null,
+          sourceJobId:
+            createdJobId ||
+            reusableOperationalJob?.id ||
+            existing.jobId ||
+            null,
           customerId: resolvedCustomer.customerId,
           invoiceNumber,
           status: "DRAFT",
           issueDate,
           dueDate,
-          notes: [existing.notes, existing.terms].filter(Boolean).join("\n\n") || null,
+          notes:
+            [existing.notes, existing.terms].filter(Boolean).join("\n\n") ||
+            null,
           createdByUserId: input.actorId,
           taxRate: existing.taxRate,
           subtotal: existing.subtotal,
@@ -1179,7 +1317,9 @@ export async function convertEstimate(input: {
       where: { id: existing.id },
       data: {
         status: "CONVERTED",
-        ...buildEstimateAttachmentData(createdJobId || reusableOperationalJob?.id || existing.jobId),
+        ...buildEstimateAttachmentData(
+          createdJobId || reusableOperationalJob?.id || existing.jobId,
+        ),
       },
       include: estimateDetailInclude,
     });
@@ -1195,6 +1335,12 @@ export async function convertEstimate(input: {
 
   if (result.jobId && result.dispatchEvents.length > 0) {
     await maybeSendDispatchCustomerNotifications({
+      orgId: input.orgId,
+      jobId: result.jobId,
+      actorUserId: input.actorId,
+      events: result.dispatchEvents,
+    });
+    await maybeSendOrgDispatchNotifications({
       orgId: input.orgId,
       jobId: result.jobId,
       actorUserId: input.actorId,

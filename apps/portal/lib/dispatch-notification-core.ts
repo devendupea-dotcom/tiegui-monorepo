@@ -1,5 +1,8 @@
 import type { JobEventType, Prisma } from "@prisma/client";
-import { bookingEventTypes, deriveJobBookingProjection } from "@/lib/booking-read-model";
+import {
+  bookingEventTypes,
+  deriveJobBookingProjection,
+} from "@/lib/booking-read-model";
 import {
   describeDispatchNotificationBlockedReason,
   dispatchStatusFromDb,
@@ -97,19 +100,27 @@ export type DispatchCustomerCommunicationState = {
 };
 
 export type DispatchManualFollowThroughState = NonNullable<
-  NonNullable<DispatchCustomerCommunicationState["lastCustomerUpdate"]>["manualFollowThrough"]
+  NonNullable<
+    DispatchCustomerCommunicationState["lastCustomerUpdate"]
+  >["manualFollowThrough"]
 >;
 
 export type DispatchManualContactOutcomeState = NonNullable<
-  NonNullable<DispatchCustomerCommunicationState["lastCustomerUpdate"]>["manualContactOutcome"]
+  NonNullable<
+    DispatchCustomerCommunicationState["lastCustomerUpdate"]
+  >["manualContactOutcome"]
 >;
 
 export type DispatchCustomerResponseAfterSendState = NonNullable<
-  NonNullable<DispatchCustomerCommunicationState["lastCustomerUpdate"]>["customerResponseAfterSend"]
+  NonNullable<
+    DispatchCustomerCommunicationState["lastCustomerUpdate"]
+  >["customerResponseAfterSend"]
 >;
 
 export type DispatchOperatorFollowUpAfterResponseState = NonNullable<
-  NonNullable<DispatchCustomerCommunicationState["lastCustomerUpdate"]>["operatorFollowUpAfterResponse"]
+  NonNullable<
+    DispatchCustomerCommunicationState["lastCustomerUpdate"]
+  >["operatorFollowUpAfterResponse"]
 >;
 
 export const dispatchCustomerNotificationJobSelect = {
@@ -120,6 +131,7 @@ export const dispatchCustomerNotificationJobSelect = {
   customerName: true,
   phone: true,
   serviceType: true,
+  address: true,
   scheduledDate: true,
   scheduledStartTime: true,
   scheduledEndTime: true,
@@ -186,7 +198,10 @@ export type DispatchCustomerNotificationReadiness = {
   toNumberE164: string | null;
 };
 
-export type DispatchNotificationAttemptOutcome = "sent" | "failed" | "suppressed";
+export type DispatchNotificationAttemptOutcome =
+  | "sent"
+  | "failed"
+  | "suppressed";
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -195,12 +210,18 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export function recordString(record: Record<string, unknown> | null, key: string): string | null {
+export function recordString(
+  record: Record<string, unknown> | null,
+  key: string,
+): string | null {
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-export function recordDate(record: Record<string, unknown> | null, key: string): Date | null {
+export function recordDate(
+  record: Record<string, unknown> | null,
+  key: string,
+): Date | null {
   const value = record?.[key];
   if (typeof value !== "string" || !value.trim()) {
     return null;
@@ -210,16 +231,27 @@ export function recordDate(record: Record<string, unknown> | null, key: string):
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-export function recordBoolean(record: Record<string, unknown> | null, key: string): boolean {
+export function recordBoolean(
+  record: Record<string, unknown> | null,
+  key: string,
+): boolean {
   const value = record?.[key];
   return value === true;
 }
 
-export function getDispatchNotificationTimeZone(job: DispatchCustomerNotificationJobRecord): string {
-  return job.org.messagingSettings?.timezone || job.org.dashboardConfig?.calendarTimezone || "America/Los_Angeles";
+export function getDispatchNotificationTimeZone(
+  job: DispatchCustomerNotificationJobRecord,
+): string {
+  return (
+    job.org.messagingSettings?.timezone ||
+    job.org.dashboardConfig?.calendarTimezone ||
+    "America/Los_Angeles"
+  );
 }
 
-export function getDispatchNotificationSchedule(job: DispatchCustomerNotificationJobRecord) {
+export function getDispatchNotificationSchedule(
+  job: DispatchCustomerNotificationJobRecord,
+) {
   const projection = deriveJobBookingProjection({
     events: job.calendarEvents,
     timeZone: job.org.dashboardConfig?.calendarTimezone || null,
@@ -234,8 +266,14 @@ export function getDispatchNotificationSchedule(job: DispatchCustomerNotificatio
   };
 }
 
-function requiresActiveBookingForDispatchNotification(status: DispatchStatusValue): boolean {
-  return status === "scheduled" || status === "on_the_way" || status === "rescheduled";
+function requiresActiveBookingForDispatchNotification(
+  status: DispatchStatusValue,
+): boolean {
+  return (
+    status === "scheduled" ||
+    status === "on_the_way" ||
+    status === "rescheduled"
+  );
 }
 
 export function buildDispatchCustomerNotificationReadiness(input: {
@@ -248,7 +286,9 @@ export function buildDispatchCustomerNotificationReadiness(input: {
   const schedule = getDispatchNotificationSchedule(input.job);
   const hasUsableSchedule =
     Boolean(schedule.scheduledDate) &&
-    (requiresActiveBookingForDispatchNotification(input.candidate.notificationStatus)
+    (requiresActiveBookingForDispatchNotification(
+      input.candidate.notificationStatus,
+    )
       ? schedule.hasActiveBooking
       : schedule.hasBookingHistory);
   const previewBody = hasUsableSchedule
@@ -266,7 +306,10 @@ export function buildDispatchCustomerNotificationReadiness(input: {
   const blockedReason = describeDispatchNotificationBlockedReason({
     smsEnabled: input.settings.smsEnabled,
     canSend: input.settings.canSend,
-    notificationTypeEnabled: shouldSendDispatchStatusNotification(input.settings, input.candidate.notificationStatus),
+    notificationTypeEnabled: shouldSendDispatchStatusNotification(
+      input.settings,
+      input.candidate.notificationStatus,
+    ),
     hasCustomerPhone: Boolean(toNumberE164),
     hasScheduledDate: hasUsableSchedule,
     optedOut: input.job.lead?.status === "DNC",
@@ -293,7 +336,9 @@ export function buildDispatchNotificationIdempotencyKey(input: {
   status: DispatchStatusValue;
 }) {
   return buildCommunicationIdempotencyKey(
-    input.kind === "schedule_change" ? "dispatch-schedule-sms" : "dispatch-status-sms",
+    input.kind === "schedule_change"
+      ? "dispatch-schedule-sms"
+      : "dispatch-status-sms",
     input.orgId,
     input.eventId,
     input.status,
@@ -312,7 +357,9 @@ export function buildDispatchNotificationAttemptIdempotencyKey(input: {
   }
 
   return buildCommunicationIdempotencyKey(
-    input.kind === "schedule_change" ? `dispatch-schedule-sms-${input.outcome}` : `dispatch-status-sms-${input.outcome}`,
+    input.kind === "schedule_change"
+      ? `dispatch-schedule-sms-${input.outcome}`
+      : `dispatch-status-sms-${input.outcome}`,
     input.orgId,
     input.eventId,
     input.status,
@@ -351,7 +398,10 @@ export function selectAutomaticDispatchCustomerNotificationCandidate(input: {
 }): DispatchCustomerNotificationCandidate | null {
   const event = input.events.find((candidate) => {
     if (candidate.eventType === "STATUS_CHANGED") {
-      return typeof candidate.toValue === "string" && candidate.toValue.trim() === input.status;
+      return (
+        typeof candidate.toValue === "string" &&
+        candidate.toValue.trim() === input.status
+      );
     }
     return candidate.eventType === "JOB_CREATED";
   });
@@ -388,7 +438,9 @@ export function selectLatestDispatchScheduleChangeCandidate(input: {
   }
 
   const event = input.events.find(
-    (candidate) => candidate.eventType === "JOB_UPDATED" && isMeaningfulDispatchScheduleChange(candidate.metadata),
+    (candidate) =>
+      candidate.eventType === "JOB_UPDATED" &&
+      isMeaningfulDispatchScheduleChange(candidate.metadata),
   );
 
   if (!event) {
@@ -407,10 +459,14 @@ export function selectLatestDispatchScheduleChangeCandidate(input: {
   };
 }
 
-export function resolveDispatchNotificationStatus(value: string | null): DispatchStatusValue | null {
+export function resolveDispatchNotificationStatus(
+  value: string | null,
+): DispatchStatusValue | null {
   return value && isDispatchStatusValue(value) ? value : null;
 }
 
-export function resolveDispatchNotificationEventStatus(jobDispatchStatus: DispatchCustomerNotificationJobRecord["dispatchStatus"]) {
+export function resolveDispatchNotificationEventStatus(
+  jobDispatchStatus: DispatchCustomerNotificationJobRecord["dispatchStatus"],
+) {
   return dispatchStatusFromDb(jobDispatchStatus);
 }

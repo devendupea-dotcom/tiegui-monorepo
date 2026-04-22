@@ -15,7 +15,11 @@ import {
   deriveJobBookingProjection,
   isActiveBookingEventStatus,
 } from "@/lib/booking-read-model";
-import { maybeSendDispatchCustomerNotifications, type DispatchPersistedJobEvent } from "@/lib/dispatch-notifications";
+import {
+  maybeSendDispatchCustomerNotifications,
+  type DispatchPersistedJobEvent,
+} from "@/lib/dispatch-notifications";
+import { maybeSendOrgDispatchNotifications } from "@/lib/org-owner-notifications";
 import {
   buildOperationalJobEstimateLinkData,
   buildEstimateAttachmentData,
@@ -224,7 +228,9 @@ async function findLinkedBookingEvent(input: {
 }
 
 function requiresLinkedBookingForExecution(status: string) {
-  return status === "on_the_way" || status === "on_site" || status === "completed";
+  return (
+    status === "on_the_way" || status === "on_site" || status === "completed"
+  );
 }
 
 function mapDispatchStatusToEventStatus(status: string) {
@@ -255,7 +261,10 @@ function buildUnscheduledJobMirror(input: {
   };
 }
 
-async function resolveDispatchCalendarTimeZone(tx: Prisma.TransactionClient, orgId: string) {
+async function resolveDispatchCalendarTimeZone(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+) {
   const config = await tx.orgDashboardConfig.findUnique({
     where: { orgId },
     select: {
@@ -328,7 +337,10 @@ async function ensureDispatchCrewsForOrgWithClient(
           },
         });
       } catch (error) {
-        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+        if (
+          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+          error.code !== "P2002"
+        ) {
           throw error;
         }
       }
@@ -352,7 +364,10 @@ async function getCrewMapForOrg(input: {
   orgId: string;
   tx: DispatchDbClient;
 }): Promise<Map<string, { id: string; name: string; active: boolean }>> {
-  const crews = await ensureDispatchCrewsForOrgWithClient(input.orgId, input.tx);
+  const crews = await ensureDispatchCrewsForOrgWithClient(
+    input.orgId,
+    input.tx,
+  );
   return new Map(crews.map((crew) => [crew.id, crew] as const));
 }
 
@@ -377,7 +392,10 @@ async function assertCrewBelongsToOrg(input: {
   });
 
   if (!crew) {
-    throw new AppApiError("Assigned crew was not found for this workspace.", 400);
+    throw new AppApiError(
+      "Assigned crew was not found for this workspace.",
+      400,
+    );
   }
 
   return crew;
@@ -404,7 +422,10 @@ async function assertCustomerBelongsToOrg(input: {
   });
 
   if (!customer) {
-    throw new AppApiError("Selected customer was not found for this workspace.", 400);
+    throw new AppApiError(
+      "Selected customer was not found for this workspace.",
+      400,
+    );
   }
 
   return customer;
@@ -435,7 +456,10 @@ async function assertLeadBelongsToOrg(input: {
   });
 
   if (!lead) {
-    throw new AppApiError("Selected lead was not found for this workspace.", 400);
+    throw new AppApiError(
+      "Selected lead was not found for this workspace.",
+      400,
+    );
   }
 
   return lead;
@@ -461,7 +485,10 @@ async function assertLinkedEstimateBelongsToOrg(input: {
   });
 
   if (!estimate) {
-    throw new AppApiError("Linked estimate was not found for this workspace.", 400);
+    throw new AppApiError(
+      "Linked estimate was not found for this workspace.",
+      400,
+    );
   }
 
   return estimate;
@@ -584,7 +611,9 @@ export async function getDispatchDaySnapshot(input: {
       },
     }),
   ]);
-  const scheduleTimeZone = ensureTimeZone(config?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE);
+  const scheduleTimeZone = ensureTimeZone(
+    config?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE,
+  );
 
   const jobs = await prisma.job.findMany({
     where: {
@@ -639,33 +668,45 @@ export async function getDispatchDaySnapshot(input: {
 
   const serializedJobs = jobs
     .map((job) =>
-      serializeDispatchJobWithSchedule(job, todayDateKey, buildDispatchScheduleProjection({
+      serializeDispatchJobWithSchedule(
         job,
-        timeZone: scheduleTimeZone,
-      })),
+        todayDateKey,
+        buildDispatchScheduleProjection({
+          job,
+          timeZone: scheduleTimeZone,
+        }),
+      ),
     )
     .sort(compareDispatchJobs);
   const countsByCrew = new Map<string, number>();
   for (const job of serializedJobs) {
     if (!job.assignedCrewId) continue;
-    countsByCrew.set(job.assignedCrewId, (countsByCrew.get(job.assignedCrewId) || 0) + 1);
+    countsByCrew.set(
+      job.assignedCrewId,
+      (countsByCrew.get(job.assignedCrewId) || 0) + 1,
+    );
   }
 
-  const visibleCrews = crews.filter((crew) => crew.active || countsByCrew.has(crew.id));
+  const visibleCrews = crews.filter(
+    (crew) => crew.active || countsByCrew.has(crew.id),
+  );
 
   return {
     date: input.date,
-    crews: visibleCrews.map((crew): DispatchCrewSummary => ({
-      id: crew.id,
-      name: crew.name,
-      active: crew.active,
-      jobCount: countsByCrew.get(crew.id) || 0,
-    })),
+    crews: visibleCrews.map(
+      (crew): DispatchCrewSummary => ({
+        id: crew.id,
+        name: crew.name,
+        active: crew.active,
+        jobCount: countsByCrew.get(crew.id) || 0,
+      }),
+    ),
     jobs: serializedJobs,
     counts: {
       total: serializedJobs.length,
       unassigned: serializedJobs.filter((job) => !job.assignedCrewId).length,
-      completed: serializedJobs.filter((job) => job.status === "completed").length,
+      completed: serializedJobs.filter((job) => job.status === "completed")
+        .length,
       overdue: serializedJobs.filter((job) => job.isOverdue).length,
     },
   };
@@ -704,7 +745,10 @@ export async function createDispatchJob(input: {
     });
 
     if (customer?.id && lead?.customerId && customer.id !== lead.customerId) {
-      throw new AppApiError("Selected lead belongs to a different customer.", 400);
+      throw new AppApiError(
+        "Selected lead belongs to a different customer.",
+        400,
+      );
     }
 
     const customerId = await resolveDispatchCustomerId({
@@ -720,14 +764,21 @@ export async function createDispatchJob(input: {
       jobId: "__pending_dispatch_job__",
       leadId: lead?.id || null,
     });
-    const linkableBookingEvent = bookingEvent && !bookingEvent.jobId ? bookingEvent : null;
+    const linkableBookingEvent =
+      bookingEvent && !bookingEvent.jobId ? bookingEvent : null;
     if (
-      requiresLinkedBookingForExecution(normalized.status)
-      && (!linkableBookingEvent || !isActiveBookingEventStatus(linkableBookingEvent.status))
+      requiresLinkedBookingForExecution(normalized.status) &&
+      (!linkableBookingEvent ||
+        !isActiveBookingEventStatus(linkableBookingEvent.status))
     ) {
-      throw new AppApiError("A linked calendar booking is required before advancing dispatch execution.", 409);
+      throw new AppApiError(
+        "A linked calendar booking is required before advancing dispatch execution.",
+        409,
+      );
     }
-    const bookingScheduleTimeZone = linkableBookingEvent ? await resolveDispatchCalendarTimeZone(tx, input.orgId) : null;
+    const bookingScheduleTimeZone = linkableBookingEvent
+      ? await resolveDispatchCalendarTimeZone(tx, input.orgId)
+      : null;
     const mirroredScheduledDateKey =
       linkableBookingEvent && bookingScheduleTimeZone
         ? zonedDateString(linkableBookingEvent.startAt, bookingScheduleTimeZone)
@@ -740,9 +791,15 @@ export async function createDispatchJob(input: {
       linkableBookingEvent?.endAt && bookingScheduleTimeZone
         ? zonedTimeString(linkableBookingEvent.endAt, bookingScheduleTimeZone)
         : null;
-    const effectiveScheduledDateKey = linkableBookingEvent ? mirroredScheduledDateKey : normalized.scheduledDateKey;
-    const effectiveScheduledStartTime = linkableBookingEvent ? mirroredScheduledStartTime : normalized.scheduledStartTime;
-    const effectiveScheduledEndTime = linkableBookingEvent ? mirroredScheduledEndTime : normalized.scheduledEndTime;
+    const effectiveScheduledDateKey = linkableBookingEvent
+      ? mirroredScheduledDateKey
+      : normalized.scheduledDateKey;
+    const effectiveScheduledStartTime = linkableBookingEvent
+      ? mirroredScheduledStartTime
+      : normalized.scheduledStartTime;
+    const effectiveScheduledEndTime = linkableBookingEvent
+      ? mirroredScheduledEndTime
+      : normalized.scheduledEndTime;
     const crewOrder = effectiveScheduledDateKey
       ? await getNextCrewOrder({
           orgId: input.orgId,
@@ -865,22 +922,26 @@ export async function createDispatchJob(input: {
     });
 
     return {
-      job: serializeDispatchJobWithSchedule(
-        job,
-        todayDateKey,
-        {
-          scheduledDate: effectiveScheduledDateKey ? new Date(`${effectiveScheduledDateKey}T00:00:00.000Z`) : null,
-          scheduledStartTime: effectiveScheduledStartTime,
-          scheduledEndTime: effectiveScheduledEndTime,
-          hasBookingHistory: Boolean(linkableBookingEvent),
-          hasActiveBooking: Boolean(linkableBookingEvent),
-        },
-      ),
+      job: serializeDispatchJobWithSchedule(job, todayDateKey, {
+        scheduledDate: effectiveScheduledDateKey
+          ? new Date(`${effectiveScheduledDateKey}T00:00:00.000Z`)
+          : null,
+        scheduledStartTime: effectiveScheduledStartTime,
+        scheduledEndTime: effectiveScheduledEndTime,
+        hasBookingHistory: Boolean(linkableBookingEvent),
+        hasActiveBooking: Boolean(linkableBookingEvent),
+      }),
       createdEvents,
     };
   });
 
   await maybeSendDispatchCustomerNotifications({
+    orgId: input.orgId,
+    actorUserId: input.actorUserId,
+    jobId: result.job.id,
+    events: result.createdEvents,
+  });
+  await maybeSendOrgDispatchNotifications({
     orgId: input.orgId,
     actorUserId: input.actorUserId,
     jobId: result.job.id,
@@ -919,22 +980,35 @@ export async function updateDispatchJob(input: {
     throw new AppApiError("Dispatch job not found.", 404);
   }
 
-  const scheduleTimeZone = ensureTimeZone(config?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE);
+  const scheduleTimeZone = ensureTimeZone(
+    config?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE,
+  );
   const existingScheduleProjection = buildDispatchScheduleProjection({
     job: existing,
     timeZone: scheduleTimeZone,
   });
-  const normalized = normalizeDispatchJobPayload(buildMergedDispatchPayload({
-    ...existing,
-    scheduledDate:
-      existingScheduleProjection.hasActiveBooking && existingScheduleProjection.scheduledDate
-        ? formatDispatchDateKey(existingScheduleProjection.scheduledDate)
-        : null,
-    scheduledStartTime: existingScheduleProjection.hasActiveBooking ? existingScheduleProjection.scheduledStartTime : null,
-    scheduledEndTime: existingScheduleProjection.hasActiveBooking ? existingScheduleProjection.scheduledEndTime : null,
-  }, input.payload), {
-    allowMissingScheduledDate: true,
-  });
+  const normalized = normalizeDispatchJobPayload(
+    buildMergedDispatchPayload(
+      {
+        ...existing,
+        scheduledDate:
+          existingScheduleProjection.hasActiveBooking &&
+          existingScheduleProjection.scheduledDate
+            ? formatDispatchDateKey(existingScheduleProjection.scheduledDate)
+            : null,
+        scheduledStartTime: existingScheduleProjection.hasActiveBooking
+          ? existingScheduleProjection.scheduledStartTime
+          : null,
+        scheduledEndTime: existingScheduleProjection.hasActiveBooking
+          ? existingScheduleProjection.scheduledEndTime
+          : null,
+      },
+      input.payload,
+    ),
+    {
+      allowMissingScheduledDate: true,
+    },
+  );
   const createdEvents = await prisma.$transaction(async (tx) => {
     const crewMap = await getCrewMapForOrg({
       orgId: input.orgId,
@@ -950,8 +1024,15 @@ export async function updateDispatchJob(input: {
       estimateId: normalized.linkedEstimateId,
       tx,
     });
-    if (linkedEstimate?.leadId && normalized.leadId && linkedEstimate.leadId !== normalized.leadId) {
-      throw new AppApiError("Selected lead does not match the linked estimate.", 400);
+    if (
+      linkedEstimate?.leadId &&
+      normalized.leadId &&
+      linkedEstimate.leadId !== normalized.leadId
+    ) {
+      throw new AppApiError(
+        "Selected lead does not match the linked estimate.",
+        400,
+      );
     }
 
     const resolvedLeadId = normalized.leadId || linkedEstimate?.leadId || null;
@@ -967,7 +1048,10 @@ export async function updateDispatchJob(input: {
     });
 
     if (customer?.id && lead?.customerId && customer.id !== lead.customerId) {
-      throw new AppApiError("Selected lead belongs to a different customer.", 400);
+      throw new AppApiError(
+        "Selected lead belongs to a different customer.",
+        400,
+      );
     }
 
     const customerId = await resolveDispatchCustomerId({
@@ -977,7 +1061,9 @@ export async function updateDispatchJob(input: {
       phone: normalized.phone,
       tx,
     });
-    const existingDateKey = existing.scheduledDate ? formatDispatchDateKey(existing.scheduledDate) : null;
+    const existingDateKey = existing.scheduledDate
+      ? formatDispatchDateKey(existing.scheduledDate)
+      : null;
     const nextDispatchStatus = dispatchStatusToDb(normalized.status);
     const nextAssignedCrewId = assignedCrew?.id || null;
     const nextLeadId = lead?.id || null;
@@ -988,7 +1074,9 @@ export async function updateDispatchJob(input: {
       jobId: existing.id,
       leadId: nextLeadId,
     });
-    const bookingScheduleTimeZone = bookingEvent ? await resolveDispatchCalendarTimeZone(tx, input.orgId) : null;
+    const bookingScheduleTimeZone = bookingEvent
+      ? await resolveDispatchCalendarTimeZone(tx, input.orgId)
+      : null;
     const existingBookingDateKey =
       bookingEvent && bookingScheduleTimeZone
         ? zonedDateString(bookingEvent.startAt, bookingScheduleTimeZone)
@@ -1001,17 +1089,30 @@ export async function updateDispatchJob(input: {
       bookingEvent?.endAt && bookingScheduleTimeZone
         ? zonedTimeString(bookingEvent.endAt, bookingScheduleTimeZone)
         : existing.scheduledEndTime;
-    const requestedScheduledDateKey = normalized.scheduledDateKey || existingBookingDateKey;
+    const requestedScheduledDateKey =
+      normalized.scheduledDateKey || existingBookingDateKey;
     const requestedScheduledStartTime = normalized.scheduledStartTime;
     const requestedScheduledEndTime = normalized.scheduledEndTime;
 
-    if (requiresLinkedBookingForExecution(normalized.status) && (!bookingEvent || !isActiveBookingEventStatus(bookingEvent.status))) {
-      throw new AppApiError("A linked calendar booking is required before advancing dispatch execution.", 409);
+    if (
+      requiresLinkedBookingForExecution(normalized.status) &&
+      (!bookingEvent || !isActiveBookingEventStatus(bookingEvent.status))
+    ) {
+      throw new AppApiError(
+        "A linked calendar booking is required before advancing dispatch execution.",
+        409,
+      );
     }
 
-    const effectiveScheduledDateKey = bookingEvent ? requestedScheduledDateKey : normalized.scheduledDateKey;
-    const effectiveScheduledStartTime = bookingEvent ? requestedScheduledStartTime : normalized.scheduledStartTime;
-    const effectiveScheduledEndTime = bookingEvent ? requestedScheduledEndTime : normalized.scheduledEndTime;
+    const effectiveScheduledDateKey = bookingEvent
+      ? requestedScheduledDateKey
+      : normalized.scheduledDateKey;
+    const effectiveScheduledStartTime = bookingEvent
+      ? requestedScheduledStartTime
+      : normalized.scheduledStartTime;
+    const effectiveScheduledEndTime = bookingEvent
+      ? requestedScheduledEndTime
+      : normalized.scheduledEndTime;
 
     let nextCrewOrder = existing.crewOrder;
     const shouldRecomputeCrewOrder =
@@ -1039,8 +1140,14 @@ export async function updateDispatchJob(input: {
         existingBookingEndTime !== requestedScheduledEndTime;
       const nextEventStatus = mapDispatchStatusToEventStatus(normalized.status);
 
-      if ((scheduleChanged || (nextEventStatus && nextEventStatus !== bookingEvent.status)) && requestedScheduledDateKey) {
-        const timeZone = bookingScheduleTimeZone || await resolveDispatchCalendarTimeZone(tx, input.orgId);
+      if (
+        (scheduleChanged ||
+          (nextEventStatus && nextEventStatus !== bookingEvent.status)) &&
+        requestedScheduledDateKey
+      ) {
+        const timeZone =
+          bookingScheduleTimeZone ||
+          (await resolveDispatchCalendarTimeZone(tx, input.orgId));
         const nextStartAt = requestedScheduledStartTime
           ? toUtcFromLocalDateTime({
               date: requestedScheduledDateKey,
@@ -1166,7 +1273,9 @@ export async function updateDispatchJob(input: {
     const events: JobEventInput[] = [];
     if (existing.assignedCrewId !== nextAssignedCrewId) {
       events.push({
-        eventType: existing.assignedCrewId ? "CREW_REASSIGNED" : "CREW_ASSIGNED",
+        eventType: existing.assignedCrewId
+          ? "CREW_REASSIGNED"
+          : "CREW_ASSIGNED",
         fromValue: existing.assignedCrewId,
         toValue: nextAssignedCrewId,
         metadata: {
@@ -1179,9 +1288,13 @@ export async function updateDispatchJob(input: {
             scheduledEndTime: effectiveScheduledEndTime,
             status: normalized.status,
             assignedCrewId: nextAssignedCrewId,
-            assignedCrewName: nextAssignedCrewId ? assignedCrew?.name || null : null,
+            assignedCrewName: nextAssignedCrewId
+              ? assignedCrew?.name || null
+              : null,
           }),
-          fromCrewName: existing.assignedCrewId ? crewMap.get(existing.assignedCrewId)?.name || null : null,
+          fromCrewName: existing.assignedCrewId
+            ? crewMap.get(existing.assignedCrewId)?.name || null
+            : null,
           toCrewName: nextAssignedCrewId ? assignedCrew?.name || null : null,
         },
       });
@@ -1202,9 +1315,13 @@ export async function updateDispatchJob(input: {
             scheduledEndTime: effectiveScheduledEndTime,
             status: normalized.status,
             assignedCrewId: nextAssignedCrewId,
-            assignedCrewName: nextAssignedCrewId ? assignedCrew?.name || null : null,
+            assignedCrewName: nextAssignedCrewId
+              ? assignedCrew?.name || null
+              : null,
           }),
-          fromStatusLabel: formatDispatchStatusLabel(dispatchStatusFromDb(existing.dispatchStatus)),
+          fromStatusLabel: formatDispatchStatusLabel(
+            dispatchStatusFromDb(existing.dispatchStatus),
+          ),
           toStatusLabel: formatDispatchStatusLabel(normalized.status),
         },
       });
@@ -1291,7 +1408,9 @@ export async function updateDispatchJob(input: {
             scheduledEndTime: effectiveScheduledEndTime,
             status: normalized.status,
             assignedCrewId: nextAssignedCrewId,
-            assignedCrewName: nextAssignedCrewId ? assignedCrew?.name || null : null,
+            assignedCrewName: nextAssignedCrewId
+              ? assignedCrew?.name || null
+              : null,
           }),
           ...createJobUpdatedMetadata({
             changes: fieldChanges,
@@ -1313,6 +1432,12 @@ export async function updateDispatchJob(input: {
   });
 
   await maybeSendDispatchCustomerNotifications({
+    orgId: input.orgId,
+    actorUserId: input.actorUserId,
+    jobId: input.jobId,
+    events: createdEvents,
+  });
+  await maybeSendOrgDispatchNotifications({
     orgId: input.orgId,
     actorUserId: input.actorUserId,
     jobId: input.jobId,
@@ -1341,7 +1466,9 @@ export async function getDispatchJobDetail(input: {
       calendarTimezone: true,
     },
   });
-  const scheduleTimeZone = ensureTimeZone(config?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE);
+  const scheduleTimeZone = ensureTimeZone(
+    config?.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE,
+  );
 
   const job = await prisma.job.findFirst({
     where: {
@@ -1422,22 +1549,29 @@ export async function getDispatchJobDetail(input: {
         })
       : [];
 
-  const recentCommunication: DispatchCommunicationItem[] = communicationEvents.map((event) => ({
-    id: event.id,
-    summary: event.summary,
-    channel: event.channel.toLowerCase(),
-    type: event.type.toLowerCase(),
-    occurredAt: event.occurredAt.toISOString(),
-    leadLabel: event.lead
-      ? event.lead.contactName || event.lead.businessName || event.lead.phoneE164
-      : null,
-  }));
+  const recentCommunication: DispatchCommunicationItem[] =
+    communicationEvents.map((event) => ({
+      id: event.id,
+      summary: event.summary,
+      channel: event.channel.toLowerCase(),
+      type: event.type.toLowerCase(),
+      occurredAt: event.occurredAt.toISOString(),
+      leadLabel: event.lead
+        ? event.lead.contactName ||
+          event.lead.businessName ||
+          event.lead.phoneE164
+        : null,
+    }));
 
   return {
-    ...serializeDispatchJobWithSchedule(job, todayDateKey, buildDispatchScheduleProjection({
+    ...serializeDispatchJobWithSchedule(
       job,
-      timeZone: scheduleTimeZone,
-    })),
+      todayDateKey,
+      buildDispatchScheduleProjection({
+        job,
+        timeZone: scheduleTimeZone,
+      }),
+    ),
     linkedEstimate: serializeDispatchEstimate(linkedEstimate),
     recentCommunication,
   };
@@ -1467,16 +1601,25 @@ export async function reorderDispatchJobs(input: {
       orgId: input.orgId,
       tx,
     });
-    const scheduleTimeZone = await resolveDispatchCalendarTimeZone(tx, input.orgId);
+    const scheduleTimeZone = await resolveDispatchCalendarTimeZone(
+      tx,
+      input.orgId,
+    );
 
     for (const column of input.columns) {
       if (!column.crewId) continue;
       const crew = crewMap.get(column.crewId);
       if (!crew) {
-        throw new AppApiError("Board reorder payload included an unknown crew.", 400);
+        throw new AppApiError(
+          "Board reorder payload included an unknown crew.",
+          400,
+        );
       }
       if (!crew.active) {
-        throw new AppApiError("Inactive crews cannot receive new dispatch assignments.", 400);
+        throw new AppApiError(
+          "Inactive crews cannot receive new dispatch assignments.",
+          400,
+        );
       }
     }
 
@@ -1544,7 +1687,10 @@ export async function reorderDispatchJobs(input: {
     });
 
     if (jobs.length !== uniqueIds.size) {
-      throw new AppApiError("One or more dispatch jobs were not found for the selected day.", 404);
+      throw new AppApiError(
+        "One or more dispatch jobs were not found for the selected day.",
+        404,
+      );
     }
 
     const jobsById = new Map(jobs.map((job) => [job.id, job] as const));
@@ -1556,7 +1702,10 @@ export async function reorderDispatchJobs(input: {
 
         const nextCrewId = column.crewId;
         const nextOrder = index;
-        if (existing.assignedCrewId === nextCrewId && existing.crewOrder === nextOrder) {
+        if (
+          existing.assignedCrewId === nextCrewId &&
+          existing.crewOrder === nextOrder
+        ) {
           continue;
         }
 
@@ -1575,11 +1724,15 @@ export async function reorderDispatchJobs(input: {
           job: existing,
           timeZone: scheduleTimeZone,
         });
-        const scheduledDateKey = scheduleProjection.scheduledDate ? formatDispatchDateKey(scheduleProjection.scheduledDate) : input.date;
+        const scheduledDateKey = scheduleProjection.scheduledDate
+          ? formatDispatchDateKey(scheduleProjection.scheduledDate)
+          : input.date;
         const status = dispatchStatusFromDb(existing.dispatchStatus);
         if (existing.assignedCrewId !== nextCrewId) {
           events.push({
-            eventType: existing.assignedCrewId ? "CREW_REASSIGNED" : "CREW_ASSIGNED",
+            eventType: existing.assignedCrewId
+              ? "CREW_REASSIGNED"
+              : "CREW_ASSIGNED",
             fromValue: existing.assignedCrewId,
             toValue: nextCrewId,
             metadata: {
@@ -1592,10 +1745,16 @@ export async function reorderDispatchJobs(input: {
                 scheduledEndTime: scheduleProjection.scheduledEndTime,
                 status,
                 assignedCrewId: nextCrewId,
-                assignedCrewName: nextCrewId ? crewMap.get(nextCrewId)?.name || null : null,
+                assignedCrewName: nextCrewId
+                  ? crewMap.get(nextCrewId)?.name || null
+                  : null,
               }),
-              fromCrewName: existing.assignedCrewId ? crewMap.get(existing.assignedCrewId)?.name || null : null,
-              toCrewName: nextCrewId ? crewMap.get(nextCrewId)?.name || null : null,
+              fromCrewName: existing.assignedCrewId
+                ? crewMap.get(existing.assignedCrewId)?.name || null
+                : null,
+              toCrewName: nextCrewId
+                ? crewMap.get(nextCrewId)?.name || null
+                : null,
             },
           });
         }
@@ -1603,7 +1762,8 @@ export async function reorderDispatchJobs(input: {
         if (existing.crewOrder !== nextOrder) {
           events.push({
             eventType: "JOB_UPDATED",
-            fromValue: existing.crewOrder == null ? null : String(existing.crewOrder),
+            fromValue:
+              existing.crewOrder == null ? null : String(existing.crewOrder),
             toValue: String(nextOrder),
             metadata: {
               ...createDispatchEventMetadataBase({
@@ -1615,12 +1775,17 @@ export async function reorderDispatchJobs(input: {
                 scheduledEndTime: scheduleProjection.scheduledEndTime,
                 status,
                 assignedCrewId: nextCrewId,
-                assignedCrewName: nextCrewId ? crewMap.get(nextCrewId)?.name || null : null,
+                assignedCrewName: nextCrewId
+                  ? crewMap.get(nextCrewId)?.name || null
+                  : null,
               }),
               changes: [
                 {
                   field: "crewOrder",
-                  from: existing.crewOrder == null ? null : String(existing.crewOrder),
+                  from:
+                    existing.crewOrder == null
+                      ? null
+                      : String(existing.crewOrder),
                   to: String(nextOrder),
                 },
               ],
@@ -1648,7 +1813,9 @@ export async function reorderDispatchJobs(input: {
   });
 }
 
-export async function getDispatchCrewSettings(orgId: string): Promise<DispatchCrewManagementItem[]> {
+export async function getDispatchCrewSettings(
+  orgId: string,
+): Promise<DispatchCrewManagementItem[]> {
   const crews = await ensureDispatchCrewsForOrg(orgId);
   const openStatuses = ["SCHEDULED", "ON_THE_WAY", "ON_SITE"] as const;
   const counts = await prisma.job.groupBy({
@@ -1678,7 +1845,9 @@ export async function getDispatchCrewSettings(orgId: string): Promise<DispatchCr
   });
   const openJobCountByCrew = new Map(
     counts
-      .filter((row): row is typeof row & { assignedCrewId: string } => Boolean(row.assignedCrewId))
+      .filter((row): row is typeof row & { assignedCrewId: string } =>
+        Boolean(row.assignedCrewId),
+      )
       .map((row) => [row.assignedCrewId, row._count._all] as const),
   );
 
@@ -1721,7 +1890,8 @@ export async function updateDispatchCrew(input: {
       ? normalizeCrewName(input.payload.name)
       : existing.name;
   const active =
-    input.payload && Object.prototype.hasOwnProperty.call(input.payload, "active")
+    input.payload &&
+    Object.prototype.hasOwnProperty.call(input.payload, "active")
       ? normalizeOptionalBoolean(input.payload.active, existing.active)
       : existing.active;
 
@@ -1747,7 +1917,10 @@ export async function updateDispatchCrew(input: {
     });
 
     if (openAssignments > 0) {
-      throw new AppApiError("Move open jobs off this crew before setting it inactive.", 409);
+      throw new AppApiError(
+        "Move open jobs off this crew before setting it inactive.",
+        409,
+      );
     }
   }
 
@@ -1762,8 +1935,14 @@ export async function updateDispatchCrew(input: {
       },
     });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      throw new AppApiError("Crew name must be unique inside this workspace.", 409);
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      throw new AppApiError(
+        "Crew name must be unique inside this workspace.",
+        409,
+      );
     }
     throw error;
   }
