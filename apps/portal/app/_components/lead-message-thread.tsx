@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 
 type ThreadMessage = {
   id: string;
@@ -29,13 +30,12 @@ type LeadMessageThreadProps = {
 };
 
 function formatMessageTimestamp(value: string): string {
-  const date = new Date(value);
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
+  });
 }
 
 export default function LeadMessageThread({

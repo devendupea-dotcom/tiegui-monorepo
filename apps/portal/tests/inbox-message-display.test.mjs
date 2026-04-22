@@ -33,6 +33,13 @@ test("sanitizes legacy imported bodies before they render in inbox threads", () 
     }),
     "Failed outbound SMS from a legacy imported template.",
   );
+
+  assert.equal(
+    sanitizeConversationMessageBody({
+      body: "settings.ghostTemplateDefault",
+    }),
+    "Legacy imported message hidden for clarity.",
+  );
 });
 
 test("sanitizes list previews without changing normal customer messages", () => {

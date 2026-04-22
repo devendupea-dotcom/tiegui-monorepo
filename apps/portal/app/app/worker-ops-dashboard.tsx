@@ -1,6 +1,14 @@
 import Link from "next/link";
-import { addDays, endOfDay, startOfDay } from "date-fns";
 import type { Prisma } from "@prisma/client";
+import {
+  DEFAULT_CALENDAR_TIMEZONE,
+  addDaysToDateKey,
+  endOfTimeZoneDay,
+  formatDateTimeForDisplay,
+  getUtcRangeForDate,
+  localDateFromUtc,
+  startOfTimeZoneDay,
+} from "@/lib/calendar/dates";
 import type { AnalyticsViewer } from "@/lib/portal-analytics";
 import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
 import { translateStatusLabel } from "@/lib/i18n-labels";
@@ -41,29 +49,32 @@ function formatNumber(value: number, locale: string): string {
 }
 
 function formatTimeLabel(value: Date, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
+  return formatDateTimeForDisplay(value, {
     weekday: "short",
     hour: "numeric",
     minute: "2-digit",
-  }).format(value);
+  }, { locale });
 }
 
 function formatDateLabel(value: Date, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(value);
+  }, { locale });
 }
 
 export default async function WorkerOpsDashboard({ scope, viewer }: WorkerOpsDashboardProps) {
   const t = await getRequestTranslator();
   const locale = getRequestLocale();
   const now = new Date();
-  const todayStart = startOfDay(now);
-  const todayEnd = endOfDay(now);
-  const nextWeek = addDays(todayStart, 7);
+  const todayStart = startOfTimeZoneDay(now, DEFAULT_CALENDAR_TIMEZONE);
+  const todayEnd = endOfTimeZoneDay(now, DEFAULT_CALENDAR_TIMEZONE);
+  const nextWeek = getUtcRangeForDate({
+    date: addDaysToDateKey(localDateFromUtc(now, DEFAULT_CALENDAR_TIMEZONE), 7),
+    timeZone: DEFAULT_CALENDAR_TIMEZONE,
+  }).startUtc;
   const leadScope = buildWorkerLeadScope(viewer.id);
   const eventScope = buildWorkerEventScope(viewer.id);
 

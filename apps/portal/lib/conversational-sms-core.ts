@@ -4,6 +4,7 @@ import type { ConversationStage, ConversationTimeframe, LeadIntakeStage } from "
 import { containsLikelyWorkSummaryText } from "@/lib/lead-display";
 import { normalizeLeadCity } from "@/lib/lead-location";
 import { resolveMessageLocale } from "@/lib/message-language";
+import type { SmsAgentPlaybook } from "@/lib/conversational-sms-agent-playbook";
 import { getConversationFollowUpCadenceMinutes } from "@/lib/conversational-sms-policy";
 import {
   getSmsToneTemplates,
@@ -69,11 +70,14 @@ export type ConversationOrgConfig = {
   smsFromNumberE164: string | null;
   smsQuietHoursStartMinute: number;
   smsQuietHoursEndMinute: number;
+  workingHoursStart: string;
+  workingHoursEnd: string;
   slotDurationMinutes: number;
   bufferMinutes: number;
   daysAhead: number;
   messagingTimezone: string;
   customTemplates: SmsToneCustomTemplates;
+  smsAgentPlaybook: SmsAgentPlaybook;
   smsGreetingLine: string | null;
   smsWorkingHoursText: string | null;
   smsWebsiteSignature: string | null;

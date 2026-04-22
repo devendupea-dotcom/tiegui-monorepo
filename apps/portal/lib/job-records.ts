@@ -23,6 +23,39 @@ export const jobStatusOptions: JobStatus[] = [
   "CANCELLED",
 ];
 
+export const operationalJobExecutionRequiresBookingMessage =
+  "An active linked calendar booking is required before moving this job into execution.";
+
+export function requiresLinkedBookingForOperationalExecution(
+  status: JobStatus,
+): boolean {
+  return status === "IN_PROGRESS" || status === "COMPLETED";
+}
+
+export function canSelectOperationalJobStatus(input: {
+  status: JobStatus;
+  hasActiveBooking: boolean;
+}): boolean {
+  return (
+    input.hasActiveBooking ||
+    !requiresLinkedBookingForOperationalExecution(input.status)
+  );
+}
+
+export function formatJobReferenceLabel(input: {
+  customerName: string | null | undefined;
+  projectType: string | null | undefined;
+  address?: string | null | undefined;
+}): string {
+  const primary = [input.customerName, input.projectType]
+    .map((value) => (value || "").trim())
+    .filter(Boolean)
+    .join(" • ");
+  const address = (input.address || "").trim();
+  const base = primary || "Untitled job";
+  return address ? `${base} • ${address}` : base;
+}
+
 export type JobMeasurementRow = {
   id: string;
   label: string;
@@ -279,7 +312,9 @@ export function serializeJobDetail(
   return {
     ...serializeJobListItem(job),
     measurements: job.measurements
-      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .sort(
+        (left, right) => left.createdAt.getTime() - right.createdAt.getTime(),
+      )
       .map((row) => ({
         id: row.id,
         label: row.label,
@@ -288,7 +323,9 @@ export function serializeJobDetail(
         notes: row.notes || "",
       })),
     materials: job.materials
-      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .sort(
+        (left, right) => left.createdAt.getTime() - right.createdAt.getTime(),
+      )
       .map((row) => ({
         id: row.id,
         materialId: row.materialId,
@@ -296,19 +333,25 @@ export function serializeJobDetail(
         quantity: Number(row.quantity).toFixed(2).replace(/\.00$/, ""),
         unit: row.unit || "",
         cost: Number(row.cost).toFixed(2),
-        markupPercent: Number(row.markupPercent).toFixed(2).replace(/\.00$/, ""),
+        markupPercent: Number(row.markupPercent)
+          .toFixed(2)
+          .replace(/\.00$/, ""),
         total: Number(row.total),
         notes: row.notes || "",
       })),
     labor: job.labor
-      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .sort(
+        (left, right) => left.createdAt.getTime() - right.createdAt.getTime(),
+      )
       .map((row) => ({
         id: row.id,
         description: row.description,
         quantity: Number(row.quantity).toFixed(2).replace(/\.00$/, ""),
         unit: row.unit || "",
         cost: Number(row.cost).toFixed(2),
-        markupPercent: Number(row.markupPercent).toFixed(2).replace(/\.00$/, ""),
+        markupPercent: Number(row.markupPercent)
+          .toFixed(2)
+          .replace(/\.00$/, ""),
         total: Number(row.total),
         notes: row.notes || "",
       })),

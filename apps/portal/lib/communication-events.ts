@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { AppApiError } from "@/lib/app-api-error";
 import type {
   CommunicationChannel,
   CommunicationEventType,
@@ -88,6 +89,7 @@ async function resolveCommunicationRefs(tx: Tx, input: CommunicationRefsInput): 
     where: { id: input.leadId },
     select: {
       id: true,
+      orgId: true,
       customerId: true,
       conversationState: {
         select: {
@@ -97,10 +99,38 @@ async function resolveCommunicationRefs(tx: Tx, input: CommunicationRefsInput): 
     },
   });
 
+  if (!lead) {
+    throw new AppApiError("Communication event lead not found.", 404);
+  }
+
+  const contactId = input.contactId || lead.customerId || null;
+  if (!contactId) {
+    throw new AppApiError("Communication events require a linked contact when leadId is present.", 409);
+  }
+
+  const conversationId =
+    input.conversationId ||
+    lead.conversationState?.id ||
+    (
+      await tx.leadConversationState.upsert({
+        where: {
+          leadId: lead.id,
+        },
+        update: {},
+        create: {
+          orgId: lead.orgId,
+          leadId: lead.id,
+        },
+        select: {
+          id: true,
+        },
+      })
+    ).id;
+
   return {
-    leadId: lead?.id || input.leadId,
-    contactId: input.contactId || lead?.customerId || null,
-    conversationId: input.conversationId || lead?.conversationState?.id || null,
+    leadId: lead.id,
+    contactId,
+    conversationId,
   };
 }
 

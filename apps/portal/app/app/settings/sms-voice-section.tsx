@@ -12,6 +12,19 @@ type ToneOption = {
   description: string;
 };
 
+type SmsAgentPlaybookExamples = {
+  primaryGoal: string;
+  businessContext: string;
+  servicesSummary: string;
+  serviceAreaSummary: string;
+  requiredDetails: string;
+  handoffTriggers: string;
+  toneNotes: string;
+  estimatorName: string;
+  schedulingNotes: string;
+  doNotPromise: string;
+};
+
 type SmsVoiceCopy = {
   chooseVoice: string;
   automationControls: string;
@@ -19,6 +32,7 @@ type SmsVoiceCopy = {
   followUpsEnabled: string;
   autoBookingEnabled: string;
   businessHours: string;
+  businessHoursBody: string;
   greetingLine: string;
   greetingPlaceholder: string;
   workingHoursText: string;
@@ -31,6 +45,19 @@ type SmsVoiceCopy = {
   buffer: string;
   daysAhead: string;
   timezone: string;
+  agentPlaybook: string;
+  agentPlaybookBody: string;
+  primaryGoal: string;
+  businessContext: string;
+  servicesSummary: string;
+  serviceAreaSummary: string;
+  requiredDetails: string;
+  handoffTriggers: string;
+  toneNotes: string;
+  estimatorName: string;
+  schedulingNotes: string;
+  doNotPromise: string;
+  useInboundPhoneAsCallback: string;
   customTemplates: string;
   customTemplatesBody: string;
   greetingInitial: string;
@@ -80,19 +107,33 @@ function getSmsVoiceCopy(locale: string): SmsVoiceCopy {
       autoReplyEnabled: "Respuesta automatica activada",
       followUpsEnabled: "Seguimientos activados",
       autoBookingEnabled: "Autoagenda activada",
-      businessHours: "Horario y reservas",
+      businessHours: "¿Cuándo quieres que el agente ofrezca estimados?",
+      businessHoursBody: "Pon la ventana real de estimados y el agente SMS priorizara esos horarios primero.",
       greetingLine: "Linea de saludo (opcional)",
       greetingPlaceholder: "Hola, habla Velocity Landscapes",
       workingHoursText: "Texto de horario (opcional)",
       workingHoursPlaceholder: "Lun-Vie 8am-6pm",
       websiteSignature: "Firma web (opcional)",
       websitePlaceholder: "velocitylandscapes.com",
-      workingHoursStart: "Inicio del horario",
-      workingHoursEnd: "Fin del horario",
+      workingHoursStart: "Hora de inicio preferida",
+      workingHoursEnd: "Hora de fin preferida",
       slotDuration: "Duracion del bloque (minutos)",
       buffer: "Buffer (minutos)",
       daysAhead: "Dias hacia adelante",
       timezone: "Zona horaria",
+      agentPlaybook: "Preguntas para entrenar al agente SMS",
+      agentPlaybookBody: "Haz que el dueño responda esto como habla en la vida real. Mientras mas claro sea, mejor calificara y agendara la IA.",
+      primaryGoal: "1. ¿Cuál es la meta principal del agente SMS?",
+      businessContext: "2. ¿Cómo maneja este negocio los nuevos leads de estimados?",
+      servicesSummary: "3. ¿Qué servicios sí quieren tomar por SMS?",
+      serviceAreaSummary: "4. ¿En qué ciudades o zonas sí trabajan?",
+      requiredDetails: "5. ¿Qué datos debe capturar antes de agendar?",
+      handoffTriggers: "6. ¿Cuándo debe dejar de automatizar y pasar a un humano?",
+      toneNotes: "7. ¿Cómo debe sonar al responder?",
+      estimatorName: "8. ¿Quién hace los estimados?",
+      schedulingNotes: "9. ¿Qué reglas debe seguir al ofrecer horarios?",
+      doNotPromise: "10. ¿Qué no debe prometer nunca?",
+      useInboundPhoneAsCallback: "11. ¿Debe usar el número del SMS como callback por defecto?",
       customTemplates: "Plantillas personalizadas",
       customTemplatesBody: "Manten esto humano y natural. Evita palabras como bot/AI/automated. La logica STOP sigue bloqueada.",
       greetingInitial: "Saludo / mensaje inicial",
@@ -117,19 +158,33 @@ function getSmsVoiceCopy(locale: string): SmsVoiceCopy {
     autoReplyEnabled: "Auto-reply enabled",
     followUpsEnabled: "Follow-ups enabled",
     autoBookingEnabled: "Auto-booking enabled",
-    businessHours: "Business Hours & Booking",
+    businessHours: "When should the agent offer estimate times?",
+    businessHoursBody: "Set the real estimate window and the SMS agent will prioritize those times first.",
     greetingLine: "Greeting line (optional)",
     greetingPlaceholder: "Hey this is Velocity Landscapes",
     workingHoursText: "Working hours text (optional)",
     workingHoursPlaceholder: "Mon-Fri 8am-6pm",
     websiteSignature: "Website signature (optional)",
     websitePlaceholder: "velocitylandscapes.com",
-    workingHoursStart: "Working hours start",
-    workingHoursEnd: "Working hours end",
+    workingHoursStart: "Preferred estimate start time",
+    workingHoursEnd: "Preferred estimate end time",
     slotDuration: "Slot duration (minutes)",
     buffer: "Buffer (minutes)",
     daysAhead: "Days ahead",
     timezone: "Timezone",
+    agentPlaybook: "Questions To Train The SMS Agent",
+    agentPlaybookBody: "Have the owner answer these in plain language. The clearer they are, the more human and accurate the AI will be.",
+    primaryGoal: "1. What is the main job you want the SMS agent to do?",
+    businessContext: "2. How does this business normally handle new estimate leads?",
+    servicesSummary: "3. What services should it actively take by SMS?",
+    serviceAreaSummary: "4. What cities or service areas do you actually serve?",
+    requiredDetails: "5. What details must it collect before scheduling?",
+    handoffTriggers: "6. When should it stop automating and hand off to a human?",
+    toneNotes: "7. How should it sound when it texts customers?",
+    estimatorName: "8. Who usually runs the estimates?",
+    schedulingNotes: "9. What scheduling rules should it follow?",
+    doNotPromise: "10. What should it never promise?",
+    useInboundPhoneAsCallback: "11. Should it use the inbound SMS number as the default callback number?",
     customTemplates: "Custom Templates",
     customTemplatesBody: "Keep this human and natural. Avoid words like bot/AI/automated. STOP handling and logic remain locked.",
     greetingInitial: "Greeting / Initial message",
@@ -148,6 +203,36 @@ function getSmsVoiceCopy(locale: string): SmsVoiceCopy {
   };
 }
 
+function getSmsAgentPlaybookExamples(locale: string): SmsAgentPlaybookExamples {
+  if (locale.startsWith("es")) {
+    return {
+      primaryGoal: "Agendar estimados en sitio para Cesar y dejar leads bien calificados en el CRM.",
+      businessContext: "Somos Velocity Landscapes. Queremos responder rapido, sacar tipo de trabajo y dirección, y agendar si el lead encaja.",
+      servicesSummary: "Muros de contención, hardscape, limpieza de yarda, drenaje, pavers y trabajos de landscape que sí queremos cotizar.",
+      serviceAreaSummary: "Tacoma, Puyallup, Lakewood, University Place y zonas cercanas donde sí damos servicio.",
+      requiredDetails: "Tipo de trabajo, dirección completa, ciudad, acceso/gate code si aplica, y plazo del cliente.",
+      handoffTriggers: "Pásalo a humano si el cliente quiere llamar, pide precio exacto por texto, tiene un proyecto raro, o quiere un horario fuera de nuestra ventana.",
+      toneNotes: "Humano, seguro, servicial y nada robótico. Como recepcionista de oficina, no vendedor agresivo.",
+      estimatorName: "Cesar",
+      schedulingNotes: "Cesar prefiere hacer estimados más tarde, normalmente entre 4pm y 7pm. Si no puede ese horario, pásalo a humano.",
+      doNotPromise: "No prometas precio final, fecha de inicio garantizada, ni que podemos hacer cualquier trabajo sin que Cesar lo vea.",
+    };
+  }
+
+  return {
+    primaryGoal: "Book on-site estimates for Cesar and leave clean, qualified lead details in the CRM.",
+    businessContext: "We are Velocity Landscapes. We want fast replies, collect the job type and address, and book the estimate if the lead is a fit.",
+    servicesSummary: "Retaining walls, hardscape, yard cleanup, drainage, pavers, and landscaping work we actively want to quote.",
+    serviceAreaSummary: "Tacoma, Puyallup, Lakewood, University Place, and nearby areas we actually serve.",
+    requiredDetails: "Work needed, full address, city, gate/access notes if relevant, and the customer's timeframe.",
+    handoffTriggers: "Hand off if the customer wants a call, asks for exact pricing over text, has an unusual project, or wants times outside our preferred estimate window.",
+    toneNotes: "Human, calm, helpful, and confident. It should sound like a real office coordinator, not a bot or aggressive salesperson.",
+    estimatorName: "Cesar",
+    schedulingNotes: "Cesar prefers to run estimates later in the day, usually between 4pm and 7pm. If that window does not work, hand it to a human.",
+    doNotPromise: "Do not promise final pricing, guaranteed start dates, or that we take the job before Cesar reviews it.",
+  };
+}
+
 export type SmsVoiceCustomTemplates = {
   greeting: string;
   askAddress: string;
@@ -157,6 +242,20 @@ export type SmsVoiceCustomTemplates = {
   followUp1: string;
   followUp2: string;
   followUp3: string;
+};
+
+export type SmsAgentPlaybookFormValues = {
+  primaryGoal: string;
+  businessContext: string;
+  servicesSummary: string;
+  serviceAreaSummary: string;
+  requiredDetails: string;
+  handoffTriggers: string;
+  toneNotes: string;
+  estimatorName: string;
+  schedulingNotes: string;
+  doNotPromise: string;
+  useInboundPhoneAsCallback: boolean;
 };
 
 type SmsVoiceSectionProps = {
@@ -176,6 +275,7 @@ type SmsVoiceSectionProps = {
   initialBufferMinutes: number;
   initialDaysAhead: number;
   initialTimeZone: string;
+  initialAgentPlaybook: SmsAgentPlaybookFormValues;
   initialCustomTemplates: SmsVoiceCustomTemplates;
   previewSlots: string[];
 };
@@ -289,6 +389,7 @@ export function SmsVoiceSection(props: SmsVoiceSectionProps) {
         </label>
 
         <h3>{copy.businessHours}</h3>
+        <p className="muted">{copy.businessHoursBody}</p>
         <label>
           {copy.greetingLine}
           <input
@@ -343,6 +444,109 @@ export function SmsVoiceSection(props: SmsVoiceSectionProps) {
           <label>
             {copy.timezone}
             <input name="messagingTimezone" defaultValue={props.initialTimeZone} disabled={!props.canManage} />
+          </label>
+        </div>
+
+        <div className="sms-voice-custom-editor">
+          <h3>{copy.agentPlaybook}</h3>
+          <p className="muted">{copy.agentPlaybookBody}</p>
+          <label>
+            {copy.primaryGoal}
+            <textarea
+              name="smsAgentPrimaryGoal"
+              rows={2}
+              defaultValue={props.initialAgentPlaybook.primaryGoal}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.businessContext}
+            <textarea
+              name="smsAgentBusinessContext"
+              rows={3}
+              defaultValue={props.initialAgentPlaybook.businessContext}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.servicesSummary}
+            <textarea
+              name="smsAgentServicesSummary"
+              rows={3}
+              defaultValue={props.initialAgentPlaybook.servicesSummary}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.serviceAreaSummary}
+            <textarea
+              name="smsAgentServiceAreaSummary"
+              rows={2}
+              defaultValue={props.initialAgentPlaybook.serviceAreaSummary}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.requiredDetails}
+            <textarea
+              name="smsAgentRequiredDetails"
+              rows={3}
+              defaultValue={props.initialAgentPlaybook.requiredDetails}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.handoffTriggers}
+            <textarea
+              name="smsAgentHandoffTriggers"
+              rows={3}
+              defaultValue={props.initialAgentPlaybook.handoffTriggers}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.toneNotes}
+            <textarea
+              name="smsAgentToneNotes"
+              rows={3}
+              defaultValue={props.initialAgentPlaybook.toneNotes}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.estimatorName}
+            <input
+              name="smsAgentEstimatorName"
+              defaultValue={props.initialAgentPlaybook.estimatorName}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.schedulingNotes}
+            <textarea
+              name="smsAgentSchedulingNotes"
+              rows={3}
+              defaultValue={props.initialAgentPlaybook.schedulingNotes}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label>
+            {copy.doNotPromise}
+            <textarea
+              name="smsAgentDoNotPromise"
+              rows={3}
+              defaultValue={props.initialAgentPlaybook.doNotPromise}
+              disabled={!props.canManage}
+            />
+          </label>
+          <label className="inline-toggle">
+            <input
+              type="checkbox"
+              name="smsAgentUseInboundPhoneAsCallback"
+              defaultChecked={props.initialAgentPlaybook.useInboundPhoneAsCallback}
+              disabled={!props.canManage}
+            />
+            {copy.useInboundPhoneAsCallback}
           </label>
         </div>
 

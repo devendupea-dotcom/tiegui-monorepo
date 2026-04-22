@@ -1,4 +1,5 @@
 import type { JobEventType, Prisma } from "@prisma/client";
+import { bookingEventTypes, deriveJobBookingProjection } from "@/lib/booking-read-model";
 import {
   describeDispatchNotificationBlockedReason,
   dispatchStatusFromDb,
@@ -123,6 +124,25 @@ export const dispatchCustomerNotificationJobSelect = {
   scheduledStartTime: true,
   scheduledEndTime: true,
   dispatchStatus: true,
+  calendarEvents: {
+    where: {
+      type: {
+        in: bookingEventTypes,
+      },
+    },
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      startAt: true,
+      endAt: true,
+      createdAt: true,
+      updatedAt: true,
+      jobId: true,
+    },
+    orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+    take: 12,
+  },
   org: {
     select: {
       name: true,
@@ -199,6 +219,25 @@ export function getDispatchNotificationTimeZone(job: DispatchCustomerNotificatio
   return job.org.messagingSettings?.timezone || job.org.dashboardConfig?.calendarTimezone || "America/Los_Angeles";
 }
 
+export function getDispatchNotificationSchedule(job: DispatchCustomerNotificationJobRecord) {
+  const projection = deriveJobBookingProjection({
+    events: job.calendarEvents,
+    timeZone: job.org.dashboardConfig?.calendarTimezone || null,
+  });
+
+  return {
+    scheduledDate: projection.scheduledDateKey,
+    scheduledStartTime: projection.scheduledStartTime,
+    scheduledEndTime: projection.scheduledEndTime,
+    hasBookingHistory: projection.hasBookingEvent,
+    hasActiveBooking: projection.hasActiveBooking,
+  };
+}
+
+function requiresActiveBookingForDispatchNotification(status: DispatchStatusValue): boolean {
+  return status === "scheduled" || status === "on_the_way" || status === "rescheduled";
+}
+
 export function buildDispatchCustomerNotificationReadiness(input: {
   settings: DispatchNotificationSettings;
   job: DispatchCustomerNotificationJobRecord;
@@ -206,13 +245,19 @@ export function buildDispatchCustomerNotificationReadiness(input: {
 }): DispatchCustomerNotificationReadiness {
   const toNumberE164 = normalizeE164(input.job.phone || null);
   const timeZone = getDispatchNotificationTimeZone(input.job);
-  const previewBody = input.job.scheduledDate
+  const schedule = getDispatchNotificationSchedule(input.job);
+  const hasUsableSchedule =
+    Boolean(schedule.scheduledDate) &&
+    (requiresActiveBookingForDispatchNotification(input.candidate.notificationStatus)
+      ? schedule.hasActiveBooking
+      : schedule.hasBookingHistory);
+  const previewBody = hasUsableSchedule
     ? formatDispatchCustomerSms({
         orgName: input.job.org.name,
         serviceType: input.job.serviceType,
-        scheduledDate: input.job.scheduledDate.toISOString().slice(0, 10),
-        scheduledStartTime: input.job.scheduledStartTime,
-        scheduledEndTime: input.job.scheduledEndTime,
+        scheduledDate: schedule.scheduledDate || "",
+        scheduledStartTime: schedule.scheduledStartTime,
+        scheduledEndTime: schedule.scheduledEndTime,
         status: input.candidate.notificationStatus,
         timeZone,
       })
@@ -223,7 +268,7 @@ export function buildDispatchCustomerNotificationReadiness(input: {
     canSend: input.settings.canSend,
     notificationTypeEnabled: shouldSendDispatchStatusNotification(input.settings, input.candidate.notificationStatus),
     hasCustomerPhone: Boolean(toNumberE164),
-    hasScheduledDate: Boolean(input.job.scheduledDate),
+    hasScheduledDate: hasUsableSchedule,
     optedOut: input.job.lead?.status === "DNC",
     withinSendWindow: isWithinSmsSendWindow({
       at: new Date(),

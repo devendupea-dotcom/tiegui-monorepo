@@ -20,6 +20,7 @@ import {
 } from "@/lib/invoices";
 import { normalizeInvoiceTemplate } from "@/lib/invoice-template";
 import { buildInvoicePdfV2 } from "@/lib/invoice-pdf";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import { sendEmail } from "@/lib/mailer";
 import { capturePortalError, trackPortalEvent } from "@/lib/telemetry";
 
@@ -37,11 +38,13 @@ type SendInvoicePayload = {
 };
 
 function formatDate(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "long",
     day: "numeric",
     year: "numeric",
-  }).format(value);
+  }, {
+    fallback: "",
+  });
 }
 
 function escapeHtml(value: string): string {

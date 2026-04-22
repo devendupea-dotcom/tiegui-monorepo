@@ -15,6 +15,7 @@ import {
 } from "@/lib/sms-automation-guards";
 import { ensureSmsOptOutHint } from "@/lib/sms-compliance";
 import { queueSmsDispatch } from "@/lib/sms-dispatch-queue";
+import { rankConversationalSmsSlotCandidates } from "@/lib/conversational-sms-scheduling";
 import { renderSmsTemplate } from "@/lib/conversational-sms-templates";
 import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 import {
@@ -44,7 +45,11 @@ import {
   hasConversationalSmsLlmExtractionConfidence,
   hasConversationalSmsLlmHandoffConfidence,
 } from "@/lib/conversational-sms-llm-contract";
-import { maybeInterpretConversationalSmsTurn } from "@/lib/conversational-sms-llm";
+import {
+  buildConversationalSmsLlmCacheKey,
+  maybeInterpretConversationalSmsTurn,
+  type ConversationalSmsLlmInput,
+} from "@/lib/conversational-sms-llm";
 import {
   auditConversation,
   cancelQueuedAutomation,
@@ -62,12 +67,39 @@ import { listWorkspaceUsers, sortWorkspaceUsersByCalendarRoleThenLabel } from "@
 
 const OFFERED_SLOT_COUNT = 3;
 const OFFERED_SLOT_LOOKAHEAD_DAYS = 10;
+const OFFERED_SLOT_CANDIDATE_LIMIT = OFFERED_SLOT_COUNT * 8;
 const OFFER_HOLD_MINUTES = 10;
 const TAKEOVER_PAUSE_HOURS = 24;
 const MISSED_CALL_FOLLOW_UP_DELAY_MINUTES = 2;
 
 function preferLlmReplyBody(fallbackBody: string, replyBody: string | null): string {
   return replyBody || fallbackBody;
+}
+
+function buildConversationSummaryLine(input: {
+  lead: ConversationLead;
+  workSummary?: string | null;
+  addressText?: string | null;
+  addressCity?: string | null;
+  timeframe?: string | null;
+  slotLabel?: string | null;
+  reason: string;
+  inboundBody?: string | null;
+}): string {
+  const details = [
+    `callback: ${input.lead.phoneE164}`,
+    input.workSummary ? `work: ${sanitizeMessageBody(input.workSummary)}` : null,
+    input.addressText ? `address: ${sanitizeMessageBody(input.addressText)}` : null,
+    !input.addressText && input.addressCity ? `city: ${sanitizeMessageBody(input.addressCity)}` : null,
+    input.timeframe ? `timeframe: ${input.timeframe}` : null,
+    input.slotLabel ? `slot: ${input.slotLabel}` : null,
+  ].filter(Boolean);
+
+  const note = [`[SMS Intake] ${input.reason}`, details.length > 0 ? details.join(" | ") : null]
+    .filter(Boolean)
+    .join(" — ");
+  if (!input.inboundBody) return note;
+  return `${note}. Message: "${sanitizeMessageBody(input.inboundBody)}"`;
 }
 
 type HandleInboundResult = {
@@ -145,43 +177,51 @@ async function createBookingOptions(input: {
   const usedSlotUtc = new Set<string>();
   const candidates: Array<{ workerUserId: string; startAt: Date; endAt: Date }> = [];
 
-  for (let offset = 0; offset < lookaheadDays; offset += 1) {
+  outer: for (let offset = 0; offset < lookaheadDays; offset += 1) {
     const date = formatInTimeZone(addDays(now, offset), timezone, "yyyy-MM-dd");
 
     for (const worker of workers) {
-      if (candidates.length >= OFFERED_SLOT_COUNT) break;
       const availability = await computeAvailabilityForWorker({
         orgId: input.organization.id,
         workerUserId: worker.id,
         date,
         durationMinutes: blockMinutes,
       });
-      const found = availability.slotsUtc.find((slotUtc) => {
-        if (usedSlotUtc.has(slotUtc)) return false;
+      let workerCandidateCount = 0;
+      for (const slotUtc of availability.slotsUtc) {
+        if (usedSlotUtc.has(slotUtc)) continue;
         const slotDate = new Date(slotUtc);
-        return slotDate.getTime() > now.getTime();
-      });
-      if (!found) continue;
-
-      usedSlotUtc.add(found);
-      const startAt = new Date(found);
-      candidates.push({
-        workerUserId: worker.id,
-        startAt,
-        endAt: addMinutes(startAt, blockMinutes),
-      });
-    }
-
-    if (candidates.length >= OFFERED_SLOT_COUNT) {
-      break;
+        if (slotDate.getTime() <= now.getTime()) continue;
+        usedSlotUtc.add(slotUtc);
+        candidates.push({
+          workerUserId: worker.id,
+          startAt: slotDate,
+          endAt: addMinutes(slotDate, blockMinutes),
+        });
+        workerCandidateCount += 1;
+        if (workerCandidateCount >= OFFERED_SLOT_COUNT * 2) {
+          break;
+        }
+        if (candidates.length >= OFFERED_SLOT_CANDIDATE_LIMIT) {
+          break outer;
+        }
+      }
     }
   }
+
+  const prioritizedCandidates = rankConversationalSmsSlotCandidates({
+    candidates,
+    timeZone: timezone,
+    preferredWindowStart: input.organization.workingHoursStart,
+    preferredWindowEnd: input.organization.workingHoursEnd,
+    limit: OFFERED_SLOT_COUNT,
+  });
 
   const expiresAt = addMinutes(now, OFFER_HOLD_MINUTES);
   const labels = ["A", "B", "C"] as const;
   const options: SlotOption[] = [];
-  for (let index = 0; index < candidates.length && index < OFFERED_SLOT_COUNT; index += 1) {
-    const candidate = candidates[index]!;
+  for (let index = 0; index < prioritizedCandidates.length && index < OFFERED_SLOT_COUNT; index += 1) {
+    const candidate = prioritizedCandidates[index]!;
     const hold = await prisma.calendarHold.create({
       data: {
         orgId: input.organization.id,
@@ -229,6 +269,8 @@ async function bookFromSelectedOption(input: {
   option: SlotOption;
   templates: TemplateBundle;
   stateAddress: string | null;
+  workSummary: string | null;
+  timeframe: string | null;
 }): Promise<boolean> {
   const hold = await prisma.calendarHold.findFirst({
     where: {
@@ -315,6 +357,21 @@ async function bookFromSelectedOption(input: {
       createdByUserId: null,
     });
 
+    await tx.leadNote.create({
+      data: {
+        orgId: input.organization.id,
+        leadId: input.lead.id,
+        body: buildConversationSummaryLine({
+          lead: input.lead,
+          reason: "Estimate booked by SMS agent",
+          workSummary: input.workSummary,
+          addressText: input.stateAddress,
+          timeframe: input.timeframe,
+          slotLabel: `${input.option.id}) ${input.option.label}`,
+        }),
+      },
+    });
+
     return nextEvent;
   });
 
@@ -364,6 +421,10 @@ async function activateHumanTakeover(input: {
   currentStage: ConversationStage;
   reason: string;
   inboundBody: string;
+  workSummary?: string | null;
+  addressText?: string | null;
+  addressCity?: string | null;
+  timeframe?: string | null;
   sendAck?: boolean;
   templates: TemplateBundle;
 }) {
@@ -389,7 +450,15 @@ async function activateHumanTakeover(input: {
       data: {
         orgId: input.organization.id,
         leadId: input.lead.id,
-        body: `[SMS Takeover] ${input.reason}. Message: "${sanitizeMessageBody(input.inboundBody)}"`,
+        body: buildConversationSummaryLine({
+          lead: input.lead,
+          reason: input.reason,
+          inboundBody: input.inboundBody,
+          workSummary: input.workSummary,
+          addressText: input.addressText,
+          addressCity: input.addressCity,
+          timeframe: input.timeframe,
+        }),
       },
     });
   });
@@ -754,6 +823,10 @@ export async function handleConversationalSmsInbound(input: {
       currentStage: state.stage,
       reason: "Lead requested phone follow-up",
       inboundBody: body,
+      workSummary: state.workSummary,
+      addressText: state.addressText,
+      addressCity: state.addressCity,
+      timeframe: state.timeframe,
       sendAck: false,
       templates,
     });
@@ -766,24 +839,54 @@ export async function handleConversationalSmsInbound(input: {
   let addressCity = state.addressCity || null;
   let timeframe = state.timeframe || null;
   let bookingOptions = (Array.isArray(state.bookingOptions) ? (state.bookingOptions as unknown as SlotOption[]) : null) || [];
-  let llmDecisionPromise: Promise<Awaited<ReturnType<typeof maybeInterpretConversationalSmsTurn>>> | null = null;
+  const llmDecisionCache = new Map<string, Promise<Awaited<ReturnType<typeof maybeInterpretConversationalSmsTurn>>>>();
 
-  const getLlmDecision = async () => {
-    if (!llmDecisionPromise) {
-      llmDecisionPromise = maybeInterpretConversationalSmsTurn({
-        organization,
-        lead,
-        stage: currentStage === "NEW" ? "ASKED_WORK" : currentStage,
-        inboundBody: body,
-        workSummary,
-        addressText,
-        addressCity,
-        timeframe,
-        bookingOptions,
-      });
+  const getLlmDecision = async (
+    overrides: Partial<
+      Pick<ConversationalSmsLlmInput, "stage" | "workSummary" | "addressText" | "addressCity" | "timeframe" | "bookingOptions">
+    > = {},
+  ) => {
+    const llmInput: ConversationalSmsLlmInput = {
+      organization,
+      lead,
+      stage: overrides.stage ?? (currentStage === "NEW" ? "ASKED_WORK" : currentStage),
+      inboundBody: body,
+      workSummary: overrides.workSummary ?? workSummary,
+      addressText: overrides.addressText ?? addressText,
+      addressCity: overrides.addressCity ?? addressCity,
+      timeframe: overrides.timeframe ?? timeframe,
+      bookingOptions: overrides.bookingOptions ?? bookingOptions,
+    };
+    const cacheKey = buildConversationalSmsLlmCacheKey(llmInput);
+    let decisionPromise = llmDecisionCache.get(cacheKey);
+    if (!decisionPromise) {
+      decisionPromise = maybeInterpretConversationalSmsTurn(llmInput);
+      llmDecisionCache.set(cacheKey, decisionPromise);
     }
 
-    return llmDecisionPromise;
+    return decisionPromise;
+  };
+
+  const maybeActivateLlmTakeover = async (reason: string) => {
+    const llmDecision = await getLlmDecision();
+    if (!llmDecision?.shouldHandoff || !hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
+      return false;
+    }
+
+    await activateHumanTakeover({
+      organization,
+      lead,
+      stateId: state.id,
+      currentStage,
+      reason,
+      inboundBody: body,
+      workSummary,
+      addressText,
+      addressCity,
+      timeframe,
+      templates,
+    });
+    return true;
   };
 
   if (currentStage === "NEW") {
@@ -807,9 +910,18 @@ export async function handleConversationalSmsInbound(input: {
       }
     }
 
+    if (await maybeActivateLlmTakeover("Lead asked for help that needs a human follow-up")) {
+      return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
+    }
+    const stageLlmDecision = await getLlmDecision();
+    if (hasConversationalSmsLlmExtractionConfidence(stageLlmDecision)) {
+      workSummary = workSummary || stageLlmDecision?.workSummary || null;
+      addressText = addressText || stageLlmDecision?.addressText || null;
+      addressCity = addressCity || stageLlmDecision?.addressCity || null;
+    }
+
     if (!workSummary || (!addressText && !addressCity)) {
-      const llmDecision = await getLlmDecision();
-      if (llmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
+      if (stageLlmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(stageLlmDecision)) {
         await activateHumanTakeover({
           organization,
           lead,
@@ -817,15 +929,19 @@ export async function handleConversationalSmsInbound(input: {
           currentStage: currentStage,
           reason: "Lead asked for help that needs a human follow-up",
           inboundBody: body,
+          workSummary,
+          addressText,
+          addressCity,
+          timeframe,
           templates,
         });
         return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
       }
 
-      if (hasConversationalSmsLlmExtractionConfidence(llmDecision)) {
-        workSummary = workSummary || llmDecision?.workSummary || null;
-        addressText = addressText || llmDecision?.addressText || null;
-        addressCity = addressCity || llmDecision?.addressCity || null;
+      if (hasConversationalSmsLlmExtractionConfidence(stageLlmDecision)) {
+        workSummary = workSummary || stageLlmDecision?.workSummary || null;
+        addressText = addressText || stageLlmDecision?.addressText || null;
+        addressCity = addressCity || stageLlmDecision?.addressCity || null;
       }
     }
 
@@ -980,9 +1096,17 @@ export async function handleConversationalSmsInbound(input: {
           ? { kind: "CITY" as const, city: inferred.addressCity }
           : parseAddress(body)
       : parseAddress(body);
+    if (await maybeActivateLlmTakeover("Lead asked for help that needs a human follow-up")) {
+      return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
+    }
+    const stageLlmDecision = await getLlmDecision();
+    if (hasConversationalSmsLlmExtractionConfidence(stageLlmDecision)) {
+      workSummary = workSummary || stageLlmDecision?.workSummary || null;
+      addressText = addressText || stageLlmDecision?.addressText || null;
+      addressCity = addressCity || stageLlmDecision?.addressCity || null;
+    }
     if (parsed.kind !== "ADDRESS" && parsed.kind !== "CITY") {
-      const llmDecision = await getLlmDecision();
-      if (llmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
+      if (stageLlmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(stageLlmDecision)) {
         await activateHumanTakeover({
           organization,
           lead,
@@ -990,15 +1114,19 @@ export async function handleConversationalSmsInbound(input: {
           currentStage: currentStage,
           reason: "Lead asked for help that needs a human follow-up",
           inboundBody: body,
+          workSummary,
+          addressText,
+          addressCity,
+          timeframe,
           templates,
         });
         return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
       }
 
-      if (hasConversationalSmsLlmExtractionConfidence(llmDecision)) {
-        workSummary = workSummary || llmDecision?.workSummary || null;
-        addressText = addressText || llmDecision?.addressText || null;
-        addressCity = addressCity || llmDecision?.addressCity || null;
+      if (hasConversationalSmsLlmExtractionConfidence(stageLlmDecision)) {
+        workSummary = workSummary || stageLlmDecision?.workSummary || null;
+        addressText = addressText || stageLlmDecision?.addressText || null;
+        addressCity = addressCity || stageLlmDecision?.addressCity || null;
       }
     }
 
@@ -1061,18 +1189,18 @@ export async function handleConversationalSmsInbound(input: {
       return { stage: "ASKED_TIMEFRAME", action: "ADVANCED" };
     }
 
-    const llmDecision = await getLlmDecision();
+    const replyLlmDecision = await getLlmDecision();
     const prompt = addressText || addressCity
       ? preferLlmReplyBody(
           renderSmsTemplate(templates.clarification, {
             bizName: organization.name,
             missingField: formatMissingField("ASKED_ADDRESS", templates.locale),
           }),
-          getConversationalSmsLlmReplyBody(llmDecision),
+          getConversationalSmsLlmReplyBody(replyLlmDecision),
         )
       : preferLlmReplyBody(
           renderSmsTemplate(templates.askAddress, { bizName: organization.name }),
-          getConversationalSmsLlmReplyBody(llmDecision),
+          getConversationalSmsLlmReplyBody(replyLlmDecision),
         );
     await queueConversationReply({
       organization,
@@ -1094,6 +1222,9 @@ export async function handleConversationalSmsInbound(input: {
 
   if (currentStage === "ASKED_TIMEFRAME") {
     timeframe = parseTimeframe(body);
+    if (await maybeActivateLlmTakeover("Lead asked for help that needs a human follow-up")) {
+      return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
+    }
     if (!timeframe) {
       const llmDecision = await getLlmDecision();
       if (llmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
@@ -1104,6 +1235,10 @@ export async function handleConversationalSmsInbound(input: {
           currentStage: currentStage,
           reason: "Lead asked for help that needs a human follow-up",
           inboundBody: body,
+          workSummary,
+          addressText,
+          addressCity,
+          timeframe,
           templates,
         });
         return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
@@ -1159,6 +1294,10 @@ export async function handleConversationalSmsInbound(input: {
         currentStage: state.stage,
         reason: "Auto-booking disabled; lead answered timeframe",
         inboundBody: body,
+        workSummary,
+        addressText,
+        addressCity,
+        timeframe,
         templates,
       });
       return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
@@ -1169,6 +1308,7 @@ export async function handleConversationalSmsInbound(input: {
       lead,
       locale: templates.locale,
     });
+    bookingOptions = options;
 
     currentStage = "OFFERED_BOOKING";
     await setConversationStage({
@@ -1248,7 +1388,6 @@ export async function handleConversationalSmsInbound(input: {
           followUpStep: 0,
         },
       });
-      llmDecisionPromise = null;
     }
 
     const selected = parseBookingSelection({
@@ -1256,6 +1395,9 @@ export async function handleConversationalSmsInbound(input: {
       options: bookingOptions,
     });
     let selectedOption = selected;
+    if (await maybeActivateLlmTakeover("Lead needs a custom scheduling follow-up")) {
+      return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
+    }
     if (!selectedOption) {
       const llmDecision = await getLlmDecision();
       if (llmDecision?.shouldHandoff && hasConversationalSmsLlmHandoffConfidence(llmDecision)) {
@@ -1266,6 +1408,10 @@ export async function handleConversationalSmsInbound(input: {
           currentStage: currentStage,
           reason: "Lead needs a custom scheduling follow-up",
           inboundBody: body,
+          workSummary,
+          addressText,
+          addressCity,
+          timeframe,
           templates,
         });
         return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
@@ -1284,6 +1430,8 @@ export async function handleConversationalSmsInbound(input: {
         option: selectedOption,
         templates,
         stateAddress: addressText || addressCity || null,
+        workSummary,
+        timeframe,
       });
       if (booked) {
         return { stage: "BOOKED", action: "BOOKED" };
@@ -1298,6 +1446,10 @@ export async function handleConversationalSmsInbound(input: {
         currentStage: currentStage,
         reason: "Lead provided ambiguous booking time",
         inboundBody: body,
+        workSummary,
+        addressText,
+        addressCity,
+        timeframe,
         templates,
       });
       return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };

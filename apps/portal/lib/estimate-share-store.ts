@@ -2,7 +2,11 @@ import "server-only";
 
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { type EstimateActivityType, type EstimateStatus, Prisma } from "@prisma/client";
+import {
+  type EstimateActivityType,
+  type EstimateStatus,
+  Prisma,
+} from "@prisma/client";
 import { AppApiError } from "@/lib/app-api-permissions";
 import {
   canTransitionEstimateStatus,
@@ -75,7 +79,8 @@ async function appendEstimateActivity(
 
 function normalizeOptionalDate(value: unknown, label: string): Date | null {
   if (value == null || value === "") return null;
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (value instanceof Date)
+    return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value !== "string") {
     throw new AppApiError(`${label} must be an ISO date string.`, 400);
   }
@@ -87,11 +92,18 @@ function normalizeOptionalDate(value: unknown, label: string): Date | null {
   return parsed;
 }
 
-function normalizeShareText(value: unknown, label: string, maxLength: number): string | null {
+function normalizeShareText(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string | null {
   try {
     return normalizeOptionalShareText(value, label, maxLength);
   } catch (error) {
-    throw new AppApiError(error instanceof Error ? error.message : `${label} is invalid.`, 400);
+    throw new AppApiError(
+      error instanceof Error ? error.message : `${label} is invalid.`,
+      400,
+    );
   }
 }
 
@@ -104,7 +116,10 @@ function ensureEstimateShareable(input: {
   }
 
   if (!canCreateEstimateShare(input.status)) {
-    throw new AppApiError("This estimate status cannot be shared with a customer yet.", 400);
+    throw new AppApiError(
+      "This estimate status cannot be shared with a customer yet.",
+      400,
+    );
   }
 }
 
@@ -113,12 +128,18 @@ function isEstimateExpired(input: {
   validUntil: Date | null;
   now?: Date;
 }): boolean {
-  if (input.status === "APPROVED" || input.status === "DECLINED" || input.status === "CONVERTED") {
+  if (
+    input.status === "APPROVED" ||
+    input.status === "DECLINED" ||
+    input.status === "CONVERTED"
+  ) {
     return false;
   }
 
   const now = input.now || new Date();
-  return Boolean(input.validUntil && input.validUntil.getTime() < now.getTime());
+  return Boolean(
+    input.validUntil && input.validUntil.getTime() < now.getTime(),
+  );
 }
 
 async function resolvePublicLogoUrl(input: {
@@ -153,14 +174,19 @@ function assertShareStillValid(record: PublicShareRecord, actionLabel: string) {
     throw new AppApiError("This estimate is no longer available.", 410);
   }
   if (record.revokedAt) {
-    throw new AppApiError(`This estimate link has been revoked and cannot ${actionLabel}.`, 410);
+    throw new AppApiError(
+      `This estimate link has been revoked and cannot ${actionLabel}.`,
+      410,
+    );
   }
   if (record.expiresAt && record.expiresAt.getTime() < now.getTime()) {
     throw new AppApiError("This estimate link has expired.", 410);
   }
 }
 
-async function getPublicShareRecordOrThrow(token: string): Promise<PublicShareRecord> {
+async function getPublicShareRecordOrThrow(
+  token: string,
+): Promise<PublicShareRecord> {
   const normalizedToken = typeof token === "string" ? token.trim() : "";
   if (!normalizedToken) {
     throw new AppApiError("This estimate link is invalid.", 404);
@@ -179,7 +205,9 @@ async function getPublicShareRecordOrThrow(token: string): Promise<PublicShareRe
   return share;
 }
 
-async function serializePublicShare(record: PublicShareRecord): Promise<CustomerEstimateShareDetail> {
+async function serializePublicShare(
+  record: PublicShareRecord,
+): Promise<CustomerEstimateShareDetail> {
   const shareState = deriveEstimateShareState({
     revokedAt: record.revokedAt,
     expiresAt: record.expiresAt,
@@ -200,18 +228,31 @@ async function serializePublicShare(record: PublicShareRecord): Promise<Customer
     projectType: record.estimate.projectType || "",
     description: record.estimate.description || "",
     terms: record.estimate.terms || "",
-    validUntil: record.estimate.validUntil ? record.estimate.validUntil.toISOString() : null,
+    validUntil: record.estimate.validUntil
+      ? record.estimate.validUntil.toISOString()
+      : null,
     status: estimateExpired ? "EXPIRED" : record.estimate.status,
-    shareState: estimateExpired && shareState === "ACTIVE" ? "EXPIRED" : shareState,
+    shareState:
+      estimateExpired && shareState === "ACTIVE" ? "EXPIRED" : shareState,
     canRespond:
       shareState === "ACTIVE" &&
       !estimateExpired &&
       canCustomerRespondToEstimate(record.estimate.status),
-    viewedAt: record.estimate.viewedAt ? record.estimate.viewedAt.toISOString() : null,
-    customerViewedAt: record.estimate.customerViewedAt ? record.estimate.customerViewedAt.toISOString() : null,
-    approvedAt: record.estimate.approvedAt ? record.estimate.approvedAt.toISOString() : null,
-    declinedAt: record.estimate.declinedAt ? record.estimate.declinedAt.toISOString() : null,
-    customerDecisionAt: record.estimate.customerDecisionAt ? record.estimate.customerDecisionAt.toISOString() : null,
+    viewedAt: record.estimate.viewedAt
+      ? record.estimate.viewedAt.toISOString()
+      : null,
+    customerViewedAt: record.estimate.customerViewedAt
+      ? record.estimate.customerViewedAt.toISOString()
+      : null,
+    approvedAt: record.estimate.approvedAt
+      ? record.estimate.approvedAt.toISOString()
+      : null,
+    declinedAt: record.estimate.declinedAt
+      ? record.estimate.declinedAt.toISOString()
+      : null,
+    customerDecisionAt: record.estimate.customerDecisionAt
+      ? record.estimate.customerDecisionAt.toISOString()
+      : null,
     customerDecisionName: record.estimate.customerDecisionName || "",
     customerDecisionNote: record.estimate.customerDecisionNote || "",
     subtotal: Number(record.estimate.subtotal),
@@ -241,31 +282,57 @@ async function serializePublicShare(record: PublicShareRecord): Promise<Customer
   };
 }
 
-function ensureDecisionAllowed(record: PublicShareRecord, action: "approve" | "decline") {
+function ensureDecisionAllowed(
+  record: PublicShareRecord,
+  action: "approve" | "decline",
+) {
   assertShareStillValid(record, `${action} the estimate`);
 
-  if (isEstimateExpired({ status: record.estimate.status, validUntil: record.estimate.validUntil })) {
-    throw new AppApiError("This estimate has expired and can no longer be approved or declined.", 409);
+  if (
+    isEstimateExpired({
+      status: record.estimate.status,
+      validUntil: record.estimate.validUntil,
+    })
+  ) {
+    throw new AppApiError(
+      "This estimate has expired and can no longer be approved or declined.",
+      409,
+    );
   }
 
   if (action === "approve") {
-    if (record.estimate.status === "APPROVED" || record.estimate.status === "CONVERTED") {
+    if (
+      record.estimate.status === "APPROVED" ||
+      record.estimate.status === "CONVERTED"
+    ) {
       return;
     }
     if (record.estimate.status === "DECLINED") {
-      throw new AppApiError("This estimate was already declined and cannot be approved from this link.", 409);
+      throw new AppApiError(
+        "This estimate was already declined and cannot be approved from this link.",
+        409,
+      );
     }
   } else {
     if (record.estimate.status === "DECLINED") {
       return;
     }
-    if (record.estimate.status === "APPROVED" || record.estimate.status === "CONVERTED") {
-      throw new AppApiError("This estimate was already approved and cannot be declined from this link.", 409);
+    if (
+      record.estimate.status === "APPROVED" ||
+      record.estimate.status === "CONVERTED"
+    ) {
+      throw new AppApiError(
+        "This estimate was already approved and cannot be declined from this link.",
+        409,
+      );
     }
   }
 
   if (!canCustomerRespondToEstimate(record.estimate.status)) {
-    throw new AppApiError(`This estimate cannot be ${action}d from its current status.`, 409);
+    throw new AppApiError(
+      `This estimate cannot be ${action}d from its current status.`,
+      409,
+    );
   }
 }
 
@@ -303,13 +370,34 @@ export async function createEstimateShareLink(input: {
     throw new AppApiError("Estimate not found.", 404);
   }
 
-  ensureEstimateShareable(estimate);
+  if (estimate.archivedAt) {
+    throw new AppApiError("Archived estimates cannot be shared.", 400);
+  }
+
+  if (estimate.status !== "DRAFT") {
+    ensureEstimateShareable(estimate);
+  }
 
   const payload = input.payload || {};
-  const recipientName = normalizeShareText(payload.recipientName, "Recipient name", ESTIMATE_SHARE_RECIPIENT_NAME_MAX);
-  const recipientEmail = normalizeShareText(payload.recipientEmail, "Recipient email", ESTIMATE_SHARE_RECIPIENT_EMAIL_MAX);
-  const recipientPhoneE164 = normalizeShareText(payload.recipientPhoneE164, "Recipient phone", ESTIMATE_SHARE_RECIPIENT_PHONE_MAX);
-  const explicitExpiry = normalizeOptionalDate(payload.expiresAt, "Share expiration");
+  const recipientName = normalizeShareText(
+    payload.recipientName,
+    "Recipient name",
+    ESTIMATE_SHARE_RECIPIENT_NAME_MAX,
+  );
+  const recipientEmail = normalizeShareText(
+    payload.recipientEmail,
+    "Recipient email",
+    ESTIMATE_SHARE_RECIPIENT_EMAIL_MAX,
+  );
+  const recipientPhoneE164 = normalizeShareText(
+    payload.recipientPhoneE164,
+    "Recipient phone",
+    ESTIMATE_SHARE_RECIPIENT_PHONE_MAX,
+  );
+  const explicitExpiry = normalizeOptionalDate(
+    payload.expiresAt,
+    "Share expiration",
+  );
   const now = new Date();
   const expiresAt =
     explicitExpiry && explicitExpiry.getTime() > now.getTime()
@@ -452,15 +540,22 @@ export async function revokeEstimateShareLinks(input: {
   return serializeEstimateDetail(savedEstimate);
 }
 
-export async function getEstimateShareByToken(token: string): Promise<CustomerEstimateShareDetail> {
+export async function getEstimateShareByToken(
+  token: string,
+): Promise<CustomerEstimateShareDetail> {
   const record = await getPublicShareRecordOrThrow(token);
   assertShareStillValid(record, "be opened");
   return serializePublicShare(record);
 }
 
-export async function recordEstimateShareView(token: string): Promise<CustomerEstimateShareDetail> {
+export async function recordEstimateShareView(
+  token: string,
+): Promise<CustomerEstimateShareDetail> {
   const record = await getPublicShareRecordOrThrow(token);
   assertShareStillValid(record, "be viewed");
+  if (!canCustomerRespondToEstimate(record.estimate.status)) {
+    return serializePublicShare(record);
+  }
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
@@ -472,7 +567,11 @@ export async function recordEstimateShareView(token: string): Promise<CustomerEs
       },
     });
 
-    const nextStatus = record.estimate.status === "SENT" && canTransitionEstimateStatus("SENT", "VIEWED") ? "VIEWED" : record.estimate.status;
+    const nextStatus =
+      record.estimate.status === "SENT" &&
+      canTransitionEstimateStatus("SENT", "VIEWED")
+        ? "VIEWED"
+        : record.estimate.status;
     await tx.estimate.update({
       where: { id: record.estimate.id },
       data: {
@@ -503,12 +602,23 @@ export async function approveEstimateShare(input: {
   const record = await getPublicShareRecordOrThrow(input.token);
   ensureDecisionAllowed(record, "approve");
 
-  if (record.estimate.status === "APPROVED" || record.estimate.status === "CONVERTED") {
+  if (
+    record.estimate.status === "APPROVED" ||
+    record.estimate.status === "CONVERTED"
+  ) {
     return serializePublicShare(record);
   }
 
-  const decisionName = normalizeShareText(input.decisionName, "Customer name", ESTIMATE_SHARE_DECISION_NAME_MAX);
-  const decisionNote = normalizeShareText(input.decisionNote, "Customer note", ESTIMATE_SHARE_DECISION_NOTE_MAX);
+  const decisionName = normalizeShareText(
+    input.decisionName,
+    "Customer name",
+    ESTIMATE_SHARE_DECISION_NAME_MAX,
+  );
+  const decisionNote = normalizeShareText(
+    input.decisionNote,
+    "Customer note",
+    ESTIMATE_SHARE_DECISION_NOTE_MAX,
+  );
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
@@ -527,13 +637,22 @@ export async function approveEstimateShare(input: {
       throw new AppApiError("This estimate link is invalid.", 404);
     }
     if (currentShare.revokedAt) {
-      throw new AppApiError("This estimate link has been revoked and cannot approve the estimate.", 410);
+      throw new AppApiError(
+        "This estimate link has been revoked and cannot approve the estimate.",
+        410,
+      );
     }
-    if (currentShare.expiresAt && currentShare.expiresAt.getTime() < now.getTime()) {
+    if (
+      currentShare.expiresAt &&
+      currentShare.expiresAt.getTime() < now.getTime()
+    ) {
       throw new AppApiError("This estimate link has expired.", 410);
     }
     if (currentShare.declinedAt) {
-      throw new AppApiError("This estimate was already declined and cannot be approved from this link.", 409);
+      throw new AppApiError(
+        "This estimate was already declined and cannot be approved from this link.",
+        409,
+      );
     }
     if (currentShare.approvedAt) {
       return;
@@ -557,24 +676,42 @@ export async function approveEstimateShare(input: {
     if (currentEstimate.archivedAt) {
       throw new AppApiError("This estimate is no longer available.", 410);
     }
-    if (isEstimateExpired({ status: currentEstimate.status, validUntil: currentEstimate.validUntil, now })) {
-      throw new AppApiError("This estimate has expired and can no longer be approved or declined.", 409);
+    if (
+      isEstimateExpired({
+        status: currentEstimate.status,
+        validUntil: currentEstimate.validUntil,
+        now,
+      })
+    ) {
+      throw new AppApiError(
+        "This estimate has expired and can no longer be approved or declined.",
+        409,
+      );
     }
     if (currentEstimate.status === "DECLINED") {
-      throw new AppApiError("This estimate was already declined and cannot be approved from this link.", 409);
+      throw new AppApiError(
+        "This estimate was already declined and cannot be approved from this link.",
+        409,
+      );
     }
-    if (currentEstimate.status === "APPROVED" || currentEstimate.status === "CONVERTED") {
+    if (
+      currentEstimate.status === "APPROVED" ||
+      currentEstimate.status === "CONVERTED"
+    ) {
       return;
     }
     if (!canCustomerRespondToEstimate(currentEstimate.status)) {
-      throw new AppApiError("This estimate cannot be approved from its current status.", 409);
+      throw new AppApiError(
+        "This estimate cannot be approved from its current status.",
+        409,
+      );
     }
 
     const updatedEstimate = await tx.estimate.updateMany({
       where: {
         id: record.estimate.id,
         status: {
-          in: ["DRAFT", "SENT", "VIEWED"],
+          in: ["SENT", "VIEWED"],
         },
         approvedAt: null,
         declinedAt: null,
@@ -590,7 +727,10 @@ export async function approveEstimateShare(input: {
       },
     });
     if (updatedEstimate.count !== 1) {
-      throw new AppApiError("This estimate was updated by another response. Refresh and try again.", 409);
+      throw new AppApiError(
+        "This estimate was updated by another response. Refresh and try again.",
+        409,
+      );
     }
 
     const updatedShare = await tx.estimateShareLink.updateMany({
@@ -609,7 +749,10 @@ export async function approveEstimateShare(input: {
       },
     });
     if (updatedShare.count !== 1) {
-      throw new AppApiError("This estimate was updated by another response. Refresh and try again.", 409);
+      throw new AppApiError(
+        "This estimate was updated by another response. Refresh and try again.",
+        409,
+      );
     }
 
     await appendEstimateActivity(tx, {
@@ -640,8 +783,16 @@ export async function declineEstimateShare(input: {
     return serializePublicShare(record);
   }
 
-  const decisionName = normalizeShareText(input.decisionName, "Customer name", ESTIMATE_SHARE_DECISION_NAME_MAX);
-  const decisionNote = normalizeShareText(input.decisionNote, "Customer note", ESTIMATE_SHARE_DECISION_NOTE_MAX);
+  const decisionName = normalizeShareText(
+    input.decisionName,
+    "Customer name",
+    ESTIMATE_SHARE_DECISION_NAME_MAX,
+  );
+  const decisionNote = normalizeShareText(
+    input.decisionNote,
+    "Customer note",
+    ESTIMATE_SHARE_DECISION_NOTE_MAX,
+  );
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
@@ -660,13 +811,22 @@ export async function declineEstimateShare(input: {
       throw new AppApiError("This estimate link is invalid.", 404);
     }
     if (currentShare.revokedAt) {
-      throw new AppApiError("This estimate link has been revoked and cannot decline the estimate.", 410);
+      throw new AppApiError(
+        "This estimate link has been revoked and cannot decline the estimate.",
+        410,
+      );
     }
-    if (currentShare.expiresAt && currentShare.expiresAt.getTime() < now.getTime()) {
+    if (
+      currentShare.expiresAt &&
+      currentShare.expiresAt.getTime() < now.getTime()
+    ) {
       throw new AppApiError("This estimate link has expired.", 410);
     }
     if (currentShare.approvedAt) {
-      throw new AppApiError("This estimate was already approved and cannot be declined from this link.", 409);
+      throw new AppApiError(
+        "This estimate was already approved and cannot be declined from this link.",
+        409,
+      );
     }
     if (currentShare.declinedAt) {
       return;
@@ -690,24 +850,42 @@ export async function declineEstimateShare(input: {
     if (currentEstimate.archivedAt) {
       throw new AppApiError("This estimate is no longer available.", 410);
     }
-    if (isEstimateExpired({ status: currentEstimate.status, validUntil: currentEstimate.validUntil, now })) {
-      throw new AppApiError("This estimate has expired and can no longer be approved or declined.", 409);
+    if (
+      isEstimateExpired({
+        status: currentEstimate.status,
+        validUntil: currentEstimate.validUntil,
+        now,
+      })
+    ) {
+      throw new AppApiError(
+        "This estimate has expired and can no longer be approved or declined.",
+        409,
+      );
     }
-    if (currentEstimate.status === "APPROVED" || currentEstimate.status === "CONVERTED") {
-      throw new AppApiError("This estimate was already approved and cannot be declined from this link.", 409);
+    if (
+      currentEstimate.status === "APPROVED" ||
+      currentEstimate.status === "CONVERTED"
+    ) {
+      throw new AppApiError(
+        "This estimate was already approved and cannot be declined from this link.",
+        409,
+      );
     }
     if (currentEstimate.status === "DECLINED") {
       return;
     }
     if (!canCustomerRespondToEstimate(currentEstimate.status)) {
-      throw new AppApiError("This estimate cannot be declined from its current status.", 409);
+      throw new AppApiError(
+        "This estimate cannot be declined from its current status.",
+        409,
+      );
     }
 
     const updatedEstimate = await tx.estimate.updateMany({
       where: {
         id: record.estimate.id,
         status: {
-          in: ["DRAFT", "SENT", "VIEWED"],
+          in: ["SENT", "VIEWED"],
         },
         approvedAt: null,
         declinedAt: null,
@@ -723,7 +901,10 @@ export async function declineEstimateShare(input: {
       },
     });
     if (updatedEstimate.count !== 1) {
-      throw new AppApiError("This estimate was updated by another response. Refresh and try again.", 409);
+      throw new AppApiError(
+        "This estimate was updated by another response. Refresh and try again.",
+        409,
+      );
     }
 
     const updatedShare = await tx.estimateShareLink.updateMany({
@@ -742,7 +923,10 @@ export async function declineEstimateShare(input: {
       },
     });
     if (updatedShare.count !== 1) {
-      throw new AppApiError("This estimate was updated by another response. Refresh and try again.", 409);
+      throw new AppApiError(
+        "This estimate was updated by another response. Refresh and try again.",
+        409,
+      );
     }
 
     await appendEstimateActivity(tx, {

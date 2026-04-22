@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma, type PurchaseOrderStatus } from "@prisma/client";
 import { AppApiError } from "@/lib/app-api-permissions";
+import { buildValidOperationalJobWhere } from "@/lib/booking-read-model";
 import { formatCurrency, parseTaxRatePercent, roundMoney, toMoneyDecimal } from "@/lib/invoices";
 import {
   buildPurchaseOrderEmailDraft,
@@ -301,7 +302,7 @@ async function reserveNextPurchaseOrderNumber(
 
 export async function listPurchaseOrderJobOptions(orgId: string) {
   const jobs = await prisma.job.findMany({
-    where: { orgId },
+    where: buildValidOperationalJobWhere(orgId),
     select: {
       id: true,
       customerName: true,

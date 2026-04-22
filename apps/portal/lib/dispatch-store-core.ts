@@ -49,8 +49,8 @@ export type NormalizedDispatchJobPayload = {
   normalizedPhone: string | null;
   serviceType: string;
   address: string;
-  scheduledDate: Date;
-  scheduledDateKey: string;
+  scheduledDate: Date | null;
+  scheduledDateKey: string | null;
   scheduledStartTime: string | null;
   scheduledEndTime: string | null;
   assignedCrewId: string | null;
@@ -115,13 +115,21 @@ export type DispatchExistingJobPayloadSource = {
   phone: string | null;
   serviceType: string;
   address: string;
-  scheduledDate: Date | null;
+  scheduledDate: string | null;
   scheduledStartTime: string | null;
   scheduledEndTime: string | null;
   assignedCrewId: string | null;
   notes: string | null;
   priority: string | null;
   dispatchStatus: DispatchJobStatus;
+};
+
+export type DispatchScheduleProjection = {
+  scheduledDate: Date | null;
+  scheduledStartTime: string | null;
+  scheduledEndTime: string | null;
+  hasBookingHistory: boolean;
+  hasActiveBooking: boolean;
 };
 
 function normalizeRequiredText(value: unknown, label: string, maxLength: number): string {
@@ -194,7 +202,19 @@ function normalizeOptionalCrewId(value: unknown): string | null {
   return normalizeOptionalId(value, "Assigned crew");
 }
 
-function normalizeScheduledDate(value: unknown): { date: Date; key: string } {
+function normalizeScheduledDate(
+  value: unknown,
+  input?: {
+    allowMissing?: boolean;
+  },
+): { date: Date; key: string } | null {
+  if (value == null || value === "") {
+    if (input?.allowMissing) {
+      return null;
+    }
+    throw new AppApiError("Scheduled date is required.", 400);
+  }
+
   if (typeof value !== "string") {
     throw new AppApiError("Scheduled date is required.", 400);
   }
@@ -249,8 +269,12 @@ function formatLeadLabel(lead: DispatchLeadSummaryRecord | null | undefined): st
   return lead.contactName || lead.businessName || lead.phoneE164;
 }
 
-export function serializeDispatchJob(job: DispatchJobSummaryRecord, todayDateKey: string): DispatchJobSummary {
-  const scheduledDate = job.scheduledDate ? formatDispatchDateKey(job.scheduledDate) : "";
+export function serializeDispatchJobWithSchedule(
+  job: DispatchJobSummaryRecord,
+  todayDateKey: string,
+  schedule: DispatchScheduleProjection,
+): DispatchJobSummary {
+  const scheduledDate = schedule.scheduledDate ? formatDispatchDateKey(schedule.scheduledDate) : "";
   const status = dispatchStatusFromDb(job.dispatchStatus);
 
   return {
@@ -264,8 +288,10 @@ export function serializeDispatchJob(job: DispatchJobSummaryRecord, todayDateKey
     serviceType: job.serviceType,
     address: job.address,
     scheduledDate,
-    scheduledStartTime: job.scheduledStartTime,
-    scheduledEndTime: job.scheduledEndTime,
+    scheduledStartTime: schedule.scheduledStartTime,
+    scheduledEndTime: schedule.scheduledEndTime,
+    hasBookingHistory: schedule.hasBookingHistory,
+    hasActiveBooking: schedule.hasActiveBooking,
     status,
     assignedCrewId: job.assignedCrewId,
     assignedCrewName: job.assignedCrew?.name || null,
@@ -278,12 +304,19 @@ export function serializeDispatchJob(job: DispatchJobSummaryRecord, todayDateKey
   };
 }
 
-export function normalizeDispatchJobPayload(payload: DispatchJobPayload | null): NormalizedDispatchJobPayload {
+export function normalizeDispatchJobPayload(
+  payload: DispatchJobPayload | null,
+  input?: {
+    allowMissingScheduledDate?: boolean;
+  },
+): NormalizedDispatchJobPayload {
   if (!payload) {
     throw new AppApiError("Invalid dispatch payload.", 400);
   }
 
-  const scheduledDate = normalizeScheduledDate(payload.scheduledDate);
+  const scheduledDate = normalizeScheduledDate(payload.scheduledDate, {
+    allowMissing: input?.allowMissingScheduledDate,
+  });
   const scheduledStartTime = normalizeOptionalTime(payload.scheduledStartTime, "Start time");
   const scheduledEndTime = normalizeOptionalTime(payload.scheduledEndTime, "End time");
 
@@ -300,8 +333,8 @@ export function normalizeDispatchJobPayload(payload: DispatchJobPayload | null):
     normalizedPhone: normalizeE164(typeof payload.phone === "string" ? payload.phone : null),
     serviceType: normalizeRequiredText(payload.serviceType, "Service type", DISPATCH_SERVICE_TYPE_MAX),
     address: normalizeRequiredText(payload.address, "Address", DISPATCH_ADDRESS_MAX),
-    scheduledDate: scheduledDate.date,
-    scheduledDateKey: scheduledDate.key,
+    scheduledDate: scheduledDate?.date || null,
+    scheduledDateKey: scheduledDate?.key || null,
     scheduledStartTime,
     scheduledEndTime,
     assignedCrewId: normalizeOptionalCrewId(payload.assignedCrewId),
@@ -327,7 +360,7 @@ export function createDispatchEventMetadataBase(input: {
   customerId: string | null;
   leadId: string | null;
   linkedEstimateId: string | null;
-  scheduledDateKey: string;
+  scheduledDateKey: string | null;
   scheduledStartTime: string | null;
   scheduledEndTime: string | null;
   status: DispatchStatusValue;
@@ -365,9 +398,7 @@ export function buildMergedDispatchPayload(
     phone: payload && Object.prototype.hasOwnProperty.call(payload, "phone") ? payload.phone : existing.phone,
     serviceType: payload?.serviceType ?? existing.serviceType,
     address: payload?.address ?? existing.address,
-    scheduledDate:
-      payload?.scheduledDate ??
-      (existing.scheduledDate ? formatDispatchDateKey(existing.scheduledDate) : null),
+    scheduledDate: payload?.scheduledDate ?? existing.scheduledDate,
     scheduledStartTime:
       payload && Object.prototype.hasOwnProperty.call(payload, "scheduledStartTime")
         ? payload.scheduledStartTime

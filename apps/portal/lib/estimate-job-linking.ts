@@ -36,6 +36,16 @@ export function buildOperationalJobLinkedEstimateData(linkedEstimateId: string |
   };
 }
 
+export function buildOperationalJobEstimateLinkData(input: {
+  existingSourceEstimateId?: string | null;
+  linkedEstimateId: string | null;
+}) {
+  return {
+    sourceEstimateId: input.existingSourceEstimateId || input.linkedEstimateId,
+    linkedEstimateId: input.linkedEstimateId,
+  };
+}
+
 export function buildEstimateAttachmentData(jobId: string | null) {
   return {
     jobId,

@@ -1,5 +1,7 @@
+import OpenAI from "openai";
 import type { ConversationStage, ConversationTimeframe } from "@prisma/client";
 import { normalizeEnvValue } from "@/lib/env";
+import { hasSmsAgentPlaybookDetails } from "@/lib/conversational-sms-agent-playbook";
 import type { ConversationLead, ConversationOrgConfig, SlotOption } from "@/lib/conversational-sms-core";
 import {
   normalizeConversationalSmsLlmDecision,
@@ -10,8 +12,9 @@ import { prisma } from "@/lib/prisma";
 import { startOfUtcMonth } from "@/lib/usage";
 import { capturePortalError } from "@/lib/telemetry";
 
-const DEFAULT_MODEL = "gpt-4.1-mini";
+const DEFAULT_MODEL = "sms-agent";
 const DEFAULT_ESTIMATED_COST_CENTS = 2;
+const DEFAULT_AZURE_OPENAI_BASE_URL = "https://tiegui-ai.openai.azure.com/openai/v1/";
 
 type OpenAiResponsesPayload =
   | {
@@ -32,7 +35,7 @@ type OpenAiResponsesPayload =
     }
   | null;
 
-type ConversationalSmsLlmInput = {
+export type ConversationalSmsLlmInput = {
   organization: ConversationOrgConfig;
   lead: ConversationLead;
   stage: ConversationStage;
@@ -44,18 +47,105 @@ type ConversationalSmsLlmInput = {
   bookingOptions?: SlotOption[] | null;
 };
 
-function isConversationalSmsLlmEnabled(): boolean {
-  return normalizeEnvValue(process.env.CONVERSATIONAL_SMS_LLM_ENABLED) === "true";
+export type ConversationalSmsLlmRuntimeSummary = {
+  enabled: boolean;
+  configured: boolean;
+  mode: "auto" | "explicit_on" | "explicit_off";
+  model: string;
+  baseUrl: string;
+  endpointOrigin: string | null;
+};
+
+function normalizeAzureOpenAiBaseUrl(value: string | null | undefined): string | null {
+  const trimmed = (value || "").trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const withTrailingSlash = trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
+  if (/\/openai\/v1\/$/i.test(withTrailingSlash)) {
+    return withTrailingSlash;
+  }
+  if (/\/openai\/$/i.test(withTrailingSlash)) {
+    return `${withTrailingSlash}v1/`;
+  }
+  return `${withTrailingSlash}openai/v1/`;
 }
 
-function getConversationalSmsModel(): string {
-  return normalizeEnvValue(process.env.OPENAI_CONVERSATIONAL_SMS_MODEL) || DEFAULT_MODEL;
+function getConversationalSmsModel(env: NodeJS.ProcessEnv = process.env): string {
+  return normalizeEnvValue(env.OPENAI_CONVERSATIONAL_SMS_MODEL) || DEFAULT_MODEL;
+}
+
+export function getConversationalSmsLlmRuntimeSummary(
+  env: NodeJS.ProcessEnv = process.env,
+): ConversationalSmsLlmRuntimeSummary {
+  const explicitMode = normalizeEnvValue(env.CONVERSATIONAL_SMS_LLM_ENABLED);
+  const mode =
+    explicitMode === "true"
+      ? "explicit_on"
+      : explicitMode === "false"
+        ? "explicit_off"
+        : "auto";
+  const apiKey = normalizeEnvValue(env.AZURE_OPENAI_API_KEY);
+  const configured = Boolean(apiKey);
+  const baseUrl =
+    normalizeAzureOpenAiBaseUrl(normalizeEnvValue(env.AZURE_OPENAI_ENDPOINT)) ||
+    DEFAULT_AZURE_OPENAI_BASE_URL;
+  let endpointOrigin: string | null = null;
+  try {
+    endpointOrigin = new URL(baseUrl).origin;
+  } catch {
+    endpointOrigin = null;
+  }
+
+  return {
+    enabled: mode === "explicit_off" ? false : configured,
+    configured,
+    mode,
+    model: getConversationalSmsModel(env),
+    baseUrl,
+    endpointOrigin,
+  };
+}
+
+function resolveConversationalSmsLlmRuntimeConfig(env: NodeJS.ProcessEnv = process.env) {
+  const summary = getConversationalSmsLlmRuntimeSummary(env);
+  return {
+    ...summary,
+    apiKey: normalizeEnvValue(env.AZURE_OPENAI_API_KEY),
+  };
+}
+
+export function buildConversationalSmsLlmCacheKey(input: ConversationalSmsLlmInput): string {
+  return JSON.stringify({
+    organizationId: input.organization.id,
+    leadId: input.lead.id,
+    locale: input.lead.preferredLanguage || input.organization.messageLanguage,
+    tone: input.organization.smsTone,
+    stage: input.stage,
+    workingHoursStart: input.organization.workingHoursStart,
+    workingHoursEnd: input.organization.workingHoursEnd,
+    smsAgentPlaybook: input.organization.smsAgentPlaybook,
+    inboundBody: input.inboundBody.trim(),
+    workSummary: input.workSummary || null,
+    addressText: input.addressText || null,
+    addressCity: input.addressCity || null,
+    timeframe: input.timeframe || null,
+    bookingOptions:
+      input.bookingOptions?.map((option) => ({
+        id: option.id,
+        label: option.label,
+      })) || [],
+  });
 }
 
 function getConversationalSmsEstimatedCostCents(): number {
   return Math.max(
     1,
-    Math.round(Number(normalizeEnvValue(process.env.OPENAI_CONVERSATIONAL_SMS_COST_ESTIMATE_CENTS)) || DEFAULT_ESTIMATED_COST_CENTS),
+    Math.round(
+      Number(normalizeEnvValue(process.env.OPENAI_CONVERSATIONAL_SMS_COST_ESTIMATE_CENTS)) ||
+        DEFAULT_ESTIMATED_COST_CENTS,
+    ),
   );
 }
 
@@ -184,14 +274,24 @@ function buildStageInstruction(stage: ConversationStage): string {
 }
 
 function buildPrompt(input: ConversationalSmsLlmInput): string {
+  const playbook = input.organization.smsAgentPlaybook;
+  const estimatorLabel = playbook.estimatorName || "the estimator";
+  const callbackRule = playbook.useInboundPhoneAsCallback
+    ? "The lead's SMS number is already the callback number on file unless the customer says to use a different number."
+    : "If the org needs a better callback number than the SMS line, ask for it only when necessary.";
   return JSON.stringify(
     {
       goal:
-        "Collect only the details needed to either book an estimate or leave a clean callback summary for a contractor. Be calm, sparse, and professional.",
+        "Collect only the details needed to either book an estimate or leave a clean callback summary for a contractor. Be calm, sparse, professional, and capture structured CRM intake details accurately.",
       rules: [
+        "Sound like a real office coordinator for a contractor, not a bot or a sales rep.",
         "Never be salesy, pushy, or repetitive.",
+        "Use natural, plain-spoken wording and contractions when they fit.",
         "Ask at most one short question.",
+        "If the customer already gave the needed detail, acknowledge it and move to the next step instead of asking again.",
         "Do not invent details.",
+        callbackRule,
+        "Before booking, make sure the CRM has the work needed and the service address or city.",
         "Set shouldHandoff=true when the customer wants a person, asks a question that needs a human, gives ambiguous scheduling, or needs custom discussion.",
         "Use selectedSlotId only when the customer clearly chose A, B, or C.",
         "replyBody should be a short, professional SMS and may be null.",
@@ -204,16 +304,42 @@ function buildPrompt(input: ConversationalSmsLlmInput): string {
         smsTone: input.organization.smsTone,
         stage: input.stage,
         known: {
+          callbackNumberOnFile: input.lead.phoneE164,
           workSummary: input.workSummary || null,
           addressText: input.addressText || null,
           addressCity: input.addressCity || null,
           timeframe: input.timeframe || null,
+        },
+        bookingPreference: {
+          preferredWindowStart: input.organization.workingHoursStart,
+          preferredWindowEnd: input.organization.workingHoursEnd,
+          estimatorName: playbook.estimatorName || null,
         },
         bookingOptions:
           input.bookingOptions?.map((option) => ({
             id: option.id,
             label: option.label,
           })) || [],
+        replyStyle: {
+          voice: "helpful front-desk teammate",
+          workingHours: input.organization.smsWorkingHoursText || null,
+          websiteSignature: input.organization.smsWebsiteSignature || null,
+        },
+        playbook: hasSmsAgentPlaybookDetails(playbook)
+          ? {
+              primaryGoal: playbook.primaryGoal || `Book estimate visits with ${estimatorLabel}.`,
+              businessContext: playbook.businessContext || null,
+              servicesSummary: playbook.servicesSummary || null,
+              serviceAreaSummary: playbook.serviceAreaSummary || null,
+              requiredDetails: playbook.requiredDetails || null,
+              handoffTriggers: playbook.handoffTriggers || null,
+              toneNotes: playbook.toneNotes || null,
+              estimatorName: playbook.estimatorName || null,
+              schedulingNotes: playbook.schedulingNotes || null,
+              doNotPromise: playbook.doNotPromise || null,
+              useInboundPhoneAsCallback: playbook.useInboundPhoneAsCallback,
+            }
+          : null,
         inboundBody: input.inboundBody,
       },
       outputSchema: {
@@ -235,12 +361,8 @@ function buildPrompt(input: ConversationalSmsLlmInput): string {
 export async function maybeInterpretConversationalSmsTurn(
   input: ConversationalSmsLlmInput,
 ): Promise<ConversationalSmsLlmDecision | null> {
-  if (!isConversationalSmsLlmEnabled()) {
-    return null;
-  }
-
-  const apiKey = normalizeEnvValue(process.env.OPENAI_API_KEY);
-  if (!apiKey) {
+  const runtime = resolveConversationalSmsLlmRuntimeConfig();
+  if (!runtime.enabled || !runtime.apiKey) {
     return null;
   }
 
@@ -249,54 +371,44 @@ export async function maybeInterpretConversationalSmsTurn(
     orgId: input.organization.id,
     estimatedCostCents,
   });
+
   if (!reserved) {
     return null;
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: getConversationalSmsModel(),
-        max_output_tokens: 400,
-        input: [
-          {
-            role: "system",
-            content: [
-              {
-                type: "input_text",
-                text:
-                  "You help a home-service contractor qualify SMS leads. Keep replies calm, brief, professional, and non-pushy. Return strict JSON only.",
-              },
-            ],
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: buildPrompt(input),
-              },
-            ],
-          },
-        ],
-      }),
+    const client = new OpenAI({
+      baseURL: runtime.baseUrl,
+      apiKey: runtime.apiKey,
     });
 
-    const payload = (await response.json().catch(() => null)) as OpenAiResponsesPayload;
-    if (!response.ok) {
-      const message =
-        typeof payload?.error?.message === "string"
-          ? payload.error.message
-          : `Conversational SMS interpretation failed (${response.status}).`;
-      throw new Error(message);
-    }
+    const response = await client.responses.create({
+      model: runtime.model,
+      max_output_tokens: 400,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "You help a home-service contractor qualify SMS leads. Keep replies calm, brief, professional, and non-pushy. Return strict JSON only.",
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: buildPrompt(input),
+            },
+          ],
+        },
+      ],
+    });
 
-    const rawText = extractOpenAiText(payload);
+    const rawText = extractOpenAiText(response as OpenAiResponsesPayload);
     if (!rawText) {
       return null;
     }

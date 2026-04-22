@@ -1,8 +1,24 @@
 import { NextResponse } from "next/server";
-import type { LeadSource, LeadSourceType, LeadStatus, LeadPriority, CallStatus, MessageStatus } from "@prisma/client";
+import type {
+  LeadSource,
+  LeadSourceType,
+  LeadStatus,
+  LeadPriority,
+  CallStatus,
+  MessageStatus,
+} from "@prisma/client";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
 import { sanitizeConversationSnippet } from "@/lib/inbox-message-display";
+import {
+  derivePotentialSpamSignals,
+  type PotentialSpamSignal,
+} from "@/lib/lead-spam";
 import { prisma } from "@/lib/prisma";
-import { AppApiError, requireAppApiActor, resolveActorOrgId } from "@/lib/app-api-permissions";
+import {
+  AppApiError,
+  requireAppApiActor,
+  resolveActorOrgId,
+} from "@/lib/app-api-permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,9 +43,10 @@ type ConversationRow = {
   };
   unreadCount: number;
   atRisk: boolean;
+  potentialSpam: boolean;
+  potentialSpamSignals: PotentialSpamSignal[];
+  failedOutboundCount: number;
 };
-
-const ACTIVE_BOOKED_EVENT_STATUSES = ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] as const;
 
 function clampInt(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -43,17 +60,51 @@ function callSnippet(status: CallStatus): string {
   return "Call";
 }
 
-function messageSnippet(input: { body: string; status: MessageStatus | null | undefined }): string {
+function messageSnippet(input: {
+  body: string;
+  status: MessageStatus | null | undefined;
+}): string {
   return sanitizeConversationSnippet({
     body: input.body,
     status: input.status,
   });
 }
 
-function isAtRisk(input: { lastInboundAt: Date | null; lastOutboundAt: Date | null; now: Date }): boolean {
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function recordString(
+  record: Record<string, unknown> | null,
+  key: string,
+): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function recordNumber(
+  record: Record<string, unknown> | null,
+  key: string,
+): number | undefined {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function isAtRisk(input: {
+  lastInboundAt: Date | null;
+  lastOutboundAt: Date | null;
+  now: Date;
+}): boolean {
   if (!input.lastInboundAt) return false;
-  if (input.lastOutboundAt && input.lastOutboundAt >= input.lastInboundAt) return false;
-  const minutes = (input.now.getTime() - input.lastInboundAt.getTime()) / (60 * 1000);
+  if (input.lastOutboundAt && input.lastOutboundAt >= input.lastInboundAt)
+    return false;
+  const minutes =
+    (input.now.getTime() - input.lastInboundAt.getTime()) / (60 * 1000);
   return minutes >= 12;
 }
 
@@ -64,10 +115,15 @@ export async function GET(req: Request) {
     const requestedOrgId = url.searchParams.get("orgId");
     const orgId = await resolveActorOrgId({ actor, requestedOrgId });
 
-    const limit = clampInt(Number(url.searchParams.get("limit") || 70), 10, 200);
+    const limit = clampInt(
+      Number(url.searchParams.get("limit") || 70),
+      10,
+      200,
+    );
     const now = new Date();
 
-    const workerScoped = !actor.internalUser && actor.calendarAccessRole === "WORKER";
+    const workerScoped =
+      !actor.internalUser && actor.calendarAccessRole === "WORKER";
 
     const leadWhere = {
       orgId,
@@ -82,7 +138,13 @@ export async function GET(req: Request) {
                   { assignedToUserId: actor.id },
                   { createdByUserId: actor.id },
                   { events: { some: { assignedToUserId: actor.id } } },
-                  { events: { some: { workerAssignments: { some: { workerUserId: actor.id } } } } },
+                  {
+                    events: {
+                      some: {
+                        workerAssignments: { some: { workerUserId: actor.id } },
+                      },
+                    },
+                  },
                 ],
               },
             ]
@@ -109,14 +171,18 @@ export async function GET(req: Request) {
             type: {
               in: ["JOB", "ESTIMATE"],
             },
-            status: {
-              in: [...ACTIVE_BOOKED_EVENT_STATUSES],
-            },
           },
           select: {
             id: true,
+            jobId: true,
+            type: true,
+            status: true,
+            startAt: true,
+            endAt: true,
+            createdAt: true,
+            updatedAt: true,
           },
-          take: 1,
+          take: 12,
         },
         messages: {
           select: {
@@ -141,41 +207,153 @@ export async function GET(req: Request) {
       take: 400,
     });
 
+    const leadIds = leads.map((lead) => lead.id);
+    const phoneNumbers = [
+      ...new Set(leads.map((lead) => lead.phoneE164).filter(Boolean)),
+    ];
+    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const [blockedCallers, failedOutboundGroups, voiceRiskEvents] =
+      await Promise.all([
+        phoneNumbers.length > 0
+          ? prisma.blockedCaller.findMany({
+              where: {
+                orgId,
+                phoneE164: { in: phoneNumbers },
+              },
+              select: {
+                phoneE164: true,
+              },
+            })
+          : Promise.resolve([]),
+        leadIds.length > 0
+          ? prisma.message.groupBy({
+              by: ["leadId"],
+              where: {
+                leadId: { in: leadIds },
+                direction: "OUTBOUND",
+                status: "FAILED",
+              },
+              _count: {
+                _all: true,
+              },
+            })
+          : Promise.resolve([]),
+        leadIds.length > 0
+          ? prisma.communicationEvent.findMany({
+              where: {
+                orgId,
+                leadId: { in: leadIds },
+                channel: "VOICE",
+                occurredAt: { gte: since30d },
+              },
+              select: {
+                leadId: true,
+                occurredAt: true,
+                metadataJson: true,
+              },
+              orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+              take: 2000,
+            })
+          : Promise.resolve([]),
+      ]);
+
+    const blockedCallerPhones = new Set(
+      blockedCallers.map((blockedCaller) => blockedCaller.phoneE164),
+    );
+    const failedOutboundByLead = new Map(
+      failedOutboundGroups.map((group) => [group.leadId, group._count._all]),
+    );
+    const latestVoiceRiskByLead = new Map<
+      string,
+      { disposition: string | null; score: number | null }
+    >();
+
+    for (const event of voiceRiskEvents) {
+      if (!event.leadId || latestVoiceRiskByLead.has(event.leadId)) {
+        continue;
+      }
+      const metadata = asRecord(event.metadataJson);
+      const disposition = recordString(metadata, "riskDisposition") || null;
+      const score = recordNumber(metadata, "riskScore") ?? null;
+      if (!disposition && score == null) {
+        continue;
+      }
+      latestVoiceRiskByLead.set(event.leadId, {
+        disposition,
+        score,
+      });
+    }
+
     const rows: ConversationRow[] = leads
       .map((lead) => {
         const lastMessage = lead.messages[0] || null;
         const lastCall = lead.calls[0] || null;
 
-        const lastMessageAt = lastMessage?.createdAt ? new Date(lastMessage.createdAt) : null;
-        const lastCallAt = lastCall?.startedAt ? new Date(lastCall.startedAt) : null;
-        const lastEventAt = new Date(Math.max(lastMessageAt ? lastMessageAt.getTime() : 0, lastCallAt ? lastCallAt.getTime() : 0));
+        const lastMessageAt = lastMessage?.createdAt
+          ? new Date(lastMessage.createdAt)
+          : null;
+        const lastCallAt = lastCall?.startedAt
+          ? new Date(lastCall.startedAt)
+          : null;
+        const lastEventAt = new Date(
+          Math.max(
+            lastMessageAt ? lastMessageAt.getTime() : 0,
+            lastCallAt ? lastCallAt.getTime() : 0,
+          ),
+        );
 
         let lastSnippet = "";
         let lastChannel: ConversationRow["lastChannel"] = "system";
         if (lastMessageAt && (!lastCallAt || lastMessageAt >= lastCallAt)) {
-          lastSnippet = messageSnippet({ body: lastMessage?.body || "", status: lastMessage?.status });
+          lastSnippet = messageSnippet({
+            body: lastMessage?.body || "",
+            status: lastMessage?.status,
+          });
           lastChannel = "sms";
         } else if (lastCallAt) {
           lastSnippet = callSnippet(lastCall?.status || "RINGING");
           lastChannel = "call";
         }
 
-        const contactName = (lead.contactName || lead.businessName || lead.phoneE164 || "").trim();
+        const contactName = (
+          lead.contactName ||
+          lead.businessName ||
+          lead.phoneE164 ||
+          ""
+        ).trim();
         const unreadCount =
-          lead.lastInboundAt && (!lead.lastOutboundAt || lead.lastOutboundAt < lead.lastInboundAt) ? 1 : 0;
-        const hasActiveBookedJob = lead.events.length > 0;
-        const effectiveStatus = lead.status === "DNC" ? lead.status : hasActiveBookedJob ? "BOOKED" : lead.status;
+          lead.lastInboundAt &&
+          (!lead.lastOutboundAt || lead.lastOutboundAt < lead.lastInboundAt)
+            ? 1
+            : 0;
+        const bookingProjection = deriveLeadBookingProjection({
+          leadStatus: lead.status,
+          events: lead.events,
+        });
+        const failedOutboundCount = failedOutboundByLead.get(lead.id) || 0;
+        const latestVoiceRisk = latestVoiceRiskByLead.get(lead.id);
+        const potentialSpamSignals = derivePotentialSpamSignals({
+          isBlockedCaller: blockedCallerPhones.has(lead.phoneE164),
+          latestVoiceRiskDisposition: latestVoiceRisk?.disposition || null,
+          latestVoiceRiskScore: latestVoiceRisk?.score ?? null,
+          failedOutboundCount,
+        });
 
         return {
           id: lead.id,
           leadId: lead.id,
           contactName: contactName || lead.phoneE164,
           phoneE164: lead.phoneE164,
-          status: effectiveStatus,
+          status: bookingProjection.derivedLeadStatus,
           priority: lead.priority,
           sourceType: lead.sourceType,
           leadSource: lead.leadSource,
-          nextFollowUpAt: hasActiveBookedJob ? null : lead.nextFollowUpAt ? lead.nextFollowUpAt.toISOString() : null,
+          nextFollowUpAt: bookingProjection.hasActiveBooking
+            ? null
+            : lead.nextFollowUpAt
+              ? lead.nextFollowUpAt.toISOString()
+              : null,
           lastEventAt: lastEventAt.toISOString(),
           lastSnippet,
           lastChannel,
@@ -185,7 +363,16 @@ export async function GET(req: Request) {
             meta: false,
           },
           unreadCount,
-          atRisk: hasActiveBookedJob ? false : isAtRisk({ lastInboundAt: lead.lastInboundAt, lastOutboundAt: lead.lastOutboundAt, now }),
+          atRisk: bookingProjection.hasActiveBooking
+            ? false
+            : isAtRisk({
+                lastInboundAt: lead.lastInboundAt,
+                lastOutboundAt: lead.lastOutboundAt,
+                now,
+              }),
+          potentialSpam: potentialSpamSignals.length > 0,
+          potentialSpamSignals,
+          failedOutboundCount,
         };
       })
       .sort((a, b) => b.lastEventAt.localeCompare(a.lastEventAt))
@@ -194,9 +381,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, conversations: rows });
   } catch (error) {
     if (error instanceof AppApiError) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: error.status },
+      );
     }
-    const message = error instanceof Error ? error.message : "Failed to load conversations.";
+    const message =
+      error instanceof Error ? error.message : "Failed to load conversations.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

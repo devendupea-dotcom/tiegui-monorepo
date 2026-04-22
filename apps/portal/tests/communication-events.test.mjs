@@ -46,6 +46,89 @@ test("upsertCommunicationEvent uses composite orgId/idempotencyKey protection", 
   assert.equal(calls[0].create.conversationId, "conversation_1");
 });
 
+test("upsertCommunicationEvent creates a conversation state when the lead is linked but the conversation is missing", async () => {
+  const calls = [];
+  const tx = {
+    lead: {
+      async findUnique() {
+        return {
+          id: "lead_1",
+          orgId: "org_1",
+          customerId: "contact_1",
+          conversationState: null,
+        };
+      },
+    },
+    leadConversationState: {
+      async upsert() {
+        return { id: "conversation_1" };
+      },
+    },
+    communicationEvent: {
+      async upsert(input) {
+        calls.push(input);
+        return input;
+      },
+    },
+  };
+
+  await upsertCommunicationEvent(tx, {
+    orgId: "org_1",
+    leadId: "lead_1",
+    messageId: "message_1",
+    type: "OUTBOUND_SMS_SENT",
+    channel: "SMS",
+    occurredAt: new Date("2025-03-20T14:00:00.000Z"),
+    summary: "Outbound SMS sent",
+    idempotencyKey: buildCommunicationIdempotencyKey("sms-outbound", "org_1", "message_1"),
+  });
+
+  assert.equal(calls[0].create.contactId, "contact_1");
+  assert.equal(calls[0].create.conversationId, "conversation_1");
+});
+
+test("upsertCommunicationEvent rejects partial lead linkage when no contact can be resolved", async () => {
+  const tx = {
+    lead: {
+      async findUnique() {
+        return {
+          id: "lead_1",
+          orgId: "org_1",
+          customerId: null,
+          conversationState: {
+            id: "conversation_1",
+          },
+        };
+      },
+    },
+    leadConversationState: {
+      async upsert() {
+        throw new Error("should not create a conversation state");
+      },
+    },
+    communicationEvent: {
+      async upsert() {
+        throw new Error("should not persist partial linkage");
+      },
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      upsertCommunicationEvent(tx, {
+        orgId: "org_1",
+        leadId: "lead_1",
+        messageId: "message_1",
+        type: "OUTBOUND_SMS_SENT",
+        channel: "SMS",
+        occurredAt: new Date("2025-03-20T14:00:00.000Z"),
+        summary: "Outbound SMS sent",
+        idempotencyKey: buildCommunicationIdempotencyKey("sms-outbound", "org_1", "message_1"),
+      }),
+    /require a linked contact/i,
+  );
+});
+
 test("upsertVoicemailArtifact preserves lead, contact, call, recording, and transcript linkage", async () => {
   const calls = [];
   const tx = {

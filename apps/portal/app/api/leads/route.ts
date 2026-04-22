@@ -46,9 +46,6 @@ const SCHEDULABLE_EVENT_TYPES: EventType[] = ["JOB", "ESTIMATE", "CALL"];
 const STATUS_VALUES: CalendarEventStatus[] = [
   "SCHEDULED",
   "CONFIRMED",
-  "EN_ROUTE",
-  "ON_SITE",
-  "IN_PROGRESS",
   "COMPLETED",
   "CANCELLED",
   "NO_SHOW",

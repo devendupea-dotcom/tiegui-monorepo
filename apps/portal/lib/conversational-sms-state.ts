@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { ACTIVE_CONVERSATION_FOLLOW_UP_STAGES } from "@/lib/sms-automation-guards";
 import { sendOutboundSms } from "@/lib/sms";
 import { queueSmsDispatch } from "@/lib/sms-dispatch-queue";
+import { normalizeSmsAgentPlaybook } from "@/lib/conversational-sms-agent-playbook";
 import {
   getFollowUpCadenceMinutes,
   mapStageToLeadIntake,
@@ -69,6 +70,7 @@ export async function getConversationOrgConfig(orgId: string): Promise<Conversat
           daysAhead: true,
           timezone: true,
           customTemplates: true,
+          aiIntakeProfile: true,
         },
       },
     },
@@ -90,11 +92,14 @@ export async function getConversationOrgConfig(orgId: string): Promise<Conversat
     smsFromNumberE164: org.smsFromNumberE164,
     smsQuietHoursStartMinute: org.smsQuietHoursStartMinute,
     smsQuietHoursEndMinute: org.smsQuietHoursEndMinute,
+    workingHoursStart: messaging?.workingHoursStart || "09:00",
+    workingHoursEnd: messaging?.workingHoursEnd || "17:00",
     slotDurationMinutes: Math.max(15, Math.min(180, messaging?.slotDurationMinutes || org.dashboardConfig?.defaultSlotMinutes || 60)),
     bufferMinutes: Math.max(0, Math.min(120, messaging?.bufferMinutes || 15)),
     daysAhead: Math.max(1, Math.min(14, messaging?.daysAhead || 3)),
     messagingTimezone: messaging?.timezone || org.dashboardConfig?.calendarTimezone || "America/Los_Angeles",
     customTemplates,
+    smsAgentPlaybook: normalizeSmsAgentPlaybook(messaging?.aiIntakeProfile),
     smsGreetingLine: org.smsGreetingLine,
     smsWorkingHoursText: org.smsWorkingHoursText || (messaging ? `${messaging.workingHoursStart}-${messaging.workingHoursEnd}` : null),
     smsWebsiteSignature: org.smsWebsiteSignature,

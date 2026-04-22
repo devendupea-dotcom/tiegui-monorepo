@@ -20,6 +20,7 @@ import {
   toMoneyDecimal,
 } from "@/lib/invoices";
 import type { InvoiceTemplate } from "@/lib/invoice-template";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 
 export type InvoicePdfImageSource = string | { data: Buffer; format: "png" | "jpg" };
 
@@ -103,11 +104,11 @@ function clampInt(value: number, min: number, max: number): number {
 }
 
 function formatDate(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "2-digit",
     year: "numeric",
-  }).format(value);
+  });
 }
 
 function formatTerms(terms: InvoiceTerms | null | undefined): string {

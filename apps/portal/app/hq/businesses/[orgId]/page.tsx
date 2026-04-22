@@ -228,7 +228,17 @@ async function OverviewTab({ orgId }: { orgId: string }) {
 
   const [leadsCount, bookedCount, dueCount, callsCount, messagesCount, eventsCount, organization, settings, cronState] = await Promise.all([
     prisma.lead.count({ where: { orgId } }),
-    prisma.lead.count({ where: { orgId, status: "BOOKED", updatedAt: { gte: start30 } } }),
+    prisma.event.findMany({
+      where: {
+        orgId,
+        leadId: { not: null },
+        type: { in: ["JOB", "ESTIMATE"] },
+        status: { in: ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] },
+        startAt: { gte: start30 },
+      },
+      distinct: ["leadId"],
+      select: { leadId: true },
+    }),
     prisma.lead.count({ where: { orgId, nextFollowUpAt: { lte: now } } }),
     prisma.call.count({ where: { orgId } }),
     prisma.message.count({ where: { orgId } }),
@@ -330,7 +340,7 @@ async function OverviewTab({ orgId }: { orgId: string }) {
         </article>
         <article className="card kpi-card">
           <h2>Booked (30d)</h2>
-          <p className="kpi-value">{bookedCount}</p>
+          <p className="kpi-value">{bookedCount.length}</p>
         </article>
         <article className="card kpi-card">
           <h2>Follow-ups Due</h2>

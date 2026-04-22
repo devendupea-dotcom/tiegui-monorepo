@@ -2,6 +2,7 @@ import type { TwilioConfigStatus } from "@prisma/client";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { requireInternalUser } from "@/lib/session";
@@ -513,7 +514,10 @@ export default async function HqOrgTwilioPage({
               <tbody>
                 {organization.twilioConfigAuditLogs.map((entry) => (
                   <tr key={entry.id}>
-                    <td>{new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(entry.createdAt)}</td>
+                    <td>{formatDateTimeForDisplay(entry.createdAt, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}</td>
                     <td>{entry.action}</td>
                     <td>
                       {entry.previousStatus || "-"} → {entry.nextStatus || "-"}

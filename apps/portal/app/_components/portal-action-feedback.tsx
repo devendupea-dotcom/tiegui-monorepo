@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 type FeedbackTone = "success" | "error";
 
@@ -11,6 +12,19 @@ type FeedbackState = {
   message: string;
 } | null;
 
+type SuccessMessages = {
+  saved: string;
+  validated: string;
+  tested: string;
+  created: string;
+  updated: string;
+  deleted: string;
+  sent: string;
+  approved: string;
+  declined: string;
+  converted: string;
+};
+
 function humanizeMessage(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -18,7 +32,11 @@ function humanizeMessage(value: string): string {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
-function resolveFeedback(pathname: string, searchParams: URLSearchParams): FeedbackState {
+function resolveFeedback(
+  pathname: string,
+  searchParams: URLSearchParams,
+  successMessages: SuccessMessages,
+): FeedbackState {
   const error = searchParams.get("error");
   if (error) {
     const message = humanizeMessage(error);
@@ -30,16 +48,16 @@ function resolveFeedback(pathname: string, searchParams: URLSearchParams): Feedb
   }
 
   const successSignals: Array<{ param: string; message: string }> = [
-    { param: "saved", message: "Changes saved." },
-    { param: "validated", message: "Validation passed." },
-    { param: "tested", message: "Test completed successfully." },
-    { param: "created", message: "Created successfully." },
-    { param: "updated", message: "Updated successfully." },
-    { param: "deleted", message: "Removed successfully." },
-    { param: "sent", message: "Sent successfully." },
-    { param: "approved", message: "Approved successfully." },
-    { param: "declined", message: "Declined successfully." },
-    { param: "converted", message: "Converted successfully." },
+    { param: "saved", message: successMessages.saved },
+    { param: "validated", message: successMessages.validated },
+    { param: "tested", message: successMessages.tested },
+    { param: "created", message: successMessages.created },
+    { param: "updated", message: successMessages.updated },
+    { param: "deleted", message: successMessages.deleted },
+    { param: "sent", message: successMessages.sent },
+    { param: "approved", message: successMessages.approved },
+    { param: "declined", message: successMessages.declined },
+    { param: "converted", message: successMessages.converted },
   ];
 
   for (const signal of successSignals) {
@@ -65,14 +83,30 @@ function resolveFeedback(pathname: string, searchParams: URLSearchParams): Feedb
 }
 
 export default function PortalActionFeedback() {
+  const t = useTranslations("portalActionFeedback");
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
+  const successMessages = useMemo<SuccessMessages>(
+    () => ({
+      saved: t("success.saved"),
+      validated: t("success.validated"),
+      tested: t("success.tested"),
+      created: t("success.created"),
+      updated: t("success.updated"),
+      deleted: t("success.deleted"),
+      sent: t("success.sent"),
+      approved: t("success.approved"),
+      declined: t("success.declined"),
+      converted: t("success.converted"),
+    }),
+    [t],
+  );
 
   const feedback = useMemo(
-    () => resolveFeedback(pathname, new URLSearchParams(searchParams.toString())),
-    [pathname, searchParams],
+    () => resolveFeedback(pathname, new URLSearchParams(searchParams.toString()), successMessages),
+    [pathname, searchParams, successMessages],
   );
 
   useEffect(() => {
@@ -105,13 +139,13 @@ export default function PortalActionFeedback() {
       aria-live="polite"
     >
       <div className="portal-action-feedback-copy">
-        <strong>{feedback.tone === "error" ? "Action blocked" : "Saved"}</strong>
+        <strong>{feedback.tone === "error" ? t("titleError") : t("titleSuccess")}</strong>
         <p>{feedback.message}</p>
       </div>
       <button
         type="button"
         className="portal-action-feedback-close"
-        aria-label="Dismiss message"
+        aria-label={t("dismiss")}
         onClick={() => {
           setVisible(false);
           setDismissedKey(feedback.key);

@@ -37,6 +37,9 @@ type DispatchJobFormProps = {
     name: string;
   }[];
   disabled?: boolean;
+  disableScheduleFields?: boolean;
+  disableStatusField?: boolean;
+  scheduleHint?: string | null;
   includeStatus?: boolean;
   submitLabel: string;
   submitBusyLabel?: string;
@@ -240,6 +243,9 @@ export default function DispatchJobForm({
   form,
   crews,
   disabled = false,
+  disableScheduleFields = false,
+  disableStatusField = false,
+  scheduleHint = null,
   includeStatus = false,
   submitLabel,
   submitBusyLabel,
@@ -505,11 +511,12 @@ export default function DispatchJobForm({
 
         <label>
           {copy.scheduledDate}
+          {scheduleHint ? <span className="muted">{scheduleHint}</span> : null}
           <input
             type="date"
             value={form.scheduledDate}
             onChange={(event) => onChange({ scheduledDate: event.target.value })}
-            disabled={disabled}
+            disabled={disabled || disableScheduleFields}
             required
           />
         </label>
@@ -536,7 +543,7 @@ export default function DispatchJobForm({
             type="time"
             value={form.scheduledStartTime}
             onChange={(event) => onChange({ scheduledStartTime: event.target.value })}
-            disabled={disabled}
+            disabled={disabled || disableScheduleFields}
           />
         </label>
 
@@ -546,7 +553,7 @@ export default function DispatchJobForm({
             type="time"
             value={form.scheduledEndTime}
             onChange={(event) => onChange({ scheduledEndTime: event.target.value })}
-            disabled={disabled}
+            disabled={disabled || disableScheduleFields}
           />
         </label>
 
@@ -572,7 +579,7 @@ export default function DispatchJobForm({
             <select
               value={form.status}
               onChange={(event) => onChange({ status: event.target.value as DispatchStatusValue })}
-              disabled={disabled}
+              disabled={disabled || disableStatusField}
             >
               {dispatchStatusValues.map((value) => (
                 <option key={value} value={value}>

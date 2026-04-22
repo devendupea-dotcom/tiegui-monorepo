@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { getConversationalSmsLlmRuntimeSummary } from "@/lib/conversational-sms-llm";
 import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
 import { isInternalRole } from "@/lib/session";
@@ -53,6 +54,7 @@ export async function GET(req: Request) {
 
   const googleEnvPresent = boolEnv("GOOGLE_CLIENT_ID") && boolEnv("GOOGLE_CLIENT_SECRET");
   const twilioEnvPresent = boolEnv("TWILIO_TOKEN_ENCRYPTION_KEY");
+  const conversationalSmsLlm = getConversationalSmsLlmRuntimeSummary();
 
   if (!dbInfo.directUrlPresent) {
     warnings.push(
@@ -69,6 +71,9 @@ export async function GET(req: Request) {
   }
   if (!twilioEnvPresent) {
     warnings.push("Twilio env is incomplete (TWILIO_TOKEN_ENCRYPTION_KEY).");
+  }
+  if (conversationalSmsLlm.mode === "explicit_on" && !conversationalSmsLlm.configured) {
+    warnings.push("Conversational SMS LLM is enabled but Azure OpenAI credentials are missing.");
   }
 
   return NextResponse.json({
@@ -96,6 +101,11 @@ export async function GET(req: Request) {
     env: {
       googleEnvPresent,
       twilioEnvPresent,
+      conversationalSmsLlmEnabled: conversationalSmsLlm.enabled,
+      conversationalSmsLlmConfigured: conversationalSmsLlm.configured,
+      conversationalSmsLlmMode: conversationalSmsLlm.mode,
+      conversationalSmsModel: conversationalSmsLlm.model,
+      azureOpenAiEndpointOrigin: conversationalSmsLlm.endpointOrigin,
       cronSecretPresent: boolEnv("CRON_SECRET"),
       integrationsEncryptionKeyPresent: boolEnv("INTEGRATIONS_ENCRYPTION_KEY") || boolEnv("NEXTAUTH_SECRET"),
       twilioSendEnabled: normalizeEnvValue(process.env.TWILIO_SEND_ENABLED) === "true",

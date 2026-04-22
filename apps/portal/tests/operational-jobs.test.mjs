@@ -42,15 +42,15 @@ test("mapBookingEventToOperationalJobState keeps estimate bookings in estimating
   });
 });
 
-test("mapBookingEventToOperationalJobState closes operational jobs on cancelled bookings", () => {
+test("mapBookingEventToOperationalJobState keeps booking mirrors in scheduled mode", () => {
   const mapped = mapBookingEventToOperationalJobState({
     type: "JOB",
     status: "CANCELLED",
   });
 
   assert.deepEqual(mapped, {
-    jobStatus: "CANCELLED",
-    dispatchStatus: "CANCELED",
+    jobStatus: "SCHEDULED",
+    dispatchStatus: "SCHEDULED",
   });
 });
 

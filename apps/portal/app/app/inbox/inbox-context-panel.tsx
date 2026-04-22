@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useLocale } from "next-intl";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import { formatLabel } from "@/lib/hq";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import {
@@ -23,6 +24,9 @@ const LEAD_STATUS_OPTIONS = [
   "NOT_INTERESTED",
   "DNC",
 ] as const;
+const EDITABLE_LEAD_STATUS_OPTIONS = LEAD_STATUS_OPTIONS.filter(
+  (status) => status !== "BOOKED",
+);
 
 const LEAD_PRIORITY_OPTIONS = ["HIGH", "MEDIUM", "LOW"] as const;
 
@@ -39,14 +43,16 @@ export type InboxLeadContext = {
   nextFollowUpAt: string | null;
   estimatedRevenueCents: number | null;
   notes: string | null;
-  customer:
-    | {
-        id: string;
-        name: string;
-        email: string | null;
-        addressLine: string | null;
-      }
-    | null;
+  isBlockedCaller?: boolean;
+  potentialSpam?: boolean;
+  potentialSpamSignals?: string[];
+  failedOutboundCount?: number;
+  customer: {
+    id: string;
+    name: string;
+    email: string | null;
+    addressLine: string | null;
+  } | null;
 };
 
 type InboxLeadUpdate = {
@@ -85,20 +91,33 @@ type ContextFormState = {
   notes: string;
 };
 
-type LeadPatchResponse =
-  | {
-      ok?: boolean;
-      error?: string;
-      lead?: InboxLeadUpdate;
-    }
-  | null;
+type LeadPatchResponse = {
+  ok?: boolean;
+  error?: string;
+  lead?: InboxLeadUpdate;
+} | null;
+
+type SpamBlockResponse = {
+  ok?: boolean;
+  error?: string;
+  lead?: InboxLeadContext;
+} | null;
 
 type InboxContextCopy = {
   selectConversation: string;
   estimatedValueInvalid: string;
   followUpInvalid: string;
   updateError: string;
+  spamBlockError: string;
   saved: string;
+  potentialSpam: string;
+  failedSms: string;
+  blockSpam: string;
+  blockingSpam: string;
+  blockedSpam: string;
+  spamSignalsBlocked: string;
+  spamSignalsHighRisk: string;
+  spamSignalsFailed: string;
   overdue: string;
   workType: string;
   followUp: string;
@@ -131,10 +150,20 @@ function getInboxContextCopy(locale: string): InboxContextCopy {
   if (locale.startsWith("es")) {
     return {
       selectConversation: "Selecciona una conversacion para ver detalles.",
-      estimatedValueInvalid: "El valor estimado debe ser una cantidad valida en dolares.",
+      estimatedValueInvalid:
+        "El valor estimado debe ser una cantidad valida en dolares.",
       followUpInvalid: "El seguimiento debe ser una fecha y hora validas.",
       updateError: "No se pudo actualizar esta conversacion.",
+      spamBlockError: "No se pudo bloquear este lead como spam.",
       saved: "Contexto guardado.",
+      potentialSpam: "Posible spam",
+      failedSms: "SMS fallidos",
+      blockSpam: "Bloquear spam",
+      blockingSpam: "Bloqueando spam...",
+      blockedSpam: "Lead bloqueado como spam.",
+      spamSignalsBlocked: "Numero bloqueado",
+      spamSignalsHighRisk: "Llamada entrante de alto riesgo",
+      spamSignalsFailed: "SMS fallidos repetidos",
       overdue: "Vencido",
       workType: "Tipo de trabajo",
       followUp: "Seguimiento",
@@ -161,7 +190,16 @@ function getInboxContextCopy(locale: string): InboxContextCopy {
     estimatedValueInvalid: "Estimated value must be a valid dollar amount.",
     followUpInvalid: "Follow-up must be a valid date and time.",
     updateError: "Could not update this conversation.",
+    spamBlockError: "Could not block this lead as spam.",
     saved: "Context saved.",
+    potentialSpam: "Potential spam",
+    failedSms: "Failed SMS",
+    blockSpam: "Block Spam",
+    blockingSpam: "Blocking spam...",
+    blockedSpam: "Lead blocked as spam.",
+    spamSignalsBlocked: "Blocked caller",
+    spamSignalsHighRisk: "High-risk inbound call",
+    spamSignalsFailed: "Repeated failed SMS",
     overdue: "Overdue",
     workType: "Work type",
     followUp: "Follow-up",
@@ -183,6 +221,16 @@ function getInboxContextCopy(locale: string): InboxContextCopy {
   };
 }
 
+function formatPotentialSpamSignal(
+  signal: string,
+  copy: InboxContextCopy,
+): string {
+  if (signal === "blocked_caller") return copy.spamSignalsBlocked;
+  if (signal === "high_risk_inbound_call") return copy.spamSignalsHighRisk;
+  if (signal === "repeated_failed_outbound_sms") return copy.spamSignalsFailed;
+  return formatLabel(signal);
+}
+
 function createEmptyFormState(): ContextFormState {
   return {
     contactName: "",
@@ -198,7 +246,9 @@ function createEmptyFormState(): ContextFormState {
   };
 }
 
-function buildFormState(leadContext: InboxLeadContext | null): ContextFormState {
+function buildFormState(
+  leadContext: InboxLeadContext | null,
+): ContextFormState {
   if (!leadContext) {
     return createEmptyFormState();
   }
@@ -212,7 +262,9 @@ function buildFormState(leadContext: InboxLeadContext | null): ContextFormState 
     status: leadContext.status || "NEW",
     priority: leadContext.priority || "MEDIUM",
     nextFollowUpAt: toDateTimeLocalInputValue(leadContext.nextFollowUpAt),
-    estimatedRevenue: formatRevenueInputCents(leadContext.estimatedRevenueCents),
+    estimatedRevenue: formatRevenueInputCents(
+      leadContext.estimatedRevenueCents,
+    ),
     notes: leadContext.notes || "",
   };
 }
@@ -230,6 +282,7 @@ export default function InboxContextPanel({
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<ContextFormState>(createEmptyFormState);
   const [saving, setSaving] = useState(false);
+  const [blockingSpam, setBlockingSpam] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const appliedInitialEditingRef = useRef(false);
@@ -240,7 +293,12 @@ export default function InboxContextPanel({
   }, [editing, leadContext]);
 
   useEffect(() => {
-    if (!initialEditing || appliedInitialEditingRef.current || !leadContext || !canManage) {
+    if (
+      !initialEditing ||
+      appliedInitialEditingRef.current ||
+      !leadContext ||
+      !canManage
+    ) {
       return;
     }
 
@@ -259,7 +317,9 @@ export default function InboxContextPanel({
   async function handleSave() {
     if (!canManage || saving) return;
 
-    const estimatedRevenueCents = parseRevenueInputToCents(form.estimatedRevenue);
+    const estimatedRevenueCents = parseRevenueInputToCents(
+      form.estimatedRevenue,
+    );
     if (Number.isNaN(estimatedRevenueCents)) {
       setError(copy.estimatedValueInvalid);
       return;
@@ -287,7 +347,7 @@ export default function InboxContextPanel({
           phone: form.phone || null,
           city: form.city || null,
           businessType: form.businessType || null,
-          status: form.status,
+          ...(form.status !== "BOOKED" ? { status: form.status } : {}),
           priority: form.priority,
           nextFollowUpAt,
           estimatedRevenueCents,
@@ -295,7 +355,9 @@ export default function InboxContextPanel({
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as LeadPatchResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as LeadPatchResponse;
       if (!response.ok || !payload?.ok || !payload.lead) {
         throw new Error(payload?.error || copy.updateError);
       }
@@ -317,9 +379,46 @@ export default function InboxContextPanel({
       setEditing(false);
       setNotice(copy.saved);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : copy.updateError);
+      setError(
+        saveError instanceof Error ? saveError.message : copy.updateError,
+      );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleBlockSpam() {
+    if (!canManage || blockingSpam || currentLeadContext.isBlockedCaller)
+      return;
+
+    setBlockingSpam(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const response = await fetch(`/api/leads/${currentLeadContext.id}/spam`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+
+      const payload = (await response
+        .json()
+        .catch(() => null)) as SpamBlockResponse;
+      if (!response.ok || !payload?.ok || !payload.lead) {
+        throw new Error(payload?.error || copy.spamBlockError);
+      }
+
+      onSaved(payload.lead);
+      setEditing(false);
+      setNotice(copy.blockedSpam);
+    } catch (blockError) {
+      setError(
+        blockError instanceof Error ? blockError.message : copy.spamBlockError,
+      );
+    } finally {
+      setBlockingSpam(false);
     }
   }
 
@@ -328,26 +427,63 @@ export default function InboxContextPanel({
     currentLeadContext.businessName?.trim() ||
     currentLeadContext.customer?.name?.trim() ||
     currentLeadContext.phoneE164;
-  const displayBusinessType = sanitizeLeadBusinessTypeLabel(currentLeadContext.businessType);
+  const displayBusinessType = sanitizeLeadBusinessTypeLabel(
+    currentLeadContext.businessType,
+  );
+  const potentialSpamSignals = currentLeadContext.potentialSpamSignals || [];
+  const failedOutboundCount = currentLeadContext.failedOutboundCount || 0;
 
   return (
     <div className="stack-cell">
       <div className="stack-cell">
         <strong>{leadTitle}</strong>
-        {currentLeadContext.businessName && currentLeadContext.businessName !== leadTitle ? (
+        {currentLeadContext.businessName &&
+        currentLeadContext.businessName !== leadTitle ? (
           <span className="muted">{currentLeadContext.businessName}</span>
         ) : null}
         <span className="muted">{currentLeadContext.phoneE164}</span>
-        {currentLeadContext.city ? <span className="muted">{currentLeadContext.city}</span> : null}
+        {currentLeadContext.city ? (
+          <span className="muted">{currentLeadContext.city}</span>
+        ) : null}
       </div>
 
       <div className="quick-meta">
-        <span className={`badge status-${currentLeadContext.status.toLowerCase()}`}>{formatLabel(currentLeadContext.status)}</span>
-        <span className={`badge priority-${currentLeadContext.priority.toLowerCase()}`}>{formatLabel(currentLeadContext.priority)}</span>
-        {currentLeadContext.nextFollowUpAt && new Date(currentLeadContext.nextFollowUpAt).getTime() < Date.now() ? (
+        <span
+          className={`badge status-${currentLeadContext.status.toLowerCase()}`}
+        >
+          {formatLabel(currentLeadContext.status)}
+        </span>
+        <span
+          className={`badge priority-${currentLeadContext.priority.toLowerCase()}`}
+        >
+          {formatLabel(currentLeadContext.priority)}
+        </span>
+        {currentLeadContext.nextFollowUpAt &&
+        new Date(currentLeadContext.nextFollowUpAt).getTime() < Date.now() ? (
           <span className="badge status-overdue">{copy.overdue}</span>
         ) : null}
+        {currentLeadContext.potentialSpam ? (
+          <span className="badge status-overdue">{copy.potentialSpam}</span>
+        ) : null}
+        {failedOutboundCount > 0 ? (
+          <span className="badge status-overdue">
+            {copy.failedSms}: {failedOutboundCount}
+          </span>
+        ) : null}
       </div>
+
+      {potentialSpamSignals.length > 0 ? (
+        <div className="stack-cell">
+          <span className="muted">{copy.potentialSpam}</span>
+          <div className="quick-meta">
+            {potentialSpamSignals.map((signal) => (
+              <span key={signal} className="badge status-overdue">
+                {formatPotentialSpamSignal(signal, copy)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {displayBusinessType ? (
         <div className="stack-cell">
@@ -359,14 +495,24 @@ export default function InboxContextPanel({
       {currentLeadContext.nextFollowUpAt ? (
         <div className="stack-cell">
           <span className="muted">{copy.followUp}</span>
-          <span>{new Date(currentLeadContext.nextFollowUpAt).toLocaleString()}</span>
+          <span>
+            {formatDateTimeForDisplay(currentLeadContext.nextFollowUpAt, {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </span>
         </div>
       ) : null}
 
       {currentLeadContext.estimatedRevenueCents !== null ? (
         <div className="stack-cell">
           <span className="muted">{copy.estimatedValue}</span>
-          <span>${(currentLeadContext.estimatedRevenueCents / 100).toFixed(0)}</span>
+          <span>
+            ${(currentLeadContext.estimatedRevenueCents / 100).toFixed(0)}
+          </span>
         </div>
       ) : null}
 
@@ -374,19 +520,30 @@ export default function InboxContextPanel({
         <div className="stack-cell">
           <span className="muted">{copy.customer}</span>
           <span>{currentLeadContext.customer.name}</span>
-          {currentLeadContext.customer.email ? <span className="muted">{currentLeadContext.customer.email}</span> : null}
-          {currentLeadContext.customer.addressLine ? <span className="muted">{currentLeadContext.customer.addressLine}</span> : null}
+          {currentLeadContext.customer.email ? (
+            <span className="muted">{currentLeadContext.customer.email}</span>
+          ) : null}
+          {currentLeadContext.customer.addressLine ? (
+            <span className="muted">
+              {currentLeadContext.customer.addressLine}
+            </span>
+          ) : null}
         </div>
       ) : null}
 
       {currentLeadContext.notes ? (
         <div className="stack-cell">
           <span className="muted">{copy.notes}</span>
-          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{currentLeadContext.notes}</p>
+          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+            {currentLeadContext.notes}
+          </p>
         </div>
       ) : null}
 
-      <div className="portal-empty-actions" style={{ justifyContent: "flex-start" }}>
+      <div
+        className="portal-empty-actions"
+        style={{ justifyContent: "flex-start" }}
+      >
         <Link className="btn secondary" href={jobHref}>
           {copy.openJob}
         </Link>
@@ -412,6 +569,22 @@ export default function InboxContextPanel({
             {editing ? copy.closeEdit : copy.editContext}
           </button>
         ) : null}
+        {canManage ? (
+          <button
+            className="btn secondary"
+            type="button"
+            onClick={() => void handleBlockSpam()}
+            disabled={
+              blockingSpam || Boolean(currentLeadContext.isBlockedCaller)
+            }
+          >
+            {currentLeadContext.isBlockedCaller
+              ? copy.spamSignalsBlocked
+              : blockingSpam
+                ? copy.blockingSpam
+                : copy.blockSpam}
+          </button>
+        ) : null}
       </div>
 
       {editing ? (
@@ -427,7 +600,13 @@ export default function InboxContextPanel({
               {copy.contactName}
               <input
                 value={form.contactName}
-                onChange={(event) => updateFormField(setForm, "contactName", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFormField(
+                    setForm,
+                    "contactName",
+                    event.currentTarget.value,
+                  )
+                }
                 maxLength={160}
               />
             </label>
@@ -436,7 +615,13 @@ export default function InboxContextPanel({
               {copy.businessName}
               <input
                 value={form.businessName}
-                onChange={(event) => updateFormField(setForm, "businessName", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFormField(
+                    setForm,
+                    "businessName",
+                    event.currentTarget.value,
+                  )
+                }
                 maxLength={160}
               />
             </label>
@@ -447,7 +632,9 @@ export default function InboxContextPanel({
               {copy.phone}
               <input
                 value={form.phone}
-                onChange={(event) => updateFormField(setForm, "phone", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFormField(setForm, "phone", event.currentTarget.value)
+                }
                 placeholder="+12065551212"
                 maxLength={20}
               />
@@ -457,7 +644,9 @@ export default function InboxContextPanel({
               {copy.city}
               <input
                 value={form.city}
-                onChange={(event) => updateFormField(setForm, "city", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFormField(setForm, "city", event.currentTarget.value)
+                }
                 maxLength={120}
               />
             </label>
@@ -468,9 +657,16 @@ export default function InboxContextPanel({
               {copy.status}
               <select
                 value={form.status}
-                onChange={(event) => updateFormField(setForm, "status", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFormField(setForm, "status", event.currentTarget.value)
+                }
               >
-                {LEAD_STATUS_OPTIONS.map((status) => (
+                {form.status === "BOOKED" ? (
+                  <option value="BOOKED" disabled>
+                    {formatLabel("BOOKED")} (Derived)
+                  </option>
+                ) : null}
+                {EDITABLE_LEAD_STATUS_OPTIONS.map((status) => (
                   <option key={status} value={status}>
                     {formatLabel(status)}
                   </option>
@@ -482,7 +678,13 @@ export default function InboxContextPanel({
               {copy.priority}
               <select
                 value={form.priority}
-                onChange={(event) => updateFormField(setForm, "priority", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFormField(
+                    setForm,
+                    "priority",
+                    event.currentTarget.value,
+                  )
+                }
               >
                 {LEAD_PRIORITY_OPTIONS.map((priority) => (
                   <option key={priority} value={priority}>
@@ -499,7 +701,13 @@ export default function InboxContextPanel({
               <input
                 type="datetime-local"
                 value={form.nextFollowUpAt}
-                onChange={(event) => updateFormField(setForm, "nextFollowUpAt", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFormField(
+                    setForm,
+                    "nextFollowUpAt",
+                    event.currentTarget.value,
+                  )
+                }
               />
             </label>
 
@@ -507,7 +715,13 @@ export default function InboxContextPanel({
               {copy.estimatedValue}
               <input
                 value={form.estimatedRevenue}
-                onChange={(event) => updateFormField(setForm, "estimatedRevenue", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFormField(
+                    setForm,
+                    "estimatedRevenue",
+                    event.currentTarget.value,
+                  )
+                }
                 placeholder="4200"
               />
             </label>
@@ -517,7 +731,13 @@ export default function InboxContextPanel({
             {copy.workType}
             <input
               value={form.businessType}
-              onChange={(event) => updateFormField(setForm, "businessType", event.currentTarget.value)}
+              onChange={(event) =>
+                updateFormField(
+                  setForm,
+                  "businessType",
+                  event.currentTarget.value,
+                )
+              }
               maxLength={160}
             />
           </label>
@@ -526,7 +746,9 @@ export default function InboxContextPanel({
             {copy.notes}
             <textarea
               value={form.notes}
-              onChange={(event) => updateFormField(setForm, "notes", event.currentTarget.value)}
+              onChange={(event) =>
+                updateFormField(setForm, "notes", event.currentTarget.value)
+              }
               rows={4}
               maxLength={4000}
             />

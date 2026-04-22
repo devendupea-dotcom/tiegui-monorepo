@@ -1,5 +1,6 @@
 import {
   addDays,
+  addMonths,
   addMinutes,
   endOfMonth,
   endOfWeek,
@@ -17,6 +18,13 @@ export const DEFAULT_SLOT_MINUTES = 30;
 const TIMEZONE_CACHE = new Map<string, boolean>();
 
 export type CalendarView = "day" | "week" | "month";
+
+type DisplayDateValue = Date | string | number | null | undefined;
+type DisplayDateFormatInput = {
+  locale?: string;
+  timeZone?: string | null;
+  fallback?: string;
+};
 
 export function clampSlotMinutes(value: number | null | undefined): 15 | 30 | 60 | 90 {
   if (value === 15 || value === 60 || value === 90) {
@@ -78,8 +86,107 @@ export function parseIsoDateOnly(value: string): Date | null {
   return parsed;
 }
 
+function coerceDisplayDate(value: DisplayDateValue): Date | null {
+  if (value instanceof Date) {
+    return isValid(value) ? value : null;
+  }
+
+  if (typeof value === "number") {
+    const parsed = new Date(value);
+    return isValid(parsed) ? parsed : null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = new Date(trimmed);
+    return isValid(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
 export function formatDateOnly(date: Date): string {
   return format(date, "yyyy-MM-dd");
+}
+
+export function addDaysToDateKey(dateKey: string, days: number): string {
+  const parsed = parseISO(`${dateKey}T00:00:00`);
+  if (!isValid(parsed)) {
+    return dateKey;
+  }
+  return format(addDays(parsed, days), "yyyy-MM-dd");
+}
+
+export function addMonthsToDateKey(dateKey: string, months: number): string {
+  const parsed = parseISO(`${dateKey}T00:00:00`);
+  if (!isValid(parsed)) {
+    return dateKey;
+  }
+  return format(addMonths(parsed, months), "yyyy-MM-dd");
+}
+
+export function formatDateTimeForDisplay(
+  value: DisplayDateValue,
+  options: Intl.DateTimeFormatOptions,
+  input: DisplayDateFormatInput = {},
+): string {
+  const date = coerceDisplayDate(value);
+  if (!date) {
+    return input.fallback ?? "-";
+  }
+
+  const resolvedTimeZone = ensureTimeZone(
+    input.timeZone || (typeof options.timeZone === "string" ? options.timeZone : undefined),
+  );
+
+  return new Intl.DateTimeFormat(input.locale || "en-US", {
+    ...options,
+    timeZone: resolvedTimeZone,
+  }).format(date);
+}
+
+export function formatDateForDisplay(
+  value: DisplayDateValue,
+  input: DisplayDateFormatInput = {},
+): string {
+  return formatDateTimeForDisplay(
+    value,
+    {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    },
+    input,
+  );
+}
+
+export function formatTimeForDisplay(
+  value: DisplayDateValue,
+  input: DisplayDateFormatInput = {},
+): string {
+  return formatDateTimeForDisplay(
+    value,
+    {
+      hour: "numeric",
+      minute: "2-digit",
+    },
+    input,
+  );
+}
+
+export function formatDateTimeLocalInputValue(
+  value: DisplayDateValue,
+  timeZone?: string | null,
+): string {
+  const date = coerceDisplayDate(value);
+  if (!date) {
+    return "";
+  }
+
+  return formatInTimeZone(date, ensureTimeZone(timeZone), "yyyy-MM-dd'T'HH:mm");
 }
 
 export function isoToZonedDate(utcDate: Date, timeZone: string): Date {
@@ -177,8 +284,31 @@ export function startOfLocalDate(date: Date, timeZone: string): Date {
   return fromZonedTime(`${localDate}T00:00:00`, ensureTimeZone(timeZone));
 }
 
+export function startOfTimeZoneDay(date: Date, timeZone?: string | null): Date {
+  return startOfLocalDate(date, ensureTimeZone(timeZone));
+}
+
+export function endOfTimeZoneDay(date: Date, timeZone?: string | null): Date {
+  const resolvedTimeZone = ensureTimeZone(timeZone);
+  const localDate = formatInTimeZone(date, resolvedTimeZone, "yyyy-MM-dd");
+  return fromZonedTime(`${localDate}T23:59:59.999`, resolvedTimeZone);
+}
+
 export function localDateFromUtc(dateUtc: Date, timeZone: string): string {
   return formatInTimeZone(dateUtc, ensureTimeZone(timeZone), "yyyy-MM-dd");
+}
+
+export function startOfTimeZoneMonth(date: Date, timeZone?: string | null): Date {
+  const resolvedTimeZone = ensureTimeZone(timeZone);
+  const monthStart = formatInTimeZone(date, resolvedTimeZone, "yyyy-MM-01");
+  return fromZonedTime(`${monthStart}T00:00:00`, resolvedTimeZone);
+}
+
+export function endOfTimeZoneWeek(date: Date, timeZone?: string | null): Date {
+  const resolvedTimeZone = ensureTimeZone(timeZone);
+  const localDate = toZonedTime(date, resolvedTimeZone);
+  const weekEnd = endOfWeek(localDate);
+  return fromZonedTime(`${format(weekEnd, "yyyy-MM-dd")}T23:59:59.999`, resolvedTimeZone);
 }
 
 export function moveUtcDatePreservingLocalTime(input: {

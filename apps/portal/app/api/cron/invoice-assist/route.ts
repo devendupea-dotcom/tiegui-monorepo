@@ -143,7 +143,12 @@ async function handleInvoiceAssistCron(req: Request) {
 
   const leads = await prisma.lead.findMany({
     where: {
-      status: "BOOKED",
+      events: {
+        some: {
+          type: { in: ["JOB", "ESTIMATE"] },
+          status: { in: ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] },
+        },
+      },
       invoiceStatus: { not: "SENT" },
       updatedAt: { gte: since },
     },

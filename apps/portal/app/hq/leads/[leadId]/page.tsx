@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
+import { DEFAULT_CALENDAR_TIMEZONE, toUtcFromLocalDateTime } from "@/lib/calendar/dates";
 import { prisma } from "@/lib/prisma";
 import {
   formatDateTime,
@@ -24,6 +26,8 @@ type TimelineItem = {
 function isLeadStatus(value: string): value is (typeof leadStatusOptions)[number] {
   return leadStatusOptions.some((option) => option === value);
 }
+
+const editableLeadStatusOptions = leadStatusOptions.filter((option) => option !== "BOOKED");
 
 function isLeadPriority(value: string): value is (typeof leadPriorityOptions)[number] {
   return leadPriorityOptions.some((option) => option === value);
@@ -57,6 +61,10 @@ async function updateLeadAction(formData: FormData) {
     notes?: string | null;
   } = {};
 
+  if (statusValue === "BOOKED") {
+    redirect(`/hq/leads/${leadId}?error=derived-status`);
+  }
+
   if (isLeadStatus(statusValue)) {
     data.status = statusValue;
   }
@@ -83,11 +91,20 @@ async function updateLeadAction(formData: FormData) {
   if (!nextFollowUpAtValue) {
     data.nextFollowUpAt = null;
   } else {
-    const parsed = new Date(nextFollowUpAtValue);
-    if (Number.isNaN(parsed.getTime())) {
+    const [date, timeWithMaybeSeconds] = nextFollowUpAtValue.split("T");
+    const time = (timeWithMaybeSeconds || "").slice(0, 5);
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
       redirect(`/hq/leads/${leadId}?error=invalid-followup`);
     }
-    data.nextFollowUpAt = parsed;
+    try {
+      data.nextFollowUpAt = toUtcFromLocalDateTime({
+        date,
+        time,
+        timeZone: DEFAULT_CALENDAR_TIMEZONE,
+      });
+    } catch {
+      redirect(`/hq/leads/${leadId}?error=invalid-followup`);
+    }
   }
 
   data.notes = notesValue.trim() ? notesValue.trim() : null;
@@ -171,10 +188,15 @@ export default async function LeadDetailPage({
         events: {
           select: {
             id: true,
+            jobId: true,
             type: true,
+            status: true,
             title: true,
             description: true,
             startAt: true,
+            endAt: true,
+            createdAt: true,
+            updatedAt: true,
           },
           orderBy: { startAt: "desc" },
           take: 50,
@@ -191,6 +213,13 @@ export default async function LeadDetailPage({
   if (!lead) {
     notFound();
   }
+
+  const bookingProjection = deriveLeadBookingProjection({
+    leadStatus: lead.status,
+    events: lead.events,
+  });
+  const displayedLeadStatus = bookingProjection.derivedLeadStatus;
+  const displayedNextFollowUpAt = bookingProjection.hasActiveBooking ? null : lead.nextFollowUpAt;
 
   const timeline: TimelineItem[] = [
     ...lead.calls.map((call) => ({
@@ -221,11 +250,11 @@ export default async function LeadDetailPage({
         <h2 style={{ marginTop: 8 }}>{lead.contactName || lead.businessName || lead.phoneE164}</h2>
         <p className="muted">Business: {lead.org.name}</p>
         <div className="quick-meta" style={{ marginTop: 12 }}>
-          <span className={`badge status-${lead.status.toLowerCase()}`}>{formatLabel(lead.status)}</span>
+          <span className={`badge status-${displayedLeadStatus.toLowerCase()}`}>{formatLabel(displayedLeadStatus)}</span>
           <span className={`badge priority-${lead.priority.toLowerCase()}`}>
             {formatLabel(lead.priority)} Priority
           </span>
-          {lead.nextFollowUpAt && isOverdueFollowUp(lead.nextFollowUpAt) ? (
+          {displayedNextFollowUpAt && isOverdueFollowUp(displayedNextFollowUpAt) ? (
             <span className="overdue-chip">Overdue</span>
           ) : null}
         </div>
@@ -296,8 +325,13 @@ export default async function LeadDetailPage({
 
                 <label>
                   Status
-                  <select name="status" defaultValue={lead.status}>
-                    {leadStatusOptions.map((option) => (
+                  <select name="status" defaultValue={displayedLeadStatus}>
+                    {displayedLeadStatus === "BOOKED" ? (
+                      <option value="BOOKED" disabled>
+                        {formatLabel("BOOKED")} (Derived)
+                      </option>
+                    ) : null}
+                    {editableLeadStatusOptions.map((option) => (
                       <option key={option} value={option}>
                         {formatLabel(option)}
                       </option>
@@ -333,7 +367,7 @@ export default async function LeadDetailPage({
                   <input
                     type="datetime-local"
                     name="nextFollowUpAt"
-                    defaultValue={toDateTimeLocalValue(lead.nextFollowUpAt)}
+                    defaultValue={toDateTimeLocalValue(displayedNextFollowUpAt)}
                   />
                 </label>
 
@@ -352,6 +386,9 @@ export default async function LeadDetailPage({
                 ) : null}
                 {error === "invalid-followup" ? (
                   <p className="form-status">Follow-up date is invalid.</p>
+                ) : null}
+                {error === "derived-status" ? (
+                  <p className="form-status">Booked is derived from a linked calendar booking and cannot be set manually.</p>
                 ) : null}
               </form>
             </article>

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getEstimateCustomerFacingIssues, isPlaceholderEstimateTitle } from "../lib/estimates.ts";
+import {
+  getEstimateCustomerFacingIssues,
+  isPlaceholderEstimateTitle,
+  requiresEstimateCustomerFacingReadiness,
+} from "../lib/estimates.ts";
 
 test("isPlaceholderEstimateTitle detects blank and default placeholder titles", () => {
   assert.equal(isPlaceholderEstimateTitle(""), true);
@@ -36,4 +40,12 @@ test("getEstimateCustomerFacingIssues allows estimates with a lead-backed custom
   });
 
   assert.deepEqual(issues, []);
+});
+
+test("requiresEstimateCustomerFacingReadiness only exempts draft and converted states", () => {
+  assert.equal(requiresEstimateCustomerFacingReadiness("DRAFT"), false);
+  assert.equal(requiresEstimateCustomerFacingReadiness("CONVERTED"), false);
+  assert.equal(requiresEstimateCustomerFacingReadiness("SENT"), true);
+  assert.equal(requiresEstimateCustomerFacingReadiness("APPROVED"), true);
+  assert.equal(requiresEstimateCustomerFacingReadiness("EXPIRED"), true);
 });

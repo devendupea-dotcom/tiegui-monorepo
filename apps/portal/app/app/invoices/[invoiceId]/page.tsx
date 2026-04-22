@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import type { BillingInvoiceStatus, InvoicePaymentMethod, InvoiceTerms } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
+  billingInvoiceStatusOptions,
   buildInvoiceWorkerLeadAccessWhere,
   computeLineTotal,
   formatCurrency,
@@ -21,8 +22,14 @@ import {
   toMoneyDecimal,
 } from "@/lib/invoices";
 import { normalizeInvoiceTemplate } from "@/lib/invoice-template";
-import { resolveOrganizationLogoUrl } from "@/lib/organization-logo";
+import { resolveOrganizationLogoUrlBestEffort } from "@/lib/organization-logo";
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
+import {
+  DEFAULT_CALENDAR_TIMEZONE,
+  formatDateTimeForDisplay,
+  localDateFromUtc,
+  toUtcFromLocalDateTime,
+} from "@/lib/calendar/dates";
 import SendInvoiceModal from "@/components/invoices/send-invoice-modal";
 import { formatDateTime, formatLabel } from "@/lib/hq";
 import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
@@ -45,21 +52,25 @@ function appendQuery(path: string, key: string, value: string): string {
 
 function toDateInputValue(value: Date | null | undefined): string {
   if (!value) return "";
-  return value.toISOString().slice(0, 10);
+  return localDateFromUtc(value, DEFAULT_CALENDAR_TIMEZONE);
 }
 
 function parseDateInput(value: string): Date | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const parsed = new Date(`${trimmed}T12:00:00`);
-  if (Number.isNaN(parsed.getTime())) {
+  try {
+    return toUtcFromLocalDateTime({
+      date: trimmed,
+      time: "12:00",
+      timeZone: DEFAULT_CALENDAR_TIMEZONE,
+    });
+  } catch {
     return null;
   }
-  return parsed;
 }
 
 function isAllowedManualStatus(value: string): value is BillingInvoiceStatus {
-  return value === "DRAFT" || value === "SENT";
+  return billingInvoiceStatusOptions.some((status) => status === value);
 }
 
 function isInvoiceTerms(value: string): value is InvoiceTerms {
@@ -95,29 +106,12 @@ function buildAddressLines(input: {
   return [input.addressLine1, input.addressLine2, locality].map((part) => (part || "").trim()).filter(Boolean);
 }
 
-function isPastToday(value: Date, today = new Date()): boolean {
-  return toDateInputValue(value) < toDateInputValue(today);
-}
-
 function formatInvoiceSentDate(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "long",
     day: "numeric",
     year: "numeric",
-  }).format(value);
-}
-
-function resolveInvoiceDisplayStatus(input: {
-  dueDate: Date;
-  hasBalance: boolean;
-  isPaid: boolean;
-  status: BillingInvoiceStatus;
-}): BillingInvoiceStatus {
-  if (!input.isPaid && input.hasBalance && isPastToday(input.dueDate)) {
-    return "OVERDUE";
-  }
-
-  return input.status;
+  });
 }
 
 function revalidateInvoiceMutationPaths(input: {
@@ -499,6 +493,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
   const requestedOrgId = getParam(searchParams?.orgId);
   const saved = getParam(searchParams?.saved);
   const error = getParam(searchParams?.error);
+  const focusTarget = getParam(searchParams?.focus);
 
   const scope = await resolveAppScope({
     nextPath: `/app/invoices/${params.invoiceId}`,
@@ -632,16 +627,11 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
   const paymentDefault = Number(toMoneyDecimal(invoice.balanceDue).toString()).toFixed(2);
   const hasTax = invoice.taxAmount.gt(0) || invoice.taxRate.gt(0);
   const isPaidInvoice = shouldRenderInvoicePaidIndicator({ status: invoice.status });
-  const displayStatus = resolveInvoiceDisplayStatus({
-    status: invoice.status,
-    dueDate: invoice.dueDate,
-    isPaid: isPaidInvoice,
-    hasBalance: invoice.balanceDue.gt(0),
-  });
+  const displayStatus = invoice.status;
   const balanceBadgeClass = isPaidInvoice ? "status-paid" : invoice.balanceDue.gt(0) ? "status-overdue" : "";
   const sentAtLabel = invoice.sentAt ? formatInvoiceSentDate(invoice.sentAt) : null;
   const jobLabel = jobContext.primaryLabel;
-  const logoUrl = await resolveOrganizationLogoUrl({
+  const logoUrl = await resolveOrganizationLogoUrlBestEffort({
     orgId: invoice.org.id,
     logoPhotoId: invoice.org.logoPhotoId,
   });
@@ -767,7 +757,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
       </section>
 
       <section className="grid two-col">
-        <article className="card">
+        <article className="card" id="invoice-details" style={{ scrollMarginTop: 24 }}>
           <h2>Invoice Details</h2>
           <form action={saveInvoiceMetaAction} className="auth-form" style={{ marginTop: 12 }}>
             <input type="hidden" name="invoiceId" value={invoice.id} />
@@ -776,9 +766,12 @@ export default async function InvoiceDetailPage({ params, searchParams }: RouteP
 
             <label>
               Status
-              <select name="status" defaultValue={invoice.status === "DRAFT" ? "DRAFT" : "SENT"}>
-                <option value="DRAFT">Draft</option>
-                <option value="SENT">Sent</option>
+              <select name="status" defaultValue={invoice.status} autoFocus={focusTarget === "details"}>
+                {billingInvoiceStatusOptions.map((status) => (
+                  <option key={status} value={status}>
+                    {formatLabel(status)}
+                  </option>
+                ))}
               </select>
             </label>
 

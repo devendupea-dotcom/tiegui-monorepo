@@ -148,11 +148,11 @@ export default async function InvoicesPage({
         <p className="muted">{t("invoices.subtitle")}</p>
 
         <div className="quick-meta" style={{ marginTop: 12 }}>
-          <span className="badge status-draft">Draft: {counts.DRAFT || 0}</span>
-          <span className="badge status-sent">Sent: {counts.SENT || 0}</span>
-          <span className="badge status-partial">Partial: {counts.PARTIAL || 0}</span>
-          <span className="badge status-paid">Paid: {counts.PAID || 0}</span>
-          <span className="badge status-overdue">Overdue: {counts.OVERDUE || 0}</span>
+          <span className="badge status-draft">{statusLabel("DRAFT")}: {counts.DRAFT || 0}</span>
+          <span className="badge status-sent">{statusLabel("SENT")}: {counts.SENT || 0}</span>
+          <span className="badge status-partial">{statusLabel("PARTIAL")}: {counts.PARTIAL || 0}</span>
+          <span className="badge status-paid">{statusLabel("PAID")}: {counts.PAID || 0}</span>
+          <span className="badge status-overdue">{statusLabel("OVERDUE")}: {counts.OVERDUE || 0}</span>
         </div>
 
         <form className="filters" method="get" style={{ marginTop: 12 }}>
@@ -161,7 +161,7 @@ export default async function InvoicesPage({
           <label>
             {t("invoices.statusLabel")}
             <select name="status" defaultValue={status}>
-              <option value="">All</option>
+              <option value="">{t("invoices.all")}</option>
               {billingInvoiceStatusOptions.map((option) => (
                 <option key={option} value={option}>
                   {statusLabel(option)}

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Prisma } from "@prisma/client";
+import { deriveJobBookingProjection, type JobBookingProjection, bookingEventTypes } from "@/lib/booking-read-model";
 import {
   getDispatchCustomerCommunicationState,
   type DispatchCustomerCommunicationState,
@@ -30,6 +31,25 @@ const operationalJobInvoiceSelect = {
 } satisfies Prisma.InvoiceSelect;
 
 const operationalJobDetailInclude = {
+  calendarEvents: {
+    where: {
+      type: {
+        in: bookingEventTypes,
+      },
+    },
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      startAt: true,
+      endAt: true,
+      createdAt: true,
+      updatedAt: true,
+      jobId: true,
+    },
+    orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+    take: 12,
+  },
   customer: {
     select: {
       id: true,
@@ -101,6 +121,9 @@ export type OperationalJobLinkedEstimate = {
 export type OperationalJobPageData = {
   job: OperationalJobDetailRecord;
   linkedEstimates: OperationalJobLinkedEstimate[];
+  bookingProjection: JobBookingProjection<
+    OperationalJobDetailRecord["calendarEvents"][number]
+  >;
   timeline: Awaited<ReturnType<typeof getOperationalJobTimeline>>;
   trackingSummary: {
     hasActive: boolean;
@@ -151,6 +174,18 @@ export async function getOperationalJobPageData(input: {
 
   const linkedEstimates = collectLinkedEstimates(job);
   const fallbackLeadId = linkedEstimates.find((estimate) => estimate.leadId)?.leadId || null;
+  const config = await prisma.orgDashboardConfig.findUnique({
+    where: {
+      orgId: input.orgId,
+    },
+    select: {
+      calendarTimezone: true,
+    },
+  });
+  const bookingProjection = deriveJobBookingProjection({
+    events: job.calendarEvents,
+    timeZone: config?.calendarTimezone || null,
+  });
 
   const [timeline, dispatchCommunicationState] = await Promise.all([
     getOperationalJobTimeline({
@@ -159,9 +194,9 @@ export async function getOperationalJobPageData(input: {
         orgId: job.orgId,
         customerId: job.customerId,
         leadId: job.leadId || fallbackLeadId,
-        scheduledDate: job.scheduledDate,
-        scheduledStartTime: job.scheduledStartTime,
-        scheduledEndTime: job.scheduledEndTime,
+        scheduledDate: bookingProjection.scheduledDate,
+        scheduledStartTime: bookingProjection.scheduledStartTime,
+        scheduledEndTime: bookingProjection.scheduledEndTime,
       },
       limit: 16,
     }),
@@ -174,6 +209,7 @@ export async function getOperationalJobPageData(input: {
   return {
     job,
     linkedEstimates,
+    bookingProjection,
     timeline,
     trackingSummary: {
       hasActive: job.trackingLinks.some((link) => !link.revokedAt),

@@ -6,6 +6,8 @@ import {
   ESTIMATE_LINE_DESCRIPTION_MAX,
   ESTIMATE_LINE_UNIT_MAX,
   ESTIMATE_SITE_ADDRESS_MAX,
+  getEstimateCustomerFacingIssues,
+  requiresEstimateCustomerFacingReadiness,
   serializeEstimateDetail,
   type EstimateItemRow,
   type EstimateReferenceLead,
@@ -26,7 +28,7 @@ import {
   type EstimatePayload,
   type NormalizedEstimatePayload,
 } from "@/lib/estimates-store-core";
-import { formatDispatchStatusLabel, getDispatchTodayDateKey, normalizeDispatchDateKey, parseDispatchDateKey } from "@/lib/dispatch";
+import { formatDispatchStatusLabel } from "@/lib/dispatch";
 import { maybeSendDispatchCustomerNotifications, type DispatchPersistedJobEvent } from "@/lib/dispatch-notifications";
 import { extractEstimateZipCode } from "@/lib/estimate-tax";
 import { DEFAULT_INVOICE_TERMS, computeInvoiceDueDate, recomputeInvoiceTotals, reserveNextInvoiceNumber, roundMoney } from "@/lib/invoices";
@@ -34,12 +36,77 @@ import {
   buildEstimateAttachmentData,
   buildEstimateConversionJobLinkData,
 } from "@/lib/estimate-job-linking";
+import { bookingEventTypes, deriveJobBookingProjection } from "@/lib/booking-read-model";
 import { findOperationalJobForLead } from "@/lib/operational-jobs";
 import { prisma } from "@/lib/prisma";
 import { AppApiError } from "@/lib/app-api-permissions";
 import { roundMaterialNumber, type MaterialListItem } from "@/lib/materials";
 
 const ZERO = new Prisma.Decimal(0);
+
+async function getActiveBookingScheduleForJob(tx: Prisma.TransactionClient, input: {
+  orgId: string;
+  jobId: string | null;
+}) {
+  if (!input.jobId) {
+    return {
+      scheduledDateKey: null,
+      scheduledStartTime: null,
+      scheduledEndTime: null,
+    };
+  }
+
+  const [config, events] = await Promise.all([
+    tx.orgDashboardConfig.findUnique({
+      where: {
+        orgId: input.orgId,
+      },
+      select: {
+        calendarTimezone: true,
+      },
+    }),
+    tx.event.findMany({
+      where: {
+        orgId: input.orgId,
+        jobId: input.jobId,
+        type: {
+          in: bookingEventTypes,
+        },
+      },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        startAt: true,
+        endAt: true,
+        createdAt: true,
+        updatedAt: true,
+        jobId: true,
+      },
+      orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+      take: 12,
+    }),
+  ]);
+
+  const projection = deriveJobBookingProjection({
+    events,
+    timeZone: config?.calendarTimezone || null,
+  });
+
+  if (!projection.activeBookingEvent) {
+    return {
+      scheduledDateKey: null,
+      scheduledStartTime: null,
+      scheduledEndTime: null,
+    };
+  }
+
+  return {
+    scheduledDateKey: projection.scheduledDateKey,
+    scheduledStartTime: projection.scheduledStartTime,
+    scheduledEndTime: projection.scheduledEndTime,
+  };
+}
 
 export const estimateListInclude = {
   lead: {
@@ -379,6 +446,22 @@ export async function saveEstimate(input: {
     payload: input.payload,
     existingEstimate: existing,
   });
+  if (requiresEstimateCustomerFacingReadiness(normalized.status)) {
+    const readinessLead = await resolveEstimateLeadDefaults(input.orgId, normalized.leadId);
+    const customerFacingIssues = getEstimateCustomerFacingIssues({
+      title: normalized.title,
+      customerName: normalized.customerName,
+      leadLabel: readinessLead?.contactName || readinessLead?.businessName || readinessLead?.phoneE164 || "",
+      lineItemCount: normalized.lineItems.length,
+      total: Number(normalized.total),
+    });
+    if (customerFacingIssues.length > 0) {
+      throw new AppApiError(
+        `Estimate is not ready for ${normalized.status.toLowerCase()}. ${customerFacingIssues.join(" ")}`,
+        400,
+      );
+    }
+  }
 
   const saved = await prisma.$transaction(async (tx) => {
     const now = new Date();
@@ -869,15 +952,14 @@ export async function convertEstimate(input: {
     throw new AppApiError("Set a positive total before creating an invoice from this estimate.", 400);
   }
 
-  const dispatchDateKey = input.createJob ? normalizeDispatchDateKey(input.dispatchDate || null) || getDispatchTodayDateKey() : null;
-  const dispatchDate = dispatchDateKey ? parseDispatchDateKey(dispatchDateKey) : null;
-  if (input.createJob && (!dispatchDateKey || !dispatchDate)) {
-    throw new AppApiError("Dispatch date is invalid.", 400);
-  }
-
   const result = await prisma.$transaction(async (tx) => {
     let createdJobId: string | null = null;
     let createdInvoiceId: string | null = null;
+    let bookingSchedule = {
+      scheduledDateKey: null as string | null,
+      scheduledStartTime: null as string | null,
+      scheduledEndTime: null as string | null,
+    };
     const dispatchEvents: DispatchPersistedJobEvent[] = [];
     const shouldEnsureOperationalJob = input.createJob || input.createInvoice;
     const resolvedCustomer =
@@ -921,12 +1003,6 @@ export async function convertEstimate(input: {
             address,
             serviceType,
             projectType,
-            ...(input.createJob
-              ? {
-                  scheduledDate: dispatchDate,
-                  dispatchStatus: "SCHEDULED",
-                }
-              : {}),
             notes: mergedNotes,
             status:
               reusableOperationalJob.status === "COMPLETED" || reusableOperationalJob.status === "CANCELLED"
@@ -947,7 +1023,6 @@ export async function convertEstimate(input: {
             address,
             serviceType,
             projectType,
-            scheduledDate: input.createJob ? dispatchDate : null,
             dispatchStatus: "SCHEDULED",
             notes: mergedNotes,
             status: jobStatus,
@@ -998,6 +1073,11 @@ export async function convertEstimate(input: {
         });
       }
 
+      bookingSchedule = await getActiveBookingScheduleForJob(tx, {
+        orgId: existing.orgId,
+        jobId: targetJobId,
+      });
+
       if (input.createJob && createdJobId) {
         const dispatchEvent = await tx.jobEvent.create({
           data: {
@@ -1011,9 +1091,9 @@ export async function convertEstimate(input: {
               customerId: resolvedCustomer?.customerId || null,
               leadId: resolvedCustomer?.leadId || existing.leadId || null,
               linkedEstimateId: existing.id,
-              scheduledDate: dispatchDateKey,
-              scheduledStartTime: reusableOperationalJob?.scheduledStartTime || null,
-              scheduledEndTime: reusableOperationalJob?.scheduledEndTime || null,
+              scheduledDate: bookingSchedule.scheduledDateKey,
+              scheduledStartTime: bookingSchedule.scheduledStartTime,
+              scheduledEndTime: bookingSchedule.scheduledEndTime,
               status: "scheduled",
               statusLabel: formatDispatchStatusLabel("scheduled"),
               assignedCrewId: null,
@@ -1108,7 +1188,7 @@ export async function convertEstimate(input: {
       estimate: converted,
       jobId: createdJobId,
       invoiceId: createdInvoiceId,
-      dispatchDate: dispatchDateKey,
+      dispatchDate: bookingSchedule.scheduledDateKey,
       dispatchEvents,
     };
   });

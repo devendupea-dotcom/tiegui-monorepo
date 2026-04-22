@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import {
   computeEstimateLine,
   createEmptyEstimateLine,
@@ -188,7 +189,13 @@ export default function EstimateBuilder({
         setNotes(payload.draft.notes);
         setTaxRatePercent(payload.draft.taxRatePercent);
         setLineItems(hydrateLineItems(payload.draft.lineItems));
-        setNotice(`Loaded estimate draft from ${new Date(payload.draft.updatedAt).toLocaleString()}.`);
+        setNotice(`Loaded estimate draft from ${formatDateTimeForDisplay(payload.draft.updatedAt, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}.`);
       } catch (loadError) {
         if (cancelled) return;
         setError(loadError instanceof Error ? loadError.message : "Failed to load estimate draft.");

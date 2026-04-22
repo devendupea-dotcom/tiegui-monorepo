@@ -26,11 +26,21 @@ function normalizeConfiguredBaseUrl(value: string | undefined): string | null {
 }
 
 export function getConfiguredBaseUrl(): string | null {
-  return (
-    normalizeConfiguredBaseUrl(process.env.NEXTAUTH_URL) ||
-    normalizeConfiguredBaseUrl(process.env.VERCEL_PROJECT_PRODUCTION_URL) ||
-    normalizeConfiguredBaseUrl(process.env.VERCEL_URL)
-  );
+  const candidates = [
+    normalizeConfiguredBaseUrl(process.env.NEXTAUTH_URL),
+    normalizeConfiguredBaseUrl(process.env.VERCEL_PROJECT_PRODUCTION_URL),
+    normalizeConfiguredBaseUrl(process.env.VERCEL_URL),
+  ].filter((value): value is string => Boolean(value));
+
+  const firstNonLocal = candidates.find((candidate) => {
+    try {
+      return !isLocalHostname(new URL(candidate).hostname);
+    } catch {
+      return true;
+    }
+  });
+
+  return firstNonLocal || candidates[0] || null;
 }
 
 export function getBaseUrlFromRequest(req: Request): string {

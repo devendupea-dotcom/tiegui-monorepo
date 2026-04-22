@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CalendarAccessRole } from "@prisma/client";
+import {
+  DEFAULT_CALENDAR_TIMEZONE,
+  formatDateTimeForDisplay,
+  toUtcFromLocalDateTime,
+} from "@/lib/calendar/dates";
 import { normalizeE164 } from "@/lib/phone";
 
 type QuickAddLeadButtonProps = {
@@ -35,6 +40,29 @@ type LeadCreateResult = {
   lead?: { id: string };
   possibleMatches?: PossibleCustomerMatch[];
 };
+
+function toPacificIsoString(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const [date, timeWithMaybeSeconds] = trimmed.split("T");
+  const time = (timeWithMaybeSeconds || "").slice(0, 5);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+    return null;
+  }
+
+  try {
+    return toUtcFromLocalDateTime({
+      date,
+      time,
+      timeZone: DEFAULT_CALENDAR_TIMEZONE,
+    }).toISOString();
+  } catch {
+    return null;
+  }
+}
 
 type LeadMatchLookupResult = {
   ok?: boolean;
@@ -325,6 +353,13 @@ export default function QuickAddLeadButton({
     setError(null);
 
     try {
+      const scheduledStartAt = finalSchedule ? toPacificIsoString(startLocal) : null;
+      if (finalSchedule && !scheduledStartAt) {
+        setError("Pick a valid Pacific Time start.");
+        setSubmitting(false);
+        return;
+      }
+
       const payload: Record<string, unknown> = {
         orgId: resolvedOrgId || undefined,
         name: name.trim(),
@@ -346,7 +381,7 @@ export default function QuickAddLeadButton({
 
       if (finalSchedule) {
         payload.schedule = {
-          startAt: new Date(startLocal).toISOString(),
+          startAt: scheduledStartAt,
           durationMinutes,
           type: "JOB",
           status: "SCHEDULED",
@@ -381,14 +416,14 @@ export default function QuickAddLeadButton({
       closeModal();
       router.refresh();
       if (finalSchedule) {
-        const bookedAt = startLocal ? new Date(startLocal) : null;
+        const bookedAt = scheduledStartAt ? new Date(scheduledStartAt) : null;
         const bookedLabel =
           bookedAt && !Number.isNaN(bookedAt.getTime())
-            ? new Intl.DateTimeFormat("en-US", {
+            ? formatDateTimeForDisplay(bookedAt, {
                 weekday: "short",
                 hour: "numeric",
                 minute: "2-digit",
-              }).format(bookedAt)
+              })
             : "scheduled time";
         setToast({
           message: `Booked for ${bookedLabel}`,

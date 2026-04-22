@@ -1,13 +1,21 @@
 import "server-only";
 
-import { addDays, addMonths, startOfDay, startOfMonth, startOfWeek, subMonths } from "date-fns";
+import { addDays, addMonths, startOfMonth, startOfWeek } from "date-fns";
 import type { CalendarAccessRole, MarketingChannel, Prisma as PrismaNamespace } from "@prisma/client";
 import { Prisma } from "@prisma/client";
+import { activeBookingEventStatuses } from "@/lib/booking-read-model";
 import {
+  addDaysToDateKey,
+  addMonthsToDateKey,
   DEFAULT_CALENDAR_TIMEZONE,
   formatDateOnly,
+  formatDateTimeForDisplay,
   getLocalMinutesInDay,
   getUtcRangeForDate,
+  localDateFromUtc,
+  parseIsoDateOnly,
+  startOfTimeZoneDay,
+  startOfTimeZoneMonth,
 } from "@/lib/calendar/dates";
 import { getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { prisma } from "@/lib/prisma";
@@ -216,45 +224,58 @@ function normalizeRange(range: string | null | undefined): AnalyticsRange {
 function parseMonthStart(month: string | null | undefined): Date {
   const trimmed = typeof month === "string" ? month.trim() : "";
   if (/^\d{4}-\d{2}$/.test(trimmed)) {
-    const parsed = new Date(`${trimmed}-01T00:00:00.000Z`);
-    if (!Number.isNaN(parsed.getTime())) {
-      return startOfMonth(parsed);
+    const monthStartKey = `${trimmed}-01`;
+    if (parseIsoDateOnly(monthStartKey)) {
+      return getUtcRangeForDate({
+        date: monthStartKey,
+        timeZone: DEFAULT_CALENDAR_TIMEZONE,
+      }).startUtc;
     }
   }
-  return startOfMonth(new Date());
+  return startOfTimeZoneMonth(new Date(), DEFAULT_CALENDAR_TIMEZONE);
 }
 
 function formatMonthKey(value: Date): string {
-  return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}`;
+  return localDateFromUtc(value, DEFAULT_CALENDAR_TIMEZONE).slice(0, 7);
 }
 
 function formatMonthLabel(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "long",
     year: "numeric",
-    timeZone: "UTC",
-  }).format(value);
+  });
 }
 
 function getRangeWindow(range: AnalyticsRange) {
   const now = new Date();
+  const todayKey = localDateFromUtc(now, DEFAULT_CALENDAR_TIMEZONE);
+  const tomorrowStart = getUtcRangeForDate({
+    date: addDaysToDateKey(todayKey, 1),
+    timeZone: DEFAULT_CALENDAR_TIMEZONE,
+  }).startUtc;
   if (range === "7d") {
     return {
-      start: startOfDay(addDays(now, -6)),
-      endExclusive: startOfDay(addDays(now, 1)),
+      start: getUtcRangeForDate({
+        date: addDaysToDateKey(todayKey, -6),
+        timeZone: DEFAULT_CALENDAR_TIMEZONE,
+      }).startUtc,
+      endExclusive: tomorrowStart,
     };
   }
 
   if (range === "30d") {
     return {
-      start: startOfDay(addDays(now, -29)),
-      endExclusive: startOfDay(addDays(now, 1)),
+      start: getUtcRangeForDate({
+        date: addDaysToDateKey(todayKey, -29),
+        timeZone: DEFAULT_CALENDAR_TIMEZONE,
+      }).startUtc,
+      endExclusive: tomorrowStart,
     };
   }
 
   return {
-    start: startOfMonth(now),
-    endExclusive: startOfDay(addDays(now, 1)),
+    start: startOfTimeZoneMonth(now, DEFAULT_CALENDAR_TIMEZONE),
+    endExclusive: tomorrowStart,
   };
 }
 
@@ -280,11 +301,24 @@ function toAnalyticsChannel(value: string | null | undefined): AnalyticsChannel 
 }
 
 function weekLabel(weekStart: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(weekStart, {
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
-  }).format(weekStart);
+  });
+}
+
+function getPortalWeekStart(value: Date): Date {
+  const dateKey = localDateFromUtc(value, DEFAULT_CALENDAR_TIMEZONE);
+  const parsed = parseIsoDateOnly(dateKey);
+  if (!parsed) {
+    return value;
+  }
+
+  const weekStartKey = formatDateOnly(startOfWeek(parsed, { weekStartsOn: 1 }));
+  return getUtcRangeForDate({
+    date: weekStartKey,
+    timeZone: DEFAULT_CALENDAR_TIMEZONE,
+  }).startUtc;
 }
 
 function addWeeklyValue(
@@ -294,7 +328,7 @@ function addWeeklyValue(
   kind: "leads" | "revenueCents",
   amount: number,
 ) {
-  const weekKey = formatDateOnly(weekStart);
+  const weekKey = localDateFromUtc(weekStart, DEFAULT_CALENDAR_TIMEZONE);
   const channelMap = target.get(channel) || new Map<string, { weekStart: string; label: string; leads: number; revenueCents: number }>();
   const current = channelMap.get(weekKey) || {
     weekStart: weekKey,
@@ -520,18 +554,49 @@ async function getRecoveredMissedCallsCount(input: {
       SELECT 1
       FROM "Event"
       WHERE "Event"."leadId" = missed_calls."leadId"
-        AND "Event"."type" = 'JOB'
-        AND "Event"."createdAt" > missed_calls."startedAt"
-    )
-    OR EXISTS (
-      SELECT 1
-      FROM "Lead"
-      WHERE "Lead"."id" = missed_calls."leadId"
-        AND "Lead"."status" = 'BOOKED'
+        AND "Event"."type" IN ('JOB', 'ESTIMATE')
+        AND "Event"."status" IN ('SCHEDULED', 'CONFIRMED', 'EN_ROUTE', 'ON_SITE', 'IN_PROGRESS')
+        AND "Event"."startAt" > missed_calls."startedAt"
     )
   `);
 
   return coerceNumber(rows[0]?.count);
+}
+
+async function listBookedLeadsForRange(input: {
+  orgId: string;
+  start: Date;
+  endExclusive: Date;
+  eventScope?: PrismaNamespace.EventWhereInput;
+}) {
+  return prisma.event.findMany({
+    where: {
+      orgId: input.orgId,
+      leadId: {
+        not: null,
+      },
+      type: {
+        in: ["JOB", "ESTIMATE"],
+      },
+      status: {
+        in: activeBookingEventStatuses,
+      },
+      startAt: {
+        gte: input.start,
+        lt: input.endExclusive,
+      },
+      ...(input.eventScope || {}),
+    },
+    distinct: ["leadId"],
+    select: {
+      leadId: true,
+      lead: {
+        select: {
+          sourceChannel: true,
+        },
+      },
+    },
+  });
 }
 
 async function resolveAnalyticsWorkers(viewer: AnalyticsViewer) {
@@ -609,11 +674,13 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
   }
 
   const slotMinutes = settings.defaultSlotMinutes;
-  const windowStart = startOfDay(new Date());
-  const windowEndExclusive = startOfDay(addDays(windowStart, 7));
-  const dateKeys = Array.from({ length: 7 }, (_, index) =>
-    formatDateOnly(addDays(windowStart, index)),
-  );
+  const windowStart = startOfTimeZoneDay(new Date(), DEFAULT_CALENDAR_TIMEZONE);
+  const startDateKey = localDateFromUtc(windowStart, DEFAULT_CALENDAR_TIMEZONE);
+  const windowEndExclusive = getUtcRangeForDate({
+    date: addDaysToDateKey(startDateKey, 7),
+    timeZone: DEFAULT_CALENDAR_TIMEZONE,
+  }).startUtc;
+  const dateKeys = Array.from({ length: 7 }, (_, index) => addDaysToDateKey(startDateKey, index));
   const workerIds = workers.map((worker) => worker.id);
   const dayOfWeekSet = new Set(dateKeys.map((dateKey) => new Date(`${dateKey}T12:00:00`).getDay()));
 
@@ -879,10 +946,22 @@ export async function getPortalSummaryMetrics(input: {
   const leadScope = buildLeadScope(input.viewer);
   const eventScope = buildEventScope(input.viewer);
   const now = new Date();
-  const currentMonthStart = startOfMonth(now);
-  const nextMonthStart = addMonths(currentMonthStart, 1);
-  const lastMonthStart = startOfMonth(subMonths(now, 1));
-  const thisWeekEnd = addDays(startOfDay(now), 7);
+  const todayStart = startOfTimeZoneDay(now, DEFAULT_CALENDAR_TIMEZONE);
+  const todayKey = localDateFromUtc(todayStart, DEFAULT_CALENDAR_TIMEZONE);
+  const currentMonthStart = startOfTimeZoneMonth(now, DEFAULT_CALENDAR_TIMEZONE);
+  const currentMonthStartKey = localDateFromUtc(currentMonthStart, DEFAULT_CALENDAR_TIMEZONE);
+  const nextMonthStart = getUtcRangeForDate({
+    date: addMonthsToDateKey(currentMonthStartKey, 1),
+    timeZone: DEFAULT_CALENDAR_TIMEZONE,
+  }).startUtc;
+  const lastMonthStart = getUtcRangeForDate({
+    date: addMonthsToDateKey(currentMonthStartKey, -1),
+    timeZone: DEFAULT_CALENDAR_TIMEZONE,
+  }).startUtc;
+  const thisWeekEnd = getUtcRangeForDate({
+    date: addDaysToDateKey(todayKey, 7),
+    timeZone: DEFAULT_CALENDAR_TIMEZONE,
+  }).startUtc;
 
   const [
     newLeadsCount,
@@ -902,17 +981,12 @@ export async function getPortalSummaryMetrics(input: {
       },
     }),
     visibility === "full"
-      ? prisma.lead.count({
-          where: {
-            orgId: input.viewer.orgId,
-            createdAt: {
-              gte: rangeWindow.start,
-              lt: rangeWindow.endExclusive,
-            },
-            status: "BOOKED",
-            ...(leadScope || {}),
-          },
-        })
+      ? listBookedLeadsForRange({
+          orgId: input.viewer.orgId,
+          start: rangeWindow.start,
+          endExclusive: rangeWindow.endExclusive,
+          eventScope: eventScope || undefined,
+        }).then((rows) => rows.length)
       : Promise.resolve(0),
     prisma.event.count({
       where: {
@@ -920,7 +994,7 @@ export async function getPortalSummaryMetrics(input: {
         type: "JOB",
         status: { not: "CANCELLED" },
         startAt: {
-          gte: startOfDay(now),
+          gte: todayStart,
           lt: thisWeekEnd,
         },
         ...(eventScope || {}),
@@ -1109,19 +1183,10 @@ export async function getPortalAdsMetrics(input: {
         _all: true,
       },
     }),
-    prisma.lead.groupBy({
-      by: ["sourceChannel"],
-      where: {
-        orgId: input.viewer.orgId,
-        status: "BOOKED",
-        updatedAt: {
-          gte: monthStart,
-          lt: nextMonthStart,
-        },
-      },
-      _count: {
-        _all: true,
-      },
+    listBookedLeadsForRange({
+      orgId: input.viewer.orgId,
+      start: monthStart,
+      endExclusive: nextMonthStart,
     }),
     getRevenueByChannelForRange({
       orgId: input.viewer.orgId,
@@ -1179,16 +1244,17 @@ export async function getPortalAdsMetrics(input: {
 
   const bookedCountByChannel = buildChannelAccumulator();
   for (const row of bookedCounts) {
-    bookedCountByChannel[toAnalyticsChannel(row.sourceChannel)] = row._count._all;
+    const channel = toAnalyticsChannel(row.lead?.sourceChannel);
+    bookedCountByChannel[channel] += 1;
   }
 
   const weekly = new Map<AnalyticsChannel, Map<string, { weekStart: string; label: string; leads: number; revenueCents: number }>>();
   for (const row of leadRows) {
-    const weekStart = startOfWeek(new Date(row.createdAt), { weekStartsOn: 1 });
+    const weekStart = getPortalWeekStart(new Date(row.createdAt));
     addWeeklyValue(weekly, toAnalyticsChannel(row.sourceChannel), weekStart, "leads", 1);
   }
   for (const row of paymentRows) {
-    const weekStart = startOfWeek(new Date(row.date), { weekStartsOn: 1 });
+    const weekStart = getPortalWeekStart(new Date(row.date));
     addWeeklyValue(
       weekly,
       toAnalyticsChannel(row.invoice.legacyLead?.sourceChannel),

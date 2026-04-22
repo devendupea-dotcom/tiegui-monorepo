@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import { prisma } from "@/lib/prisma";
 import { endOfToday, formatDateTime, startOfToday } from "@/lib/hq";
 import {
@@ -37,27 +39,27 @@ function buildWorkerEventScope(userId: string): Prisma.EventWhereInput {
 }
 
 function formatTimeOnly(value: Date) {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     hour: "numeric",
     minute: "2-digit",
-  }).format(value);
+  });
 }
 
 function formatDateLabel(value: Date) {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(value);
+  });
 }
 
 function formatTodayLabel(value: Date) {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     weekday: "long",
     month: "long",
     day: "numeric",
-  }).format(value);
+  });
 }
 
 function getLeadLabel(input: {
@@ -292,13 +294,19 @@ export default async function AppTodayMobilePage({
         events: {
           where: {
             type: "JOB",
-            status: { not: "CANCELLED" },
           },
           select: {
             id: true,
+            jobId: true,
+            type: true,
+            status: true,
+            startAt: true,
+            endAt: true,
+            createdAt: true,
+            updatedAt: true,
           },
           orderBy: [{ startAt: "desc" }, { createdAt: "desc" }],
-          take: 1,
+          take: 12,
         },
         invoices: {
           select: {
@@ -308,7 +316,17 @@ export default async function AppTodayMobilePage({
           orderBy: [{ createdAt: "desc" }],
           take: 3,
         },
-        jobs: {
+      jobs: {
+          where: {
+            status: { not: "CANCELLED" },
+            OR: [
+              { sourceEstimateId: { not: null } },
+              { linkedEstimateId: { not: null } },
+              { assignedCrewId: { not: null } },
+              { jobEvents: { some: {} } },
+              { calendarEvents: { some: { type: { in: ["JOB", "ESTIMATE"] } } } },
+            ],
+          },
           select: {
             id: true,
           },
@@ -328,15 +346,19 @@ export default async function AppTodayMobilePage({
 
   const workQueueItems = workQueueCandidates
     .map((lead) => {
+      const bookingProjection = deriveLeadBookingProjection({
+        leadStatus: lead.status,
+        events: lead.events,
+      });
       const latestEstimate = lead.estimates.find((estimate) => estimate.status !== "CONVERTED") || lead.estimates[0] || null;
       const latestInvoice = lead.invoices[0] || null;
       const workflow = resolveContractorWorkflow({
         now,
         hasMessagingWorkspace: lead.messages.length > 0,
         latestMessageDirection: lead.messages[0]?.direction || null,
-        nextFollowUpAt: lead.nextFollowUpAt,
+        nextFollowUpAt: bookingProjection.hasActiveBooking ? null : lead.nextFollowUpAt,
         latestEstimateStatus: latestEstimate?.status || null,
-        hasScheduledJob: lead.events.length > 0,
+        hasScheduledJob: bookingProjection.hasActiveBooking,
         hasOperationalJob: lead.jobs.length > 0,
         hasLatestInvoice: Boolean(latestInvoice),
         hasOpenInvoice: lead.invoices.some((invoice) => invoice.balanceDue.gt(0)),
@@ -374,7 +396,7 @@ export default async function AppTodayMobilePage({
         phoneE164: lead.phoneE164,
         priority: lead.priority,
         updatedAt: lead.updatedAt,
-        nextFollowUpAt: lead.nextFollowUpAt,
+        nextFollowUpAt: bookingProjection.hasActiveBooking ? null : lead.nextFollowUpAt,
         lastMessageAt: lead.messages[0]?.createdAt || null,
         workflow,
         workflowAction,

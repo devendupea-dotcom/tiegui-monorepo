@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocale } from "next-intl";
 import type {
   FieldNoteMaterial,
   FieldNoteMeasurement,
@@ -58,17 +59,315 @@ function badgeClass(input: { step: number; activeStep: number; completed: boolea
   return "badge";
 }
 
-function renderMeasurement(row: FieldNoteMeasurement): string {
+function renderMeasurement(row: FieldNoteMeasurement, emptyLabel: string): string {
   const base = [row.label, row.value && `${row.value}${row.unit ? ` ${row.unit}` : ""}`.trim()]
     .filter(Boolean)
     .join(": ");
-  return row.notes ? `${base} (${row.notes})` : base || "Not captured";
+  return row.notes ? `${base} (${row.notes})` : base || emptyLabel;
 }
 
-function renderMaterial(row: FieldNoteMaterial): string {
+function renderMaterial(row: FieldNoteMaterial, emptyLabel: string): string {
   const quantity = [row.quantity, row.unit].filter(Boolean).join(" ");
   const base = [row.name, quantity].filter(Boolean).join(" - ");
-  return row.notes ? `${base} (${row.notes})` : base || "Not captured";
+  return row.notes ? `${base} (${row.notes})` : base || emptyLabel;
+}
+
+function getFieldNotesCopy(locale: string) {
+  const isSpanish = locale.startsWith("es");
+  if (isSpanish) {
+    return {
+      errors: {
+        chooseFile: "Elige primero una imagen de las notas de campo.",
+        analyze: "No se pudieron organizar las notas de campo.",
+        saveBeforeScan: "Ejecuta el escaneo con IA antes de guardar.",
+        saveReviewed: "No se pudieron guardar las notas revisadas.",
+      },
+      notices: {
+        organized: "Notas de campo organizadas. Revisa cada campo antes de guardar.",
+      },
+      header: {
+        title: "Escáner IA de notas de campo",
+        subtitle:
+          (orgName: string) =>
+            `Convierte notas manuscritas del sitio en datos limpios de trabajo para ${orgName}. Nada se guarda hasta que el contratista lo revise y confirme.`,
+        reviewFlow: "Flujo de revisión IA",
+        noAutoSave: "Sin guardado automático",
+        leadOrEstimate: "Lead o borrador de estimado",
+      },
+      steps: {
+        upload: "Subir",
+        aiParse: "Lectura IA",
+        review: "Revisar",
+        edit: "Editar",
+        save: "Guardar",
+      },
+      upload: {
+        title: "Paso 1: Subir notas manuscritas",
+        label: "Foto de las notas de campo manuscritas",
+        guidance:
+          "Mejores resultados: foto iluminada, página completa visible, pocas sombras y medidas o materiales claros.",
+        organizing: "Organizando...",
+        analyze: "Analizar notas",
+        clear: "Limpiar",
+        extractTitle: "Lo que extrae la IA",
+        badges: {
+          customer: "Cliente",
+          projectType: "Tipo de proyecto",
+          siteAddress: "Dirección del sitio",
+          measurements: "Medidas",
+          materials: "Materiales",
+          scope: "Alcance del trabajo",
+          labor: "Notas de mano de obra",
+          quote: "Monto cotizado",
+          timeline: "Cronograma",
+          followUp: "Seguimiento",
+        },
+        reviewRequired:
+          "Se requiere revisión antes de guardar cualquier cosa. TieGui nunca crea automáticamente un lead o estimado desde un escaneo.",
+      },
+      processing: {
+        title: "Paso 2: Procesamiento con IA",
+        body: "Leyendo la letra, agrupando medidas y organizando el alcance del trabajo en campos limpios del CRM.",
+        scanning: "Escaneando letra",
+        structuring: "Estructurando medidas",
+        preparing: "Preparando formulario de revisión",
+        previewAlt: "Vista previa de las notas de campo",
+      },
+      review: {
+        title: "Paso 3: Revisar datos organizados",
+        subtitle: "Verifica los detalles extraídos del trabajo antes de editar o guardar nada.",
+        rerun: "Volver a ejecutar IA",
+        uploadedAlt: "Notas de campo subidas",
+        cards: {
+          customer: "Cliente",
+          projectType: "Tipo de proyecto",
+          siteAddress: "Dirección del sitio",
+          quoteAmount: "Monto cotizado",
+          timeline: "Cronograma",
+          followUp: "Seguimiento",
+        },
+      },
+      edit: {
+        title: "Paso 4: Editar campos extraídos",
+        subtitle: "Corrige cualquier cosa que el escaneo no capturó. Estos campos son la versión final que se guarda.",
+        customerName: "Nombre del cliente",
+        customerNamePlaceholder: "Maria Ramirez",
+        projectType: "Tipo de proyecto",
+        projectTypePlaceholder: "Limpieza de patio frontal y renovación de mulch",
+        siteAddress: "Dirección del sitio",
+        siteAddressPlaceholder: "123 Cedar Ave, Tacoma, WA",
+        quoteAmount: "Monto cotizado",
+        quoteAmountPlaceholder: "$4,850",
+        timeline: "Cronograma",
+        timelinePlaceholder: "Instalación de 2 días, el próximo viernes si se aprueba",
+        followUp: "Seguimiento",
+        followUpPlaceholder: "Llamar después de la aprobación de la HOA. Quiere otra opción de paver.",
+        scopeOfWork: "Alcance del trabajo",
+        scopeOfWorkPlaceholder:
+          "Demoler el borde viejo, retirar escombros, reajustar el riego e instalar bark y edging de acero nuevos.",
+        laborNotes: "Notas de mano de obra",
+        laborNotesPlaceholder: "Se necesita cuadrilla de 3 personas, stump grinder y acceso al remolque por el callejón.",
+      },
+      measurements: {
+        title: "Medidas",
+        subtitle: "Mantén las dimensiones limpias para que la carpeta del trabajo arranque con datos útiles de campo.",
+        add: "Agregar medida",
+        label: "Etiqueta",
+        labelPlaceholder: "Patio trasero",
+        value: "Valor",
+        valuePlaceholder: "860",
+        unit: "Unidad",
+        unitPlaceholder: "pies²",
+        notes: "Notas",
+        notesPlaceholder: "Incluye la franja lateral junto a la cerca",
+        remove: "Quitar",
+        empty: "Todavía no se capturaron medidas.",
+      },
+      materials: {
+        title: "Materiales",
+        subtitle: "Captura producto y cantidades antes de que se pierdan entre la visita al sitio y la cotización.",
+        add: "Agregar material",
+        material: "Material",
+        materialPlaceholder: "Grava limpia 3/4",
+        quantity: "Cantidad",
+        quantityPlaceholder: "4",
+        unit: "Unidad",
+        unitPlaceholder: "yardas",
+        notes: "Notas",
+        notesPlaceholder: "Igualar el color existente",
+        remove: "Quitar",
+        empty: "Todavía no se capturaron materiales.",
+      },
+      save: {
+        title: "Paso 5: Confirmar y guardar",
+        subtitle:
+          "TieGui necesita un número de teléfono para crear un lead real. Guarda como lead si solo quieres la carpeta del trabajo, o como borrador de estimado si también quieres preparar el texto del borrador de factura.",
+        customerPhone: "Teléfono del cliente",
+        customerPhonePlaceholder: "(206) 555-0100",
+        customerEmail: "Email del cliente (opcional)",
+        customerEmailPlaceholder: "cliente@ejemplo.com",
+        savingLead: "Guardando lead...",
+        saveLead: "Guardar como lead",
+        savingEstimate: "Guardando borrador de estimado...",
+        saveEstimate: "Guardar como borrador de estimado",
+        successEstimate: "Borrador de estimado guardado",
+        successLead: "Lead guardado",
+        leadId: "ID del lead",
+        openCrmFolder: "Abrir carpeta CRM",
+        scanAnother: "Escanear otra página",
+      },
+      general: {
+        stepPrefix: "Paso",
+        notCaptured: "No capturado",
+        notCapturedYet: "Todavía no capturado",
+      },
+    };
+  }
+
+  return {
+    errors: {
+      chooseFile: "Choose a field-note image first.",
+      analyze: "Could not organize the field notes.",
+      saveBeforeScan: "Run the AI scan before saving.",
+      saveReviewed: "Could not save the reviewed field notes.",
+    },
+    notices: {
+      organized: "Field notes organized. Review every field before saving.",
+    },
+    header: {
+      title: "AI Field Notes Scanner",
+      subtitle:
+        (orgName: string) =>
+          `Turn handwritten site notes into clean job data for ${orgName}. Nothing is saved until the contractor reviews and confirms it.`,
+      reviewFlow: "AI Review Flow",
+      noAutoSave: "No auto-save",
+      leadOrEstimate: "Lead or estimate draft",
+    },
+    steps: {
+      upload: "Upload",
+      aiParse: "AI Parse",
+      review: "Review",
+      edit: "Edit",
+      save: "Save",
+    },
+    upload: {
+      title: "Step 1: Upload handwritten notes",
+      label: "Photo of handwritten field notes",
+      guidance: "Best results: bright photo, full page visible, minimal shadows, and clear measurements or material notes.",
+      organizing: "Organizing...",
+      analyze: "Analyze Notes",
+      clear: "Clear",
+      extractTitle: "What the AI extracts",
+      badges: {
+        customer: "Customer",
+        projectType: "Project type",
+        siteAddress: "Site address",
+        measurements: "Measurements",
+        materials: "Materials",
+        scope: "Scope of work",
+        labor: "Labor notes",
+        quote: "Quote amount",
+        timeline: "Timeline",
+        followUp: "Follow-up",
+      },
+      reviewRequired: "Review is required before anything is saved. TieGui will never auto-create a lead or estimate from a scan.",
+    },
+    processing: {
+      title: "Step 2: AI processing",
+      body: "Reading handwriting, grouping measurements, and organizing the job scope into clean CRM fields.",
+      scanning: "Scanning handwriting",
+      structuring: "Structuring measurements",
+      preparing: "Preparing review form",
+      previewAlt: "Field notes preview",
+    },
+    review: {
+      title: "Step 3: Review organized data",
+      subtitle: "Sanity-check the extracted job details before you edit or save anything.",
+      rerun: "Re-run AI",
+      uploadedAlt: "Uploaded field notes",
+      cards: {
+        customer: "Customer",
+        projectType: "Project type",
+        siteAddress: "Site address",
+        quoteAmount: "Quote amount",
+        timeline: "Timeline",
+        followUp: "Follow-up",
+      },
+    },
+    edit: {
+      title: "Step 4: Edit extracted fields",
+      subtitle: "Clean up anything the scan missed. These fields are the final version that gets saved.",
+      customerName: "Customer name",
+      customerNamePlaceholder: "Maria Ramirez",
+      projectType: "Project type",
+      projectTypePlaceholder: "Front yard cleanup and mulch refresh",
+      siteAddress: "Site address",
+      siteAddressPlaceholder: "123 Cedar Ave, Tacoma, WA",
+      quoteAmount: "Quote amount",
+      quoteAmountPlaceholder: "$4,850",
+      timeline: "Timeline",
+      timelinePlaceholder: "2-day install, next Friday if approved",
+      followUp: "Follow-up",
+      followUpPlaceholder: "Call after HOA approval. Wants alternate paver option.",
+      scopeOfWork: "Scope of work",
+      scopeOfWorkPlaceholder: "Demo old bed edge, haul debris, reset drip, install fresh bark and steel edging.",
+      laborNotes: "Labor notes",
+      laborNotesPlaceholder: "Need 3-person crew, stump grinder, and trailer access in alley.",
+    },
+    measurements: {
+      title: "Measurements",
+      subtitle: "Keep dimensions clean so the job folder starts with usable field data.",
+      add: "Add Measurement",
+      label: "Label",
+      labelPlaceholder: "Back yard",
+      value: "Value",
+      valuePlaceholder: "860",
+      unit: "Unit",
+      unitPlaceholder: "sqft",
+      notes: "Notes",
+      notesPlaceholder: "Includes side strip near fence",
+      remove: "Remove",
+      empty: "No measurements were captured yet.",
+    },
+    materials: {
+      title: "Materials",
+      subtitle: "Capture product and quantity notes before they get lost between site visit and quote.",
+      add: "Add Material",
+      material: "Material",
+      materialPlaceholder: "3/4 clean gravel",
+      quantity: "Quantity",
+      quantityPlaceholder: "4",
+      unit: "Unit",
+      unitPlaceholder: "yards",
+      notes: "Notes",
+      notesPlaceholder: "Match existing color",
+      remove: "Remove",
+      empty: "No materials were captured yet.",
+    },
+    save: {
+      title: "Step 5: Confirm and save",
+      subtitle:
+        "TieGui needs a phone number to create a real lead record. Save as a lead if you only want the job folder, or save as an estimate draft if you also want the invoice-draft text prepared.",
+      customerPhone: "Customer phone",
+      customerPhonePlaceholder: "(206) 555-0100",
+      customerEmail: "Customer email (optional)",
+      customerEmailPlaceholder: "customer@example.com",
+      savingLead: "Saving Lead...",
+      saveLead: "Save as Lead",
+      savingEstimate: "Saving Estimate Draft...",
+      saveEstimate: "Save as Estimate Draft",
+      successEstimate: "Estimate draft saved",
+      successLead: "Lead saved",
+      leadId: "Lead ID",
+      openCrmFolder: "Open CRM Folder",
+      scanAnother: "Scan Another Page",
+    },
+    general: {
+      stepPrefix: "Step",
+      notCaptured: "Not captured",
+      notCapturedYet: "Not captured yet",
+    },
+  };
 }
 
 export default function FieldNotesScanner({
@@ -76,6 +375,8 @@ export default function FieldNotesScanner({
   orgName,
   internalUser,
 }: FieldNotesScannerProps) {
+  const locale = useLocale();
+  const copy = useMemo(() => getFieldNotesCopy(locale), [locale]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
@@ -195,7 +496,7 @@ export default function FieldNotesScanner({
 
   async function handleAnalyze() {
     if (!selectedFile) {
-      setParseError("Choose a field-note image first.");
+      setParseError(copy.errors.chooseFile);
       return;
     }
 
@@ -218,14 +519,14 @@ export default function FieldNotesScanner({
 
       const payload = (await response.json().catch(() => null)) as ParseResponse;
       if (!response.ok || !payload?.ok || !payload.data) {
-        throw new Error(payload?.error || "Could not organize the field notes.");
+        throw new Error(payload?.error || copy.errors.analyze);
       }
 
       setParsedData(payload.data);
-      setParseNotice("Field notes organized. Review every field before saving.");
+      setParseNotice(copy.notices.organized);
     } catch (error) {
       setParsedData(null);
-      setParseError(error instanceof Error ? error.message : "Could not organize the field notes.");
+      setParseError(error instanceof Error ? error.message : copy.errors.analyze);
     } finally {
       setProcessing(false);
     }
@@ -233,7 +534,7 @@ export default function FieldNotesScanner({
 
   async function handleSave(mode: "lead" | "estimate") {
     if (!parsedData) {
-      setSaveError("Run the AI scan before saving.");
+      setSaveError(copy.errors.saveBeforeScan);
       return;
     }
 
@@ -257,14 +558,14 @@ export default function FieldNotesScanner({
 
       const payload = (await response.json().catch(() => null)) as SaveResponse;
       if (!response.ok || !payload?.ok || !payload.leadId || !payload.redirectTo) {
-        throw new Error(payload?.error || "Could not save the reviewed field notes.");
+        throw new Error(payload?.error || copy.errors.saveReviewed);
       }
 
       setSavedLeadId(payload.leadId);
       setSavedRedirectTo(payload.redirectTo);
       setSavedMode(payload.saveMode || mode);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not save the reviewed field notes.");
+      setSaveError(error instanceof Error ? error.message : copy.errors.saveReviewed);
     } finally {
       setSavingMode(null);
     }
@@ -275,16 +576,13 @@ export default function FieldNotesScanner({
       <section className="card">
         <div className="invoice-header-row">
           <div className="stack-cell">
-            <h2>AI Field Notes Scanner</h2>
-            <p className="muted">
-              Turn handwritten site notes into clean job data for {orgName}. Nothing is saved until the contractor reviews
-              and confirms it.
-            </p>
+            <h2>{copy.header.title}</h2>
+            <p className="muted">{copy.header.subtitle(orgName)}</p>
           </div>
           <div className="quick-meta">
-            <span className="badge status-running">AI Review Flow</span>
-            <span className="badge">No auto-save</span>
-            <span className="badge">Lead or estimate draft</span>
+            <span className="badge status-running">{copy.header.reviewFlow}</span>
+            <span className="badge">{copy.header.noAutoSave}</span>
+            <span className="badge">{copy.header.leadOrEstimate}</span>
           </div>
         </div>
 
@@ -303,18 +601,18 @@ export default function FieldNotesScanner({
 
             const label =
               step === 1
-                ? "Upload"
+                ? copy.steps.upload
                 : step === 2
-                  ? "AI Parse"
+                  ? copy.steps.aiParse
                   : step === 3
-                    ? "Review"
+                    ? copy.steps.review
                     : step === 4
-                      ? "Edit"
-                      : "Save";
+                      ? copy.steps.edit
+                      : copy.steps.save;
 
             return (
               <span key={step} className={badgeClass({ step, activeStep, completed })}>
-                Step {step}: {label}
+                {copy.general.stepPrefix} {step}: {label}
               </span>
             );
           })}
@@ -328,10 +626,10 @@ export default function FieldNotesScanner({
       <section className="card">
         <div className="field-notes-layout">
           <div className="stack-cell">
-            <h3>Step 1: Upload handwritten notes</h3>
+            <h3>{copy.upload.title}</h3>
             <div className="field-notes-dropzone">
               <label className="stack-cell">
-                <span>Photo of handwritten field notes</span>
+                <span>{copy.upload.label}</span>
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
@@ -345,9 +643,7 @@ export default function FieldNotesScanner({
                 />
               </label>
 
-              <p className="muted">
-                Best results: bright photo, full page visible, minimal shadows, and clear measurements or material notes.
-              </p>
+              <p className="muted">{copy.upload.guidance}</p>
 
               <div className="portal-empty-actions">
                 <button
@@ -358,7 +654,7 @@ export default function FieldNotesScanner({
                     void handleAnalyze();
                   }}
                 >
-                  {processing ? "Organizing..." : "Analyze Notes"}
+                  {processing ? copy.upload.organizing : copy.upload.analyze}
                 </button>
 
                 {selectedFile ? (
@@ -371,7 +667,7 @@ export default function FieldNotesScanner({
                       resetParsedState();
                     }}
                   >
-                    Clear
+                    {copy.upload.clear}
                   </button>
                 ) : null}
               </div>
@@ -379,22 +675,20 @@ export default function FieldNotesScanner({
           </div>
 
           <div className="stack-cell">
-            <h3>What the AI extracts</h3>
+            <h3>{copy.upload.extractTitle}</h3>
             <div className="field-notes-facts">
-              <span className="badge">Customer</span>
-              <span className="badge">Project type</span>
-              <span className="badge">Site address</span>
-              <span className="badge">Measurements</span>
-              <span className="badge">Materials</span>
-              <span className="badge">Scope of work</span>
-              <span className="badge">Labor notes</span>
-              <span className="badge">Quote amount</span>
-              <span className="badge">Timeline</span>
-              <span className="badge">Follow-up</span>
+              <span className="badge">{copy.upload.badges.customer}</span>
+              <span className="badge">{copy.upload.badges.projectType}</span>
+              <span className="badge">{copy.upload.badges.siteAddress}</span>
+              <span className="badge">{copy.upload.badges.measurements}</span>
+              <span className="badge">{copy.upload.badges.materials}</span>
+              <span className="badge">{copy.upload.badges.scope}</span>
+              <span className="badge">{copy.upload.badges.labor}</span>
+              <span className="badge">{copy.upload.badges.quote}</span>
+              <span className="badge">{copy.upload.badges.timeline}</span>
+              <span className="badge">{copy.upload.badges.followUp}</span>
             </div>
-            <p className="muted">
-              Review is required before anything is saved. TieGui will never auto-create a lead or estimate from a scan.
-            </p>
+            <p className="muted">{copy.upload.reviewRequired}</p>
           </div>
         </div>
       </section>
@@ -403,14 +697,12 @@ export default function FieldNotesScanner({
         <section className="card">
           <div className="field-notes-layout">
             <div className="stack-cell">
-              <h3>Step 2: AI processing</h3>
-              <p className="muted">
-                Reading handwriting, grouping measurements, and organizing the job scope into clean CRM fields.
-              </p>
+              <h3>{copy.processing.title}</h3>
+              <p className="muted">{copy.processing.body}</p>
               <div className="quick-meta">
-                <span className="badge status-running">Scanning handwriting</span>
-                <span className="badge status-running">Structuring measurements</span>
-                <span className="badge status-running">Preparing review form</span>
+                <span className="badge status-running">{copy.processing.scanning}</span>
+                <span className="badge status-running">{copy.processing.structuring}</span>
+                <span className="badge status-running">{copy.processing.preparing}</span>
               </div>
             </div>
             {previewUrl ? (
@@ -418,7 +710,7 @@ export default function FieldNotesScanner({
                 <Image
                   className="field-notes-preview-image"
                   src={previewUrl}
-                  alt="Field notes preview"
+                  alt={copy.processing.previewAlt}
                   width={1200}
                   height={1600}
                   unoptimized
@@ -435,8 +727,8 @@ export default function FieldNotesScanner({
           <section className="card">
             <div className="invoice-header-row">
               <div className="stack-cell">
-                <h3>Step 3: Review organized data</h3>
-                <p className="muted">Sanity-check the extracted job details before you edit or save anything.</p>
+                <h3>{copy.review.title}</h3>
+                <p className="muted">{copy.review.subtitle}</p>
               </div>
               <div className="field-notes-inline-actions">
                 <button
@@ -447,7 +739,7 @@ export default function FieldNotesScanner({
                     void handleAnalyze();
                   }}
                 >
-                  Re-run AI
+                  {copy.review.rerun}
                 </button>
               </div>
             </div>
@@ -456,11 +748,11 @@ export default function FieldNotesScanner({
               {previewUrl ? (
                 <div className="field-notes-preview-card">
                   <Image
-                    className="field-notes-preview-image"
-                    src={previewUrl}
-                    alt="Uploaded field notes"
-                    width={1200}
-                    height={1600}
+                  className="field-notes-preview-image"
+                  src={previewUrl}
+                  alt={copy.review.uploadedAlt}
+                  width={1200}
+                  height={1600}
                     unoptimized
                     loader={({ src }) => src}
                   />
@@ -469,28 +761,28 @@ export default function FieldNotesScanner({
 
               <div className="field-notes-summary-grid">
                 <div className="card field-notes-nested-card">
-                  <h4>Customer</h4>
-                  <p>{parsedData.customer_name || "Not captured yet"}</p>
+                  <h4>{copy.review.cards.customer}</h4>
+                  <p>{parsedData.customer_name || copy.general.notCapturedYet}</p>
                 </div>
                 <div className="card field-notes-nested-card">
-                  <h4>Project type</h4>
-                  <p>{parsedData.project_type || "Not captured yet"}</p>
+                  <h4>{copy.review.cards.projectType}</h4>
+                  <p>{parsedData.project_type || copy.general.notCapturedYet}</p>
                 </div>
                 <div className="card field-notes-nested-card">
-                  <h4>Site address</h4>
-                  <p>{parsedData.site_address || "Not captured yet"}</p>
+                  <h4>{copy.review.cards.siteAddress}</h4>
+                  <p>{parsedData.site_address || copy.general.notCapturedYet}</p>
                 </div>
                 <div className="card field-notes-nested-card">
-                  <h4>Quote amount</h4>
-                  <p>{parsedData.quote_amount || "Not captured yet"}</p>
+                  <h4>{copy.review.cards.quoteAmount}</h4>
+                  <p>{parsedData.quote_amount || copy.general.notCapturedYet}</p>
                 </div>
                 <div className="card field-notes-nested-card">
-                  <h4>Timeline</h4>
-                  <p>{parsedData.timeline || "Not captured yet"}</p>
+                  <h4>{copy.review.cards.timeline}</h4>
+                  <p>{parsedData.timeline || copy.general.notCapturedYet}</p>
                 </div>
                 <div className="card field-notes-nested-card">
-                  <h4>Follow-up</h4>
-                  <p>{parsedData.follow_up || "Not captured yet"}</p>
+                  <h4>{copy.review.cards.followUp}</h4>
+                  <p>{parsedData.follow_up || copy.general.notCapturedYet}</p>
                 </div>
               </div>
             </div>
@@ -498,89 +790,89 @@ export default function FieldNotesScanner({
 
           <section className="card">
             <div className="stack-cell">
-              <h3>Step 4: Edit extracted fields</h3>
-              <p className="muted">Clean up anything the scan missed. These fields are the final version that gets saved.</p>
+              <h3>{copy.edit.title}</h3>
+              <p className="muted">{copy.edit.subtitle}</p>
             </div>
 
             <form className="auth-form" style={{ marginTop: 14 }} onSubmit={(event) => event.preventDefault()}>
               <div className="grid two-col">
                 <label>
-                  Customer name
+                  {copy.edit.customerName}
                   <input
                     value={parsedData.customer_name}
                     onChange={(event) => updateParsedField("customer_name", event.currentTarget.value)}
-                    placeholder="Maria Ramirez"
+                    placeholder={copy.edit.customerNamePlaceholder}
                   />
                 </label>
 
                 <label>
-                  Project type
+                  {copy.edit.projectType}
                   <input
                     value={parsedData.project_type}
                     onChange={(event) => updateParsedField("project_type", event.currentTarget.value)}
-                    placeholder="Front yard cleanup and mulch refresh"
+                    placeholder={copy.edit.projectTypePlaceholder}
                   />
                 </label>
               </div>
 
               <div className="grid two-col">
                 <label>
-                  Site address
+                  {copy.edit.siteAddress}
                   <input
                     value={parsedData.site_address}
                     onChange={(event) => updateParsedField("site_address", event.currentTarget.value)}
-                    placeholder="123 Cedar Ave, Tacoma, WA"
+                    placeholder={copy.edit.siteAddressPlaceholder}
                   />
                 </label>
 
                 <label>
-                  Quote amount
+                  {copy.edit.quoteAmount}
                   <input
                     value={parsedData.quote_amount}
                     onChange={(event) => updateParsedField("quote_amount", event.currentTarget.value)}
-                    placeholder="$4,850"
+                    placeholder={copy.edit.quoteAmountPlaceholder}
                   />
                 </label>
               </div>
 
               <div className="grid two-col">
                 <label>
-                  Timeline
+                  {copy.edit.timeline}
                   <input
                     value={parsedData.timeline}
                     onChange={(event) => updateParsedField("timeline", event.currentTarget.value)}
-                    placeholder="2-day install, next Friday if approved"
+                    placeholder={copy.edit.timelinePlaceholder}
                   />
                 </label>
 
                 <label>
-                  Follow-up
+                  {copy.edit.followUp}
                   <textarea
                     value={parsedData.follow_up}
                     onChange={(event) => updateParsedField("follow_up", event.currentTarget.value)}
                     rows={3}
-                    placeholder="Call after HOA approval. Wants alternate paver option."
+                    placeholder={copy.edit.followUpPlaceholder}
                   />
                 </label>
               </div>
 
               <label>
-                Scope of work
+                {copy.edit.scopeOfWork}
                 <textarea
                   value={parsedData.scope_of_work}
                   onChange={(event) => updateParsedField("scope_of_work", event.currentTarget.value)}
                   rows={5}
-                  placeholder="Demo old bed edge, haul debris, reset drip, install fresh bark and steel edging."
+                  placeholder={copy.edit.scopeOfWorkPlaceholder}
                 />
               </label>
 
               <label>
-                Labor notes
+                {copy.edit.laborNotes}
                 <textarea
                   value={parsedData.labor_notes}
                   onChange={(event) => updateParsedField("labor_notes", event.currentTarget.value)}
                   rows={4}
-                  placeholder="Need 3-person crew, stump grinder, and trailer access in alley."
+                  placeholder={copy.edit.laborNotesPlaceholder}
                 />
               </label>
             </form>
@@ -589,11 +881,11 @@ export default function FieldNotesScanner({
           <section className="card">
             <div className="invoice-header-row">
               <div className="stack-cell">
-                <h3>Measurements</h3>
-                <p className="muted">Keep dimensions clean so the job folder starts with usable field data.</p>
+                <h3>{copy.measurements.title}</h3>
+                <p className="muted">{copy.measurements.subtitle}</p>
               </div>
               <button className="btn secondary" type="button" onClick={addMeasurementRow}>
-                Add Measurement
+                {copy.measurements.add}
               </button>
             </div>
 
@@ -603,46 +895,46 @@ export default function FieldNotesScanner({
                   <div key={`measurement-${index}`} className="field-notes-line-item">
                     <div className="grid two-col">
                       <label>
-                        Label
+                        {copy.measurements.label}
                         <input
                           value={row.label}
                           onChange={(event) => updateMeasurement(index, "label", event.currentTarget.value)}
-                          placeholder="Back yard"
+                          placeholder={copy.measurements.labelPlaceholder}
                         />
                       </label>
                       <label>
-                        Value
+                        {copy.measurements.value}
                         <input
                           value={row.value}
                           onChange={(event) => updateMeasurement(index, "value", event.currentTarget.value)}
-                          placeholder="860"
+                          placeholder={copy.measurements.valuePlaceholder}
                         />
                       </label>
                     </div>
 
                     <div className="grid two-col">
                       <label>
-                        Unit
+                        {copy.measurements.unit}
                         <input
                           value={row.unit}
                           onChange={(event) => updateMeasurement(index, "unit", event.currentTarget.value)}
-                          placeholder="sqft"
+                          placeholder={copy.measurements.unitPlaceholder}
                         />
                       </label>
                       <label>
-                        Notes
+                        {copy.measurements.notes}
                         <input
                           value={row.notes}
                           onChange={(event) => updateMeasurement(index, "notes", event.currentTarget.value)}
-                          placeholder="Includes side strip near fence"
+                          placeholder={copy.measurements.notesPlaceholder}
                         />
                       </label>
                     </div>
 
                     <div className="field-notes-line-footer">
-                      <span className="muted">{renderMeasurement(row)}</span>
+                      <span className="muted">{renderMeasurement(row, copy.general.notCaptured)}</span>
                       <button className="btn secondary" type="button" onClick={() => removeMeasurementRow(index)}>
-                        Remove
+                        {copy.measurements.remove}
                       </button>
                     </div>
                   </div>
@@ -650,7 +942,7 @@ export default function FieldNotesScanner({
               </div>
             ) : (
               <div className="field-notes-empty">
-                <p>No measurements were captured yet.</p>
+                <p>{copy.measurements.empty}</p>
               </div>
             )}
           </section>
@@ -658,11 +950,11 @@ export default function FieldNotesScanner({
           <section className="card">
             <div className="invoice-header-row">
               <div className="stack-cell">
-                <h3>Materials</h3>
-                <p className="muted">Capture product and quantity notes before they get lost between site visit and quote.</p>
+                <h3>{copy.materials.title}</h3>
+                <p className="muted">{copy.materials.subtitle}</p>
               </div>
               <button className="btn secondary" type="button" onClick={addMaterialRow}>
-                Add Material
+                {copy.materials.add}
               </button>
             </div>
 
@@ -672,46 +964,46 @@ export default function FieldNotesScanner({
                   <div key={`material-${index}`} className="field-notes-line-item">
                     <div className="grid two-col">
                       <label>
-                        Material
+                        {copy.materials.material}
                         <input
                           value={row.name}
                           onChange={(event) => updateMaterial(index, "name", event.currentTarget.value)}
-                          placeholder="3/4 clean gravel"
+                          placeholder={copy.materials.materialPlaceholder}
                         />
                       </label>
                       <label>
-                        Quantity
+                        {copy.materials.quantity}
                         <input
                           value={row.quantity}
                           onChange={(event) => updateMaterial(index, "quantity", event.currentTarget.value)}
-                          placeholder="4"
+                          placeholder={copy.materials.quantityPlaceholder}
                         />
                       </label>
                     </div>
 
                     <div className="grid two-col">
                       <label>
-                        Unit
+                        {copy.materials.unit}
                         <input
                           value={row.unit}
                           onChange={(event) => updateMaterial(index, "unit", event.currentTarget.value)}
-                          placeholder="yards"
+                          placeholder={copy.materials.unitPlaceholder}
                         />
                       </label>
                       <label>
-                        Notes
+                        {copy.materials.notes}
                         <input
                           value={row.notes}
                           onChange={(event) => updateMaterial(index, "notes", event.currentTarget.value)}
-                          placeholder="Match existing color"
+                          placeholder={copy.materials.notesPlaceholder}
                         />
                       </label>
                     </div>
 
                     <div className="field-notes-line-footer">
-                      <span className="muted">{renderMaterial(row)}</span>
+                      <span className="muted">{renderMaterial(row, copy.general.notCaptured)}</span>
                       <button className="btn secondary" type="button" onClick={() => removeMaterialRow(index)}>
-                        Remove
+                        {copy.materials.remove}
                       </button>
                     </div>
                   </div>
@@ -719,44 +1011,41 @@ export default function FieldNotesScanner({
               </div>
             ) : (
               <div className="field-notes-empty">
-                <p>No materials were captured yet.</p>
+                <p>{copy.materials.empty}</p>
               </div>
             )}
           </section>
 
           <section className="card">
             <div className="stack-cell">
-              <h3>Step 5: Confirm and save</h3>
-              <p className="muted">
-                TieGui needs a phone number to create a real lead record. Save as a lead if you only want the job folder,
-                or save as an estimate draft if you also want the invoice-draft text prepared.
-              </p>
+              <h3>{copy.save.title}</h3>
+              <p className="muted">{copy.save.subtitle}</p>
             </div>
 
             <form className="auth-form" style={{ marginTop: 14 }} onSubmit={(event) => event.preventDefault()}>
               <div className="grid two-col">
                 <label>
-                  Customer phone
+                  {copy.save.customerPhone}
                   <input
                     value={phone}
                     onChange={(event) => {
                       setPhone(event.currentTarget.value);
                       resetSaveState();
                     }}
-                    placeholder="(206) 555-0100"
+                    placeholder={copy.save.customerPhonePlaceholder}
                     required
                   />
                 </label>
 
                 <label>
-                  Customer email (optional)
+                  {copy.save.customerEmail}
                   <input
                     value={email}
                     onChange={(event) => {
                       setEmail(event.currentTarget.value);
                       resetSaveState();
                     }}
-                    placeholder="customer@example.com"
+                    placeholder={copy.save.customerEmailPlaceholder}
                   />
                 </label>
               </div>
@@ -770,7 +1059,7 @@ export default function FieldNotesScanner({
                     void handleSave("lead");
                   }}
                 >
-                  {savingMode === "lead" ? "Saving Lead..." : "Save as Lead"}
+                  {savingMode === "lead" ? copy.save.savingLead : copy.save.saveLead}
                 </button>
 
                 <button
@@ -781,7 +1070,7 @@ export default function FieldNotesScanner({
                     void handleSave("estimate");
                   }}
                 >
-                  {savingMode === "estimate" ? "Saving Estimate Draft..." : "Save as Estimate Draft"}
+                  {savingMode === "estimate" ? copy.save.savingEstimate : copy.save.saveEstimate}
                 </button>
               </div>
             </form>
@@ -790,13 +1079,15 @@ export default function FieldNotesScanner({
               <div className="field-notes-success-card">
                 <div className="quick-meta">
                   <span className="badge status-success">
-                    {savedMode === "estimate" ? "Estimate draft saved" : "Lead saved"}
+                    {savedMode === "estimate" ? copy.save.successEstimate : copy.save.successLead}
                   </span>
-                  <span className="badge">Lead ID: {savedLeadId}</span>
+                  <span className="badge">
+                    {copy.save.leadId}: {savedLeadId}
+                  </span>
                 </div>
                 <div className="portal-empty-actions" style={{ marginTop: 12 }}>
                   <Link className="btn primary" href={savedRedirectTo}>
-                    Open CRM Folder
+                    {copy.save.openCrmFolder}
                   </Link>
                   <button
                     className="btn secondary"
@@ -811,7 +1102,7 @@ export default function FieldNotesScanner({
                       resetSaveState();
                     }}
                   >
-                    Scan Another Page
+                    {copy.save.scanAnother}
                   </button>
                 </div>
               </div>

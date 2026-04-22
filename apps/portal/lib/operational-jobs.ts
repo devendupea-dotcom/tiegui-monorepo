@@ -56,35 +56,10 @@ export function mapBookingEventToOperationalJobState(input: {
   jobStatus: JobStatus;
   dispatchStatus: DispatchJobStatus;
 } {
-  switch (input.status) {
-    case "EN_ROUTE":
-      return {
-        jobStatus: "IN_PROGRESS",
-        dispatchStatus: "ON_THE_WAY",
-      };
-    case "ON_SITE":
-    case "IN_PROGRESS":
-      return {
-        jobStatus: "IN_PROGRESS",
-        dispatchStatus: "ON_SITE",
-      };
-    case "COMPLETED":
-      return {
-        jobStatus: "COMPLETED",
-        dispatchStatus: "COMPLETED",
-      };
-    case "CANCELLED":
-    case "NO_SHOW":
-      return {
-        jobStatus: "CANCELLED",
-        dispatchStatus: "CANCELED",
-      };
-    default:
-      return {
-        jobStatus: input.type === "ESTIMATE" ? "ESTIMATING" : "SCHEDULED",
-        dispatchStatus: "SCHEDULED",
-      };
-  }
+  return {
+    jobStatus: input.type === "ESTIMATE" ? "ESTIMATING" : "SCHEDULED",
+    dispatchStatus: "SCHEDULED",
+  };
 }
 
 type SelectReusableOperationalJobCandidateInput = {
@@ -391,12 +366,6 @@ export async function ensureOperationalJobFromLeadBooking(
   }
   if (existingJob.scheduledEndTime !== scheduledEndTime) {
     updateData.scheduledEndTime = scheduledEndTime;
-  }
-  if (existingJob.dispatchStatus !== mappedState.dispatchStatus) {
-    updateData.dispatchStatus = mappedState.dispatchStatus;
-  }
-  if (existingJob.status !== mappedState.jobStatus) {
-    updateData.status = mappedState.jobStatus;
   }
 
   if (input.persistJobChanges !== false && Object.keys(updateData).length > 0) {

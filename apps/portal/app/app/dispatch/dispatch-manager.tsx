@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useLocale } from "next-intl";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import { formatEstimateCurrency } from "@/lib/estimates";
 import {
   compareDispatchJobs,
@@ -187,6 +188,7 @@ type DispatchManagerCopy = {
   createShareableLink: string;
   editJob: string;
   editJobBody: string;
+  linkedBookingRequired: string;
   saveChanges: string;
   notes: string;
   startsAt: (time: string) => string;
@@ -310,6 +312,7 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
       createShareableLink: "Crea un enlace compartible cuando estes listo para enviarle al cliente actualizaciones en vivo.",
       editJob: "Editar trabajo",
       editJobBody: "Guarda cambios directamente desde el panel de despacho.",
+      linkedBookingRequired: "La fecha, la hora y el estado de despacho se controlan desde una reserva real del calendario.",
       saveChanges: "Guardar cambios",
       notes: "Notas",
       startsAt: (time) => `Empieza ${time}`,
@@ -432,6 +435,7 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
     createShareableLink: "Create a shareable link when you are ready to send the customer live job updates.",
     editJob: "Edit job",
     editJobBody: "Save updates directly from the dispatch drawer.",
+    linkedBookingRequired: "Schedule timing and dispatch execution stay locked to a real calendar booking.",
     saveChanges: "Save Changes",
     notes: "Notes",
     startsAt: (time) => `Starts ${time}`,
@@ -624,12 +628,12 @@ function moveJobBetweenColumns(input: {
 }
 
 function formatEventDateTime(value: string, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(new Date(value));
+  }, { locale });
 }
 
 function formatLocalizedDispatchStatus(value: DispatchStatusValue, copy: DispatchManagerCopy): string {
@@ -1986,6 +1990,9 @@ export default function DispatchManager({
                         crews={(snapshot?.crews || []).filter(
                           (crew) => crew.active || crew.id === (detailForm.assignedCrewId || selectedJob.assignedCrewId || ""),
                         )}
+                        disableScheduleFields={!selectedJob.hasActiveBooking}
+                        disableStatusField={!selectedJob.hasActiveBooking}
+                        scheduleHint={!selectedJob.hasActiveBooking ? copy.linkedBookingRequired : null}
                         includeStatus
                         onChange={(patch) => setDetailForm((current) => ({ ...current, ...patch }))}
                         onSubmit={handleSaveDetail}

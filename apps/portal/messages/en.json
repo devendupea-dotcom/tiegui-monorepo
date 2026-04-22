@@ -368,7 +368,41 @@
     "window": "Window",
     "daysCount": "{count} days",
     "addEvent": "Add Event",
-    "addLeadAndSchedule": "Add Lead + Schedule"
+    "addLeadAndSchedule": "Add Lead + Schedule",
+    "loadEventsError": "Failed to load calendar events.",
+    "saveRetryError": "Couldn't save. Retry.",
+    "saveEventError": "Could not save event.",
+    "deleteEventError": "Failed to delete event.",
+    "resolveConflictError": "Could not resolve conflict.",
+    "findOpenTimeError": "Couldn't find open time.",
+    "pendingChanges": "Pending",
+    "moreCount": "+{count} more",
+    "todayPill": "Today",
+    "addJob": "+ Add Job",
+    "close": "Close",
+    "noEventsForDay": "No events for this day.",
+    "addFromEmptySlot": "Add from Empty Slot",
+    "emptySlotDetails": "{date} at {time} for {minutes} minutes.",
+    "createEvent": "Create Event",
+    "editEvent": "Edit Event",
+    "cancel": "Cancel",
+    "linkedLeadNotice": "This booking is linked to the selected lead.",
+    "customerTitle": "Customer / Title",
+    "customerName": "Customer Name",
+    "address": "Address",
+    "type": "Type",
+    "eventStatus": "Status",
+    "start": "Start",
+    "end": "End",
+    "assignedWorkers": "Assigned Workers",
+    "notes": "Notes",
+    "busyEvent": "Busy event (blocks availability)",
+    "deleteEvent": "Delete",
+    "saveEvent": "Save Event",
+    "savingEvent": "Saving...",
+    "resolveConflict": "Resolve Conflict",
+    "conflictBody": "The selected time conflicts with another assignment. Pick a suggested slot:",
+    "resizeEvent": "Resize {value}"
   },
   "jobs": {
     "title": "CRM",
@@ -402,6 +436,7 @@
       "folderData": "CRM Data",
       "city": "City",
       "type": "Type",
+      "nextStep": "Next Step",
       "followUp": "Follow-up",
       "updated": "Updated"
     }
@@ -412,6 +447,7 @@
     "emptyTitle": "No invoices yet.",
     "onboardingBody": "Finish onboarding, then open a job folder and create your first invoice.",
     "statusLabel": "Invoice status",
+    "all": "All",
     "openOnlyLabel": "Open only",
     "yes": "Yes",
     "no": "No",
@@ -440,6 +476,101 @@
       "due": "Due",
       "updated": "Updated"
     }
+  },
+  "portalActionFeedback": {
+    "titleError": "Action blocked",
+    "titleSuccess": "Saved",
+    "dismiss": "Dismiss message",
+    "success": {
+      "saved": "Changes saved.",
+      "validated": "Validation passed.",
+      "tested": "Test completed successfully.",
+      "created": "Created successfully.",
+      "updated": "Updated successfully.",
+      "deleted": "Removed successfully.",
+      "sent": "Sent successfully.",
+      "approved": "Approved successfully.",
+      "declined": "Declined successfully.",
+      "converted": "Converted successfully."
+    }
+  },
+  "invoiceTemplateSettings": {
+    "page": {
+      "back": "← Back to Settings",
+      "title": "Invoice Templates",
+      "description": "Pick the invoice style your business uses by default for previews, printing, and PDF exports."
+    },
+    "selector": {
+      "title": "Invoice Style",
+      "description": "Choose the default template your team uses when opening invoice previews and printing PDFs.",
+      "readOnly": "Read-only users can preview the current invoice style, but only owners and admins can change it."
+    },
+    "preview": {
+      "title": "Live Preview",
+      "description": "This sample uses your saved branding and the currently selected layout."
+    },
+    "actions": {
+      "save": "Save Preference",
+      "saving": "Saving...",
+      "dismiss": "Dismiss"
+    },
+    "selected": "Selected",
+    "messages": {
+      "saveError": "Could not save invoice template preference."
+    },
+    "toast": {
+      "savedTitle": "Saved",
+      "savedMessage": "Invoice template preference updated.",
+      "saveFailedTitle": "Save failed"
+    },
+    "templates": {
+      "classic": {
+        "name": "Classic",
+        "description": "Clean black, white, and gray layout for general contractor invoices."
+      },
+      "bold": {
+        "name": "Bold",
+        "description": "Dark header, accent color, and a stronger total-first presentation for trades."
+      },
+      "minimal": {
+        "name": "Minimal",
+        "description": "Ultra-clean compact layout with soft gray accents for smaller crews and operators."
+      }
+    },
+    "previewInvoice": {
+      "jobTitle": "Spring cleanup and irrigation tune-up",
+      "termsLabel": "Due on receipt",
+      "customerName": "Megan Carter",
+      "lineItemOne": "Spring cleanup and debris haul-away",
+      "lineItemTwo": "Irrigation inspection, repairs, and controller tune-up",
+      "taxLabel": "Tax (8.25%)",
+      "notes": "Thank you for the opportunity. Work includes cleanup, haul-away, and irrigation adjustments completed onsite.",
+      "paymentTerms": "Payment due upon receipt. ACH, check, and card are accepted."
+    }
+  },
+  "invoicePreview": {
+    "title": "Invoice",
+    "projectTitle": "Project Invoice",
+    "jobFor": "Job for {name}",
+    "job": "Job",
+    "totalDue": "Total Due",
+    "paidWatermark": "PAID",
+    "invoiceNumber": "Invoice #",
+    "issueDate": "Issue Date",
+    "dueDate": "Due Date",
+    "terms": "Terms",
+    "billTo": "Bill To",
+    "invoiceDetails": "Invoice Details",
+    "numberShort": "No.",
+    "issuedShort": "Issued.",
+    "dueShort": "Due.",
+    "termsShort": "Terms.",
+    "description": "Description",
+    "quantity": "Qty",
+    "unitPrice": "Unit Price",
+    "subtotal": "Subtotal",
+    "notes": "Notes",
+    "paymentTerms": "Payment Terms"
   },
   "status": {
     "new": "New",
@@ -471,6 +602,11 @@
     "overdue": "Overdue",
     "draft": "Draft",
     "sent": "Sent",
+    "viewed": "Viewed",
+    "approved": "Approved",
+    "declined": "Declined",
+    "expired": "Expired",
+    "converted": "Converted",
     "paid": "Paid",
     "partial": "Partially Paid",
     "answered": "Answered",

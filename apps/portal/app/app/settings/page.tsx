@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { isR2Configured } from "@/lib/r2";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { DEFAULT_CALENDAR_TIMEZONE, ensureTimeZone, isValidTimeZone } from "@/lib/calendar/dates";
+import { buildSmsAgentPlaybookInput, normalizeSmsAgentPlaybook } from "@/lib/conversational-sms-agent-playbook";
 import { containsAutomationRevealLanguage, normalizeCustomTemplates } from "@/lib/conversational-sms-templates";
 import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
 import type { ResolvedMessageLocale } from "@/lib/message-language";
@@ -18,7 +19,7 @@ import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../
 import { requireAppPageViewer } from "../_lib/portal-viewer";
 import CommunicationDiagnosticsCard from "./communication-diagnostics-card";
 import OrgLogoUploader from "./branding/org-logo-uploader";
-import { SmsVoiceSection, type SmsVoiceCustomTemplates } from "./sms-voice-section";
+import { SmsVoiceSection, type SmsAgentPlaybookFormValues, type SmsVoiceCustomTemplates } from "./sms-voice-section";
 
 export const dynamic = "force-dynamic";
 
@@ -170,6 +171,17 @@ async function updateSettingsAction(formData: FormData) {
   const customTemplateFollowUp1 = String(formData.get("customTemplateFollowUp1") || "").trim();
   const customTemplateFollowUp2 = String(formData.get("customTemplateFollowUp2") || "").trim();
   const customTemplateFollowUp3 = String(formData.get("customTemplateFollowUp3") || "").trim();
+  const smsAgentPrimaryGoal = String(formData.get("smsAgentPrimaryGoal") || "").trim();
+  const smsAgentBusinessContext = String(formData.get("smsAgentBusinessContext") || "").trim();
+  const smsAgentServicesSummary = String(formData.get("smsAgentServicesSummary") || "").trim();
+  const smsAgentServiceAreaSummary = String(formData.get("smsAgentServiceAreaSummary") || "").trim();
+  const smsAgentRequiredDetails = String(formData.get("smsAgentRequiredDetails") || "").trim();
+  const smsAgentHandoffTriggers = String(formData.get("smsAgentHandoffTriggers") || "").trim();
+  const smsAgentToneNotes = String(formData.get("smsAgentToneNotes") || "").trim();
+  const smsAgentEstimatorName = String(formData.get("smsAgentEstimatorName") || "").trim();
+  const smsAgentSchedulingNotes = String(formData.get("smsAgentSchedulingNotes") || "").trim();
+  const smsAgentDoNotPromise = String(formData.get("smsAgentDoNotPromise") || "").trim();
+  const smsAgentUseInboundPhoneAsCallback = String(formData.get("smsAgentUseInboundPhoneAsCallback") || "") === "on";
   const missedCallAutoReplyOn = String(formData.get("missedCallAutoReplyOn") || "") === "on";
   const missedCallMessageEn = String(formData.get("missedCallAutoReplyBodyEn") || "").trim();
   const missedCallMessageEs = String(formData.get("missedCallAutoReplyBodyEs") || "").trim();
@@ -243,6 +255,19 @@ async function updateSettingsAction(formData: FormData) {
     followUp2: customTemplateFollowUp2,
     followUp3: customTemplateFollowUp3,
   };
+  const smsAgentPlaybookInput: SmsAgentPlaybookFormValues = {
+    primaryGoal: smsAgentPrimaryGoal,
+    businessContext: smsAgentBusinessContext,
+    servicesSummary: smsAgentServicesSummary,
+    serviceAreaSummary: smsAgentServiceAreaSummary,
+    requiredDetails: smsAgentRequiredDetails,
+    handoffTriggers: smsAgentHandoffTriggers,
+    toneNotes: smsAgentToneNotes,
+    estimatorName: smsAgentEstimatorName,
+    schedulingNotes: smsAgentSchedulingNotes,
+    doNotPromise: smsAgentDoNotPromise,
+    useInboundPhoneAsCallback: smsAgentUseInboundPhoneAsCallback,
+  };
 
   for (const value of Object.values(customTemplatesInput)) {
     if (value.length > 1600) {
@@ -253,7 +278,17 @@ async function updateSettingsAction(formData: FormData) {
     }
   }
 
+  for (const [key, value] of Object.entries(smsAgentPlaybookInput)) {
+    if (typeof value === "string" && value.length > 1600) {
+      redirect(withOrgQuery("/app/settings?error=invalid-message", orgId, internalUser));
+    }
+    if (key === "estimatorName" && typeof value === "string" && value.length > 120) {
+      redirect(withOrgQuery("/app/settings?error=invalid-message", orgId, internalUser));
+    }
+  }
+
   const customTemplatesJson = normalizeCustomTemplates(customTemplatesInput);
+  const smsAgentPlaybookJson = buildSmsAgentPlaybookInput(smsAgentPlaybookInput);
   const customModeEnabled = canManageAutomationSettings && smsTone === "CUSTOM";
   const legacyInitial = customModeEnabled ? customTemplateGreeting || null : undefined;
   const legacyAskAddress = customModeEnabled ? customTemplateAskAddress || null : undefined;
@@ -395,6 +430,7 @@ async function updateSettingsAction(formData: FormData) {
         daysAhead,
         timezone: ensureTimeZone(messagingTimezone),
         customTemplates: customModeEnabled ? (customTemplatesJson as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+        aiIntakeProfile: smsAgentPlaybookJson as unknown as Prisma.InputJsonValue,
       },
       create: {
         orgId,
@@ -409,6 +445,7 @@ async function updateSettingsAction(formData: FormData) {
         daysAhead,
         timezone: ensureTimeZone(messagingTimezone),
         customTemplates: smsTone === "CUSTOM" ? (customTemplatesJson as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+        aiIntakeProfile: smsAgentPlaybookJson as unknown as Prisma.InputJsonValue,
       },
     });
   }
@@ -517,6 +554,7 @@ export default async function ClientSettingsPage({
           daysAhead: true,
           timezone: true,
           customTemplates: true,
+          aiIntakeProfile: true,
         },
       },
       dashboardConfig: {
@@ -594,6 +632,20 @@ export default async function ClientSettingsPage({
     followUp1: normalizedCustomTemplates.followUp1 || "",
     followUp2: normalizedCustomTemplates.followUp2 || "",
     followUp3: normalizedCustomTemplates.followUp3 || "",
+  };
+  const normalizedSmsAgentPlaybook = normalizeSmsAgentPlaybook(messagingSettings?.aiIntakeProfile);
+  const initialAgentPlaybook: SmsAgentPlaybookFormValues = {
+    primaryGoal: normalizedSmsAgentPlaybook.primaryGoal,
+    businessContext: normalizedSmsAgentPlaybook.businessContext,
+    servicesSummary: normalizedSmsAgentPlaybook.servicesSummary,
+    serviceAreaSummary: normalizedSmsAgentPlaybook.serviceAreaSummary,
+    requiredDetails: normalizedSmsAgentPlaybook.requiredDetails,
+    handoffTriggers: normalizedSmsAgentPlaybook.handoffTriggers,
+    toneNotes: normalizedSmsAgentPlaybook.toneNotes,
+    estimatorName: normalizedSmsAgentPlaybook.estimatorName,
+    schedulingNotes: normalizedSmsAgentPlaybook.schedulingNotes,
+    doNotPromise: normalizedSmsAgentPlaybook.doNotPromise,
+    useInboundPhoneAsCallback: normalizedSmsAgentPlaybook.useInboundPhoneAsCallback,
   };
   const previewLocale: ResolvedMessageLocale = organization.messageLanguage === "ES" ? "ES" : "EN";
   const previewSlots = await buildSettingsPreviewSlots({
@@ -829,6 +881,7 @@ export default async function ClientSettingsPage({
                 initialBufferMinutes={effectiveBufferMinutes}
                 initialDaysAhead={effectiveDaysAhead}
                 initialTimeZone={ensureTimeZone(effectiveMessagingTimezone)}
+                initialAgentPlaybook={initialAgentPlaybook}
                 initialCustomTemplates={initialCustomTemplates}
                 previewSlots={previewSlots}
               />

@@ -6,7 +6,7 @@ import {
   getInvoiceActionContext,
   getInvoiceReadJobContext,
 } from "@/lib/invoices";
-import { resolveOrganizationLogoUrl } from "@/lib/organization-logo";
+import { resolveOrganizationLogoUrlBestEffort } from "@/lib/organization-logo";
 import { normalizeInvoiceTemplate } from "@/lib/invoice-template";
 import { getParam, resolveAppScope, withOrgQuery } from "../../../_lib/portal-scope";
 import { requireAppPageViewer } from "../../../_lib/portal-viewer";
@@ -167,7 +167,7 @@ export default async function InvoicePrintPage({ params, searchParams }: RoutePa
     }
   }
 
-  const logoUrl = await resolveOrganizationLogoUrl({
+  const logoUrl = await resolveOrganizationLogoUrlBestEffort({
     orgId: invoice.org.id,
     logoPhotoId: invoice.org.logoPhotoId,
   });

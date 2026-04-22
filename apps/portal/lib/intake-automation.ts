@@ -2,6 +2,7 @@ import { addDays, addMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "./calendar/availability";
 import { recordOutboundSmsCommunicationEvent } from "./communication-events";
+import { formatCallbackTime } from "./intake-time";
 import { prisma } from "./prisma";
 import { pickLocalizedTemplate, resolveMessageLocale } from "./message-language";
 import { ensureSmsA2POpenerDisclosure } from "./sms-compliance";
@@ -56,26 +57,7 @@ export const intakeAutomationDefaults = {
 } as const;
 
 export const intakeCallbackEventTitle = CALLBACK_EVENT_TITLE;
-
-type TimeParts = {
-  hour: number;
-  minute: number;
-};
-
-function formatCallbackTime(
-  value: Date,
-  locale: "EN" | "ES",
-  timeZone?: string,
-): string {
-  return new Intl.DateTimeFormat(locale === "ES" ? "es-US" : "en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    ...(timeZone ? { timeZone } : {}),
-  }).format(value);
-}
+export { parsePreferredCallbackAt } from "./intake-time";
 
 function renderCompletionTemplate(
   template: string,
@@ -175,141 +157,6 @@ async function sendAutomationMessage({
       },
     });
   });
-}
-
-function parseTimeParts(text: string): TimeParts {
-  const match = text.match(/(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
-  if (!match) {
-    return { hour: 9, minute: 0 };
-  }
-
-  let hour = Number(match[1]);
-  const minute = match[2] ? Number(match[2]) : 0;
-  const meridiem = match[3]?.toLowerCase();
-
-  if (Number.isNaN(hour) || Number.isNaN(minute) || minute < 0 || minute > 59) {
-    return { hour: 9, minute: 0 };
-  }
-
-  if (meridiem === "pm" && hour < 12) {
-    hour += 12;
-  } else if (meridiem === "am" && hour === 12) {
-    hour = 0;
-  }
-
-  if (!meridiem && hour >= 1 && hour <= 7) {
-    hour += 12;
-  }
-
-  if (hour < 0 || hour > 23) {
-    return { hour: 9, minute: 0 };
-  }
-
-  return { hour, minute };
-}
-
-function startOfDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-}
-
-function withTime(baseDate: Date, timeParts: TimeParts): Date {
-  return new Date(
-    baseDate.getFullYear(),
-    baseDate.getMonth(),
-    baseDate.getDate(),
-    timeParts.hour,
-    timeParts.minute,
-    0,
-    0,
-  );
-}
-
-function parseWeekdayBase(text: string, now: Date): Date | null {
-  const weekMap: Record<string, number> = {
-    sunday: 0,
-    monday: 1,
-    tuesday: 2,
-    wednesday: 3,
-    thursday: 4,
-    friday: 5,
-    saturday: 6,
-  };
-
-  for (const [name, weekday] of Object.entries(weekMap)) {
-    if (text.includes(name)) {
-      const todayWeekday = now.getDay();
-      let delta = (weekday - todayWeekday + 7) % 7;
-      if (delta === 0) {
-        delta = 7;
-      }
-      const result = startOfDay(now);
-      result.setDate(result.getDate() + delta);
-      return result;
-    }
-  }
-
-  return null;
-}
-
-export function parsePreferredCallbackAt(text: string, now = new Date()): Date | null {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-
-  const timeParts = parseTimeParts(normalized);
-  let baseDate: Date | null = null;
-
-  const isoMatch = normalized.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
-  if (isoMatch) {
-    baseDate = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
-  }
-
-  if (!baseDate) {
-    const usMatch = normalized.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
-    if (usMatch) {
-      const month = Number(usMatch[1]);
-      const day = Number(usMatch[2]);
-      let year = usMatch[3] ? Number(usMatch[3]) : now.getFullYear();
-      if (year < 100) {
-        year += 2000;
-      }
-      baseDate = new Date(year, month - 1, day);
-      if (!usMatch[3] && baseDate < startOfDay(now)) {
-        baseDate = new Date(year + 1, month - 1, day);
-      }
-    }
-  }
-
-  if (!baseDate) {
-    if (normalized.includes("tomorrow")) {
-      baseDate = startOfDay(now);
-      baseDate.setDate(baseDate.getDate() + 1);
-    } else if (normalized.includes("today")) {
-      baseDate = startOfDay(now);
-    } else {
-      baseDate = parseWeekdayBase(normalized, now);
-    }
-  }
-
-  if (!baseDate || Number.isNaN(baseDate.getTime())) {
-    return null;
-  }
-
-  let result = withTime(baseDate, timeParts);
-  if (result <= now) {
-    if (normalized.includes("today")) {
-      result = withTime(new Date(startOfDay(now).getTime() + 24 * 60 * 60 * 1000), timeParts);
-    } else if (!normalized.includes("/") && !normalized.includes("-")) {
-      result = withTime(new Date(startOfDay(baseDate).getTime() + 7 * 24 * 60 * 60 * 1000), timeParts);
-    }
-  }
-
-  if (result <= now) {
-    return null;
-  }
-
-  return result;
 }
 
 export async function ensureIntakeCallbackEvent({

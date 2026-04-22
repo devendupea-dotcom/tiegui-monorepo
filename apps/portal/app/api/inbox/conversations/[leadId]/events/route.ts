@@ -1,9 +1,22 @@
 import { NextResponse } from "next/server";
-import type { CallDirection, CallStatus, MessageDirection, MessageStatus, MessageType, MessageProvider } from "@prisma/client";
-import { mapMessageStatusToTimelineStatus, sortTimelineEventsStable } from "@/lib/communication-events";
+import type {
+  CallDirection,
+  CallStatus,
+  MessageDirection,
+  MessageStatus,
+  MessageType,
+  MessageProvider,
+} from "@prisma/client";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
+import { findBlockedCallerByPhone } from "@/lib/blocked-callers";
+import {
+  mapMessageStatusToTimelineStatus,
+  sortTimelineEventsStable,
+} from "@/lib/communication-events";
 import { sanitizeConversationMessageBody } from "@/lib/inbox-message-display";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { normalizeLeadCity } from "@/lib/lead-location";
+import { derivePotentialSpamSignals } from "@/lib/lead-spam";
 import { prisma } from "@/lib/prisma";
 import {
   AppApiError,
@@ -32,9 +45,14 @@ export type TimelineEvent = {
   meta?: Record<string, unknown>;
 };
 
-const ACTIVE_BOOKED_EVENT_STATUSES = ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] as const;
+type VoiceRiskSignal = {
+  disposition: string | null;
+  score: number | null;
+};
 
-function mapMessageDirection(direction: MessageDirection): "inbound" | "outbound" {
+function mapMessageDirection(
+  direction: MessageDirection,
+): "inbound" | "outbound" {
   return direction === "INBOUND" ? "inbound" : "outbound";
 }
 
@@ -56,18 +74,48 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function recordString(record: Record<string, unknown> | null, key: string): string | undefined {
+function recordString(
+  record: Record<string, unknown> | null,
+  key: string,
+): string | undefined {
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-function recordNumber(record: Record<string, unknown> | null, key: string): number | undefined {
+function recordNumber(
+  record: Record<string, unknown> | null,
+  key: string,
+): number | undefined {
   const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function findLatestVoiceRiskSignal(
+  events: Array<{ metadataJson: unknown }>,
+): VoiceRiskSignal {
+  for (const event of events) {
+    const metadata = asRecord(event.metadataJson);
+    const disposition = recordString(metadata, "riskDisposition") || null;
+    const score = recordNumber(metadata, "riskScore") ?? null;
+    if (disposition || score !== null) {
+      return { disposition, score };
+    }
+  }
+
+  return {
+    disposition: null,
+    score: null,
+  };
 }
 
 function communicationCallLabel(type: string): string {
-  if (type === "VOICEMAIL_REACHED" || type === "VOICEMAIL_LEFT" || type === "ABANDONED") {
+  if (
+    type === "VOICEMAIL_REACHED" ||
+    type === "VOICEMAIL_LEFT" ||
+    type === "ABANDONED"
+  ) {
     return "Voicemail";
   }
   if (type === "FORWARDED_TO_OWNER") {
@@ -97,8 +145,10 @@ function mapCommunicationEventToTimelineEvent(event: {
   const metadata = asRecord(event.metadataJson);
 
   if (event.channel === "SMS") {
-    const direction = event.type === "INBOUND_SMS_RECEIVED" ? "inbound" : "outbound";
-    const rawStatus = recordString(metadata, "status") || event.providerStatus || undefined;
+    const direction =
+      event.type === "INBOUND_SMS_RECEIVED" ? "inbound" : "outbound";
+    const rawStatus =
+      recordString(metadata, "status") || event.providerStatus || undefined;
     return {
       id: event.id,
       type: "message",
@@ -109,7 +159,9 @@ function mapCommunicationEventToTimelineEvent(event: {
         direction,
         status: rawStatus,
       }),
-      status: mapMessageStatusToTimelineStatus((rawStatus || "").toUpperCase() as MessageStatus),
+      status: mapMessageStatusToTimelineStatus(
+        (rawStatus || "").toUpperCase() as MessageStatus,
+      ),
       createdAt: event.occurredAt.toISOString(),
       meta: {
         providerMessageSid: event.providerMessageSid,
@@ -120,8 +172,10 @@ function mapCommunicationEventToTimelineEvent(event: {
 
   if (event.channel === "VOICE") {
     const recordingDurationSeconds =
-      event.voicemailArtifact?.recordingDurationSeconds ?? recordNumber(metadata, "recordingDurationSeconds");
-    const durationSeconds = recordNumber(metadata, "durationSeconds") ?? recordingDurationSeconds;
+      event.voicemailArtifact?.recordingDurationSeconds ??
+      recordNumber(metadata, "recordingDurationSeconds");
+    const durationSeconds =
+      recordNumber(metadata, "durationSeconds") ?? recordingDurationSeconds;
     return {
       id: event.id,
       type: "call",
@@ -136,12 +190,18 @@ function mapCommunicationEventToTimelineEvent(event: {
         forwardedTo: recordString(metadata, "forwardedTo"),
         durationSeconds,
         twilioCallSid: event.providerCallSid,
-        recordingSid: event.voicemailArtifact?.recordingSid || recordString(metadata, "recordingSid"),
-        recordingUrl: event.voicemailArtifact?.recordingUrl || recordString(metadata, "recordingUrl"),
+        recordingSid:
+          event.voicemailArtifact?.recordingSid ||
+          recordString(metadata, "recordingSid"),
+        recordingUrl:
+          event.voicemailArtifact?.recordingUrl ||
+          recordString(metadata, "recordingUrl"),
         transcriptionStatus:
-          event.voicemailArtifact?.transcriptionStatus || recordString(metadata, "transcriptionStatus"),
+          event.voicemailArtifact?.transcriptionStatus ||
+          recordString(metadata, "transcriptionStatus"),
         transcriptionText:
-          event.voicemailArtifact?.transcriptionText || recordString(metadata, "transcriptionText"),
+          event.voicemailArtifact?.transcriptionText ||
+          recordString(metadata, "transcriptionText"),
       },
     };
   }
@@ -156,7 +216,11 @@ function mapCommunicationEventToTimelineEvent(event: {
   };
 }
 
-async function assertWorkerCanViewLead(input: { actorId: string; orgId: string; leadId: string }) {
+async function assertWorkerCanViewLead(input: {
+  actorId: string;
+  orgId: string;
+  leadId: string;
+}) {
   const allowed = await prisma.lead.findFirst({
     where: {
       id: input.leadId,
@@ -165,7 +229,13 @@ async function assertWorkerCanViewLead(input: { actorId: string; orgId: string; 
         { assignedToUserId: input.actorId },
         { createdByUserId: input.actorId },
         { events: { some: { assignedToUserId: input.actorId } } },
-        { events: { some: { workerAssignments: { some: { workerUserId: input.actorId } } } } },
+        {
+          events: {
+            some: {
+              workerAssignments: { some: { workerUserId: input.actorId } },
+            },
+          },
+        },
       ],
     },
     select: { id: true },
@@ -209,14 +279,18 @@ export async function GET(req: Request, { params }: RouteContext) {
             type: {
               in: ["JOB", "ESTIMATE"],
             },
-            status: {
-              in: [...ACTIVE_BOOKED_EVENT_STATUSES],
-            },
           },
           select: {
             id: true,
+            jobId: true,
+            type: true,
+            status: true,
+            startAt: true,
+            endAt: true,
+            createdAt: true,
+            updatedAt: true,
           },
-          take: 1,
+          take: 12,
         },
       },
     });
@@ -227,15 +301,28 @@ export async function GET(req: Request, { params }: RouteContext) {
 
     assertOrgReadAccess(actor, lead.orgId);
 
-    if (!actor.internalUser && !canManageAnyOrgJobs(actor) && actor.calendarAccessRole === "WORKER") {
-      await assertWorkerCanViewLead({ actorId: actor.id, orgId: lead.orgId, leadId: lead.id });
+    if (
+      !actor.internalUser &&
+      !canManageAnyOrgJobs(actor) &&
+      actor.calendarAccessRole === "WORKER"
+    ) {
+      await assertWorkerCanViewLead({
+        actorId: actor.id,
+        orgId: lead.orgId,
+        leadId: lead.id,
+      });
     }
 
-    const hasActiveBookedJob = lead.events.length > 0;
-    const effectiveStatus = lead.status === "DNC" ? lead.status : hasActiveBookedJob ? "BOOKED" : lead.status;
+    const bookingProjection = deriveLeadBookingProjection({
+      leadStatus: lead.status,
+      events: lead.events,
+    });
 
     const url = new URL(req.url);
-    const limit = Math.max(20, Math.min(240, Number(url.searchParams.get("limit") || 180)));
+    const limit = Math.max(
+      20,
+      Math.min(240, Number(url.searchParams.get("limit") || 180)),
+    );
 
     const communicationEventsDesc = await prisma.communicationEvent.findMany({
       where: { leadId: lead.id },
@@ -272,56 +359,68 @@ export async function GET(req: Request, { params }: RouteContext) {
       .map((event) => event.callId)
       .filter((value): value is string => Boolean(value));
 
-    const [messagesDesc, callsDesc] = await Promise.all([
-      prisma.message.findMany({
-        where: {
-          leadId: lead.id,
-          ...(communicationMessageIds.length > 0
-            ? {
-                id: {
-                  notIn: communicationMessageIds,
-                },
-              }
-            : {}),
-        },
-        select: {
-          id: true,
-          direction: true,
-          body: true,
-          status: true,
-          type: true,
-          provider: true,
-          providerMessageSid: true,
-          createdAt: true,
-        },
-        orderBy: { createdAt: "desc" },
-        take: limit,
-      }),
-      prisma.call.findMany({
-        where: {
-          leadId: lead.id,
-          ...(communicationCallIds.length > 0
-            ? {
-                id: {
-                  notIn: communicationCallIds,
-                },
-              }
-            : {}),
-        },
-        select: {
-          id: true,
-          direction: true,
-          status: true,
-          fromNumberE164: true,
-          toNumberE164: true,
-          twilioCallSid: true,
-          startedAt: true,
-          endedAt: true,
-        },
-        orderBy: { startedAt: "desc" },
-        take: limit,
-      }),
-    ]);
+    const [messagesDesc, callsDesc, blockedCaller, failedOutboundCount] =
+      await Promise.all([
+        prisma.message.findMany({
+          where: {
+            leadId: lead.id,
+            ...(communicationMessageIds.length > 0
+              ? {
+                  id: {
+                    notIn: communicationMessageIds,
+                  },
+                }
+              : {}),
+          },
+          select: {
+            id: true,
+            direction: true,
+            body: true,
+            status: true,
+            type: true,
+            provider: true,
+            providerMessageSid: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+        }),
+        prisma.call.findMany({
+          where: {
+            leadId: lead.id,
+            ...(communicationCallIds.length > 0
+              ? {
+                  id: {
+                    notIn: communicationCallIds,
+                  },
+                }
+              : {}),
+          },
+          select: {
+            id: true,
+            direction: true,
+            status: true,
+            fromNumberE164: true,
+            toNumberE164: true,
+            twilioCallSid: true,
+            startedAt: true,
+            endedAt: true,
+          },
+          orderBy: { startedAt: "desc" },
+          take: limit,
+        }),
+        findBlockedCallerByPhone({
+          orgId: lead.orgId,
+          phone: lead.phoneE164,
+        }),
+        prisma.message.count({
+          where: {
+            leadId: lead.id,
+            direction: "OUTBOUND",
+            status: "FAILED",
+          },
+        }),
+      ]);
 
     const messageEvents: TimelineEvent[] = messagesDesc
       .slice()
@@ -329,7 +428,8 @@ export async function GET(req: Request, { params }: RouteContext) {
       .map((msg) => ({
         id: msg.id,
         type: "message",
-        channel: msg.provider === ("TWILIO" as MessageProvider) ? "sms" : "system",
+        channel:
+          msg.provider === ("TWILIO" as MessageProvider) ? "sms" : "system",
         direction: mapMessageDirection(msg.direction),
         leadId: lead.id,
         body: sanitizeConversationMessageBody({
@@ -353,8 +453,14 @@ export async function GET(req: Request, { params }: RouteContext) {
         const started = call.startedAt;
         const ended = call.endedAt;
         const durationSeconds =
-          ended && started && !Number.isNaN(ended.getTime()) && !Number.isNaN(started.getTime())
-            ? Math.max(0, Math.round((ended.getTime() - started.getTime()) / 1000))
+          ended &&
+          started &&
+          !Number.isNaN(ended.getTime()) &&
+          !Number.isNaN(started.getTime())
+            ? Math.max(
+                0,
+                Math.round((ended.getTime() - started.getTime()) / 1000),
+              )
             : null;
 
         return {
@@ -379,6 +485,13 @@ export async function GET(req: Request, { params }: RouteContext) {
       .slice()
       .reverse()
       .map((event) => mapCommunicationEventToTimelineEvent(event));
+    const voiceRiskSignal = findLatestVoiceRiskSignal(communicationEventsDesc);
+    const potentialSpamSignals = derivePotentialSpamSignals({
+      isBlockedCaller: Boolean(blockedCaller),
+      latestVoiceRiskDisposition: voiceRiskSignal.disposition,
+      latestVoiceRiskScore: voiceRiskSignal.score,
+      failedOutboundCount,
+    });
 
     const events = sortTimelineEventsStable([
       ...communicationTimelineEvents,
@@ -396,20 +509,32 @@ export async function GET(req: Request, { params }: RouteContext) {
         phoneE164: lead.phoneE164,
         city: normalizeLeadCity(lead.city),
         businessType: sanitizeLeadBusinessTypeLabel(lead.businessType),
-        status: effectiveStatus,
+        status: bookingProjection.derivedLeadStatus,
         priority: lead.priority,
-        nextFollowUpAt: hasActiveBookedJob ? null : lead.nextFollowUpAt ? lead.nextFollowUpAt.toISOString() : null,
+        nextFollowUpAt: bookingProjection.hasActiveBooking
+          ? null
+          : lead.nextFollowUpAt
+            ? lead.nextFollowUpAt.toISOString()
+            : null,
         estimatedRevenueCents: lead.estimatedRevenueCents,
         notes: lead.notes,
         customer: lead.customer,
+        isBlockedCaller: Boolean(blockedCaller),
+        potentialSpam: potentialSpamSignals.length > 0,
+        potentialSpamSignals,
+        failedOutboundCount,
       },
       events,
     });
   } catch (error) {
     if (error instanceof AppApiError) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: error.status },
+      );
     }
-    const message = error instanceof Error ? error.message : "Failed to load thread.";
+    const message =
+      error instanceof Error ? error.message : "Failed to load thread.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
@@ -419,7 +544,9 @@ export async function POST(req: Request, { params }: RouteContext) {
   // Real read-state tracking is handled client-side for now.
   try {
     const actor = await requireAppApiActor();
-    const payload = (await req.json().catch(() => null)) as { orgId?: unknown } | null;
+    const payload = (await req.json().catch(() => null)) as {
+      orgId?: unknown;
+    } | null;
     const orgId = typeof payload?.orgId === "string" ? payload.orgId : null;
     const lead = await prisma.lead.findUnique({
       where: { id: params.leadId },
@@ -436,15 +563,23 @@ export async function POST(req: Request, { params }: RouteContext) {
 
     // Workers must be allowed to mutate the lead/job to mark read (matches message-send permissions).
     if (!actor.internalUser && actor.calendarAccessRole === "WORKER") {
-      await assertCanMutateLeadJob({ actor, orgId: lead.orgId, leadId: lead.id });
+      await assertCanMutateLeadJob({
+        actor,
+        orgId: lead.orgId,
+        leadId: lead.id,
+      });
     }
 
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof AppApiError) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: error.status },
+      );
     }
-    const message = error instanceof Error ? error.message : "Failed to update state.";
+    const message =
+      error instanceof Error ? error.message : "Failed to update state.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

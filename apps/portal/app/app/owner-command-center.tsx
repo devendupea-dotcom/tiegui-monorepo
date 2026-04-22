@@ -1,6 +1,13 @@
 import Link from "next/link";
-import { addDays, startOfDay } from "date-fns";
 import type { LeadSourceChannel } from "@prisma/client";
+import {
+  DEFAULT_CALENDAR_TIMEZONE,
+  addDaysToDateKey,
+  formatDateTimeForDisplay,
+  getUtcRangeForDate,
+  localDateFromUtc,
+  startOfTimeZoneDay,
+} from "@/lib/calendar/dates";
 import type { AnalyticsViewer } from "@/lib/portal-analytics";
 import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
 import { translateStatusLabel } from "@/lib/i18n-labels";
@@ -58,20 +65,20 @@ function formatResponseTime(value: number | null, locale: string, t: DashboardTr
 }
 
 function formatDateLabel(value: Date, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(value);
+  }, { locale });
 }
 
 function formatTimeLabel(value: Date, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
+  return formatDateTimeForDisplay(value, {
     weekday: "short",
     hour: "numeric",
     minute: "2-digit",
-  }).format(value);
+  }, { locale });
 }
 
 function sourceTone(channel: LeadSourceChannel) {
@@ -98,7 +105,10 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
   const t = await getRequestTranslator();
   const locale = getRequestLocale();
   const now = new Date();
-  const nextWeek = addDays(startOfDay(now), 7);
+  const nextWeek = getUtcRangeForDate({
+    date: addDaysToDateKey(localDateFromUtc(now, DEFAULT_CALENDAR_TIMEZONE), 7),
+    timeZone: DEFAULT_CALENDAR_TIMEZONE,
+  }).startUtc;
   const summaryMonthPromise = getPortalSummaryMetrics({ viewer, range: "month" });
   const summaryWeekPromise = getPortalSummaryMetrics({ viewer, range: "7d" });
 
@@ -161,11 +171,11 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
     summaryMonth.systemHealth.calendar === "CONNECTED" &&
     summaryMonth.systemHealth.integrations === "CONFIGURED";
   const missedCallRecoveryCount = summaryWeek.missedCallsRecoveredCount || 0;
-  const todayLabel = new Intl.DateTimeFormat(locale, {
+  const todayLabel = formatDateTimeForDisplay(now, {
     weekday: "long",
     month: "long",
     day: "numeric",
-  }).format(now);
+  }, { locale });
   const leadsWaitingCount = summaryWeek.newLeadsCount;
   const activeJobsCount = summaryMonth.jobsThisWeekCount;
   const queueSummary =

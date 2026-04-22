@@ -72,9 +72,6 @@ function parseEventStatus(value: unknown) {
   const allowed: CalendarEventStatus[] = [
     "SCHEDULED",
     "CONFIRMED",
-    "EN_ROUTE",
-    "ON_SITE",
-    "IN_PROGRESS",
     "COMPLETED",
     "CANCELLED",
     "NO_SHOW",

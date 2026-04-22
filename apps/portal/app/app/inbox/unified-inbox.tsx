@@ -1,11 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "next-intl";
+import {
+  formatDateTimeForDisplay,
+  localDateFromUtc,
+} from "@/lib/calendar/dates";
 import { formatLabel } from "@/lib/hq";
+import { matchesInboxConversationSearch } from "@/lib/inbox-search";
 import { mergeInboxTimelineEvents } from "@/lib/inbox-ui";
-import InboxContextPanel, { type InboxLeadContext } from "./inbox-context-panel";
+import InboxContextPanel, {
+  type InboxLeadContext,
+} from "./inbox-context-panel";
 
 type ConversationRow = {
   id: string;
@@ -27,7 +34,12 @@ type ConversationRow = {
   };
   unreadCount: number;
   atRisk: boolean;
+  potentialSpam: boolean;
+  potentialSpamSignals: string[];
+  failedOutboundCount: number;
 };
+
+type InboxLane = "all" | "attention" | "spam";
 
 type TimelineEvent = {
   id: string;
@@ -81,8 +93,8 @@ type InboxCopy = {
   unreadBody: string;
   needsAttention: string;
   needsAttentionBody: string;
-  callHistory: string;
-  callHistoryBody: string;
+  spamReview: string;
+  spamReviewBody: string;
   loadingInbox: string;
   inboxUnavailable: string;
   retry: string;
@@ -95,8 +107,18 @@ type InboxCopy = {
   conversations: string;
   searchPlaceholder: string;
   searchAria: string;
+  laneAll: string;
+  laneAttention: string;
+  laneSpam: string;
+  noSearchResultsTitle: string;
+  noSearchResultsBody: string;
+  noLaneResultsTitle: string;
+  noLaneResultsBody: string;
+  clearSearch: string;
   overdue: string;
   atRisk: string;
+  potentialSpam: string;
+  failedSms: string;
   noMessagesYet: string;
   back: string;
   thread: string;
@@ -130,7 +152,8 @@ function getInboxCopy(locale: string): InboxCopy {
         sendMessage: "No se pudo enviar el mensaje.",
       },
       title: "Bandeja",
-      subtitle: "Conversaciones, llamadas y seguimiento en una sola bandeja operativa.",
+      subtitle:
+        "Conversaciones, llamadas y seguimiento en una sola bandeja operativa.",
       openJobFolder: "Abrir lead",
       openJob: "Abrir lead",
       activeThreads: "Conversaciones activas",
@@ -139,8 +162,8 @@ function getInboxCopy(locale: string): InboxCopy {
       unreadBody: "Conversaciones con algo nuevo",
       needsAttention: "Requieren atencion",
       needsAttentionBody: "En riesgo o con seguimiento vencido",
-      callHistory: "Historial de llamadas",
-      callHistoryBody: "Conversaciones con actividad de voz",
+      spamReview: "Revisar spam",
+      spamReviewBody: "Riesgo alto o SMS fallidos repetidos",
       loadingInbox: "Cargando bandeja...",
       inboxUnavailable: "La bandeja no esta disponible",
       retry: "Reintentar",
@@ -153,8 +176,18 @@ function getInboxCopy(locale: string): InboxCopy {
       conversations: "Conversaciones",
       searchPlaceholder: "Buscar cliente o telefono",
       searchAria: "Buscar conversaciones",
+      laneAll: "Todas",
+      laneAttention: "Atencion",
+      laneSpam: "Spam",
+      noSearchResultsTitle: "No hay resultados para esta busqueda.",
+      noSearchResultsBody: "Prueba otro nombre o numero de telefono.",
+      noLaneResultsTitle: "No hay conversaciones en esta vista.",
+      noLaneResultsBody: "Prueba otra vista o limpia la busqueda.",
+      clearSearch: "Limpiar busqueda",
       overdue: "Vencido",
       atRisk: "En riesgo",
+      potentialSpam: "Posible spam",
+      failedSms: "SMS fallidos",
       noMessagesYet: "Aun no hay mensajes.",
       back: "Atras",
       thread: "Conversacion",
@@ -170,7 +203,8 @@ function getInboxCopy(locale: string): InboxCopy {
       send: "Enviar",
       messageSent: "Mensaje enviado.",
       messageFailed: "El mensaje fallo.",
-      readOnlyBody: "Los usuarios de solo lectura no pueden editar contexto ni enviar respuestas desde la bandeja.",
+      readOnlyBody:
+        "Los usuarios de solo lectura no pueden editar contexto ni enviar respuestas desde la bandeja.",
       context: "Contexto",
       jobContext: "Contexto del trabajo",
       close: "Cerrar",
@@ -196,8 +230,8 @@ function getInboxCopy(locale: string): InboxCopy {
     unreadBody: "Threads with something new",
     needsAttention: "Needs attention",
     needsAttentionBody: "At-risk or overdue follow-up",
-    callHistory: "Call history",
-    callHistoryBody: "Threads with voice activity",
+    spamReview: "Spam review",
+    spamReviewBody: "High-risk callers or repeated failed SMS",
     loadingInbox: "Loading inbox...",
     inboxUnavailable: "Inbox unavailable",
     retry: "Retry",
@@ -210,8 +244,18 @@ function getInboxCopy(locale: string): InboxCopy {
     conversations: "Conversations",
     searchPlaceholder: "Search customer or phone",
     searchAria: "Search conversations",
+    laneAll: "All",
+    laneAttention: "Attention",
+    laneSpam: "Spam",
+    noSearchResultsTitle: "No conversations match this search.",
+    noSearchResultsBody: "Try a different customer name or phone number.",
+    noLaneResultsTitle: "No conversations match this view.",
+    noLaneResultsBody: "Try another lane or clear the search.",
+    clearSearch: "Clear search",
     overdue: "Overdue",
     atRisk: "At risk",
+    potentialSpam: "Potential spam",
+    failedSms: "Failed SMS",
     noMessagesYet: "No messages yet.",
     back: "Back",
     thread: "Thread",
@@ -227,7 +271,8 @@ function getInboxCopy(locale: string): InboxCopy {
     send: "Send",
     messageSent: "Message sent.",
     messageFailed: "Message failed.",
-    readOnlyBody: "Read-only users cannot edit context or send replies from inbox.",
+    readOnlyBody:
+      "Read-only users cannot edit context or send replies from inbox.",
     context: "Context",
     jobContext: "Job context",
     close: "Close",
@@ -249,7 +294,12 @@ function useIsNarrow(breakpointPx = 980) {
   return isNarrow;
 }
 
-function formatRelativeTimestamp(value: string, locale: string, copy: InboxCopy, now = new Date()): string {
+function formatRelativeTimestamp(
+  value: string,
+  locale: string,
+  copy: InboxCopy,
+  now = new Date(),
+): string {
   const date = new Date(value);
   const diffMs = now.getTime() - date.getTime();
   const minutes = Math.floor(diffMs / (60 * 1000));
@@ -259,42 +309,68 @@ function formatRelativeTimestamp(value: string, locale: string, copy: InboxCopy,
   if (hours < 24) return `${hours}h`;
   const dayDiff = Math.floor(hours / 24);
   if (dayDiff === 1) return copy.yesterday;
-  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(date);
+  return formatDateTimeForDisplay(
+    date,
+    { month: "short", day: "numeric" },
+    { locale },
+  );
 }
 
 function formatMessageTime(value: string, locale: string): string {
-  const date = new Date(value);
-  return new Intl.DateTimeFormat(locale, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+  return formatDateTimeForDisplay(
+    value,
+    {
+      hour: "numeric",
+      minute: "2-digit",
+    },
+    { locale },
+  );
 }
 
-function formatDayLabel(date: Date, locale: string, copy: InboxCopy, now = new Date()): string {
-  const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-  const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+function formatDayLabel(
+  date: Date,
+  locale: string,
+  copy: InboxCopy,
+  now = new Date(),
+): string {
+  const todayKey = localDateFromUtc(now, "America/Los_Angeles");
+  const dateKey = localDateFromUtc(date, "America/Los_Angeles");
   if (dateKey === todayKey) return copy.today;
 
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  const yesterdayKey = `${yesterday.getFullYear()}-${yesterday.getMonth()}-${yesterday.getDate()}`;
+  const yesterdayKey = localDateFromUtc(yesterday, "America/Los_Angeles");
   if (dateKey === yesterdayKey) return copy.yesterday;
 
-  return new Intl.DateTimeFormat(locale, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(date);
+  return formatDateTimeForDisplay(
+    date,
+    {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    },
+    { locale },
+  );
 }
 
 function toDayKey(date: Date): string {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  return localDateFromUtc(date, "America/Los_Angeles");
 }
 
 function isOverdue(value: string | null | undefined): boolean {
   if (!value) return false;
   const date = new Date(value);
   return !Number.isNaN(date.getTime()) && date.getTime() < Date.now();
+}
+
+function matchesInboxLane(row: ConversationRow, lane: InboxLane): boolean {
+  if (lane === "attention") {
+    return row.atRisk || isOverdue(row.nextFollowUpAt);
+  }
+  if (lane === "spam") {
+    return row.potentialSpam || row.failedOutboundCount > 0;
+  }
+  return true;
 }
 
 function sourceBadgeClass(sourceType: string): string {
@@ -309,7 +385,8 @@ function callRowLabel(event: TimelineEvent): string {
   const label = typeof meta.label === "string" ? meta.label : "Call";
   const status = typeof meta.status === "string" ? meta.status : "";
   const direction = event.direction ? formatLabel(event.direction) : "";
-  const durationSeconds = typeof meta.durationSeconds === "number" ? meta.durationSeconds : null;
+  const durationSeconds =
+    typeof meta.durationSeconds === "number" ? meta.durationSeconds : null;
 
   const parts = [label];
   if (status) parts.push(status.toLowerCase());
@@ -345,13 +422,18 @@ export default function UnifiedInbox({
   }
 
   const isNarrow = useIsNarrow();
-  const [view, setView] = useState<"list" | "thread">(initialLeadId ? "thread" : "list");
+  const [view, setView] = useState<"list" | "thread">(
+    initialLeadId ? "thread" : "list",
+  );
   const [search, setSearch] = useState("");
+  const [lane, setLane] = useState<InboxLane>("all");
 
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
-  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialLeadId);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
+    initialLeadId,
+  );
 
   const [loadingThread, setLoadingThread] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
@@ -364,6 +446,7 @@ export default function UnifiedInbox({
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [showContextDrawer, setShowContextDrawer] = useState(false);
 
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const selectedLeadIdRef = useRef<string | null>(null);
   const shouldStickThreadToBottomRef = useRef(true);
@@ -380,15 +463,67 @@ export default function UnifiedInbox({
     setSendStatus(null);
   }, [selectedLeadId]);
 
-  const events = useMemo(() => mergeInboxTimelineEvents(serverEvents, pendingEvents), [serverEvents, pendingEvents]);
+  const events = useMemo(
+    () => mergeInboxTimelineEvents(serverEvents, pendingEvents),
+    [serverEvents, pendingEvents],
+  );
+
+  const searchedConversations = useMemo(() => {
+    return conversations.filter((row) =>
+      matchesInboxConversationSearch(row, search),
+    );
+  }, [conversations, search]);
 
   const filteredConversations = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return conversations;
-    return conversations.filter((row) => {
-      return row.contactName.toLowerCase().includes(term) || row.phoneE164.toLowerCase().includes(term);
-    });
-  }, [conversations, search]);
+    return searchedConversations.filter((row) => matchesInboxLane(row, lane));
+  }, [lane, searchedConversations]);
+
+  useEffect(() => {
+    if (!search.trim() && lane === "all") return;
+
+    const nextLead = filteredConversations[0] || null;
+    const selectionStillVisible = selectedLeadId
+      ? filteredConversations.some((row) => row.leadId === selectedLeadId)
+      : false;
+
+    if (selectionStillVisible) {
+      return;
+    }
+
+    if (!nextLead) {
+      setSelectedLeadId(null);
+      if (isNarrow) {
+        setView("list");
+      }
+      return;
+    }
+
+    shouldStickThreadToBottomRef.current = true;
+    setShowContextDrawer(false);
+    const currentSeenAt = seenConversationAtRef.current[nextLead.leadId];
+    if (
+      !currentSeenAt ||
+      new Date(nextLead.lastEventAt).getTime() >
+        new Date(currentSeenAt).getTime()
+    ) {
+      seenConversationAtRef.current[nextLead.leadId] = nextLead.lastEventAt;
+    }
+    setSelectedLeadId(nextLead.leadId);
+    setConversations((current) =>
+      current.map((row) =>
+        row.leadId === nextLead.leadId
+          ? {
+              ...row,
+              unreadCount: 0,
+              atRisk: false,
+            }
+          : row,
+      ),
+    );
+    if (isNarrow) {
+      setView("thread");
+    }
+  }, [filteredConversations, isNarrow, lane, search, selectedLeadId]);
 
   const renderItems: RenderItem[] = useMemo(() => {
     if (!events.length) return [];
@@ -399,7 +534,11 @@ export default function UnifiedInbox({
       const date = new Date(event.createdAt);
       const key = toDayKey(date);
       if (key !== lastDayKey) {
-        output.push({ kind: "day", id: `day-${key}`, label: formatDayLabel(date, locale, copy, now) });
+        output.push({
+          kind: "day",
+          id: `day-${key}`,
+          label: formatDayLabel(date, locale, copy, now),
+        });
         lastDayKey = key;
       }
       output.push({ kind: "event", id: event.id, event });
@@ -407,15 +546,23 @@ export default function UnifiedInbox({
     return output;
   }, [copy, events, locale]);
 
-  function markConversationSeen(leadId: string, eventAt: string | null | undefined) {
-    if (!eventAt) return;
-    const current = seenConversationAtRef.current[leadId];
-    if (!current || new Date(eventAt).getTime() > new Date(current).getTime()) {
-      seenConversationAtRef.current[leadId] = eventAt;
-    }
-  }
+  const markConversationSeen = useCallback(
+    (leadId: string, eventAt: string | null | undefined) => {
+      if (!eventAt) return;
+      const current = seenConversationAtRef.current[leadId];
+      if (
+        !current ||
+        new Date(eventAt).getTime() > new Date(current).getTime()
+      ) {
+        seenConversationAtRef.current[leadId] = eventAt;
+      }
+    },
+    [],
+  );
 
-  function applyConversationSeenState(rows: ConversationRow[]): ConversationRow[] {
+  function applyConversationSeenState(
+    rows: ConversationRow[],
+  ): ConversationRow[] {
     return rows.map((row) => {
       const seenAt = seenConversationAtRef.current[row.leadId];
       if (!seenAt) return row;
@@ -436,7 +583,11 @@ export default function UnifiedInbox({
       headers: { "content-type": "application/json" },
       cache: "no-store",
     });
-    const payload = (await response.json().catch(() => null)) as { ok?: boolean; conversations?: ConversationRow[]; error?: string } | null;
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      conversations?: ConversationRow[];
+      error?: string;
+    } | null;
     if (!response.ok || !payload?.ok || !Array.isArray(payload.conversations)) {
       throw new Error(payload?.error || copy.errors.loadConversations);
     }
@@ -445,15 +596,26 @@ export default function UnifiedInbox({
 
   async function fetchThread(leadId: string) {
     const query = internalUser ? `?orgId=${encodeURIComponent(orgId)}` : "";
-    const response = await fetch(`/api/inbox/conversations/${encodeURIComponent(leadId)}/events${query}`, {
-      method: "GET",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | { ok?: boolean; lead?: InboxLeadContext; events?: TimelineEvent[]; error?: string }
-      | null;
-    if (!response.ok || !payload?.ok || !payload?.lead || !Array.isArray(payload.events)) {
+    const response = await fetch(
+      `/api/inbox/conversations/${encodeURIComponent(leadId)}/events${query}`,
+      {
+        method: "GET",
+        headers: { "content-type": "application/json" },
+        cache: "no-store",
+      },
+    );
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      lead?: InboxLeadContext;
+      events?: TimelineEvent[];
+      error?: string;
+    } | null;
+    if (
+      !response.ok ||
+      !payload?.ok ||
+      !payload?.lead ||
+      !Array.isArray(payload.events)
+    ) {
       throw new Error(payload?.error || copy.errors.loadThread);
     }
     return { lead: payload.lead, events: payload.events };
@@ -493,7 +655,11 @@ export default function UnifiedInbox({
         }
       } catch (error) {
         if (cancelled) return;
-        setListError(error instanceof Error ? error.message : copy.errors.loadConversations);
+        setListError(
+          error instanceof Error
+            ? error.message
+            : copy.errors.loadConversations,
+        );
         setLoadingList(false);
       }
     }
@@ -530,7 +696,10 @@ export default function UnifiedInbox({
         }
         const data = await fetchThread(leadId);
         if (cancelled) return;
-        markConversationSeen(leadId, data.events[data.events.length - 1]?.createdAt || null);
+        markConversationSeen(
+          leadId,
+          data.events[data.events.length - 1]?.createdAt || null,
+        );
         setLeadContext(data.lead);
         setServerEvents(data.events);
         setConversations((current) =>
@@ -546,6 +715,9 @@ export default function UnifiedInbox({
                   status: data.lead.status,
                   priority: data.lead.priority,
                   nextFollowUpAt: data.lead.nextFollowUpAt,
+                  potentialSpam: Boolean(data.lead.potentialSpam),
+                  potentialSpamSignals: data.lead.potentialSpamSignals || [],
+                  failedOutboundCount: data.lead.failedOutboundCount || 0,
                   unreadCount: 0,
                   atRisk: false,
                 }
@@ -554,7 +726,9 @@ export default function UnifiedInbox({
         );
       } catch (error) {
         if (cancelled) return;
-        setThreadError(error instanceof Error ? error.message : copy.errors.loadThread);
+        setThreadError(
+          error instanceof Error ? error.message : copy.errors.loadThread,
+        );
       } finally {
         if (!cancelled) {
           if (showSpinner) {
@@ -671,23 +845,23 @@ export default function UnifiedInbox({
         body: JSON.stringify({ leadId: selectedLeadId, body }),
       });
 
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            error?: string;
-            notice?: string;
-            message?: {
-              id: string;
-              direction: "INBOUND" | "OUTBOUND";
-              body: string;
-              status: "QUEUED" | "SENT" | "DELIVERED" | "FAILED" | null;
-              createdAt: string | Date;
-            };
-          }
-        | null;
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        notice?: string;
+        message?: {
+          id: string;
+          direction: "INBOUND" | "OUTBOUND";
+          body: string;
+          status: "QUEUED" | "SENT" | "DELIVERED" | "FAILED" | null;
+          createdAt: string | Date;
+        };
+      } | null;
 
       if (!response.ok || !payload?.ok || !payload.message) {
-        setPendingEvents((current) => current.filter((event) => event.id !== optimisticId));
+        setPendingEvents((current) =>
+          current.filter((event) => event.id !== optimisticId),
+        );
         setSendStatus(payload?.error || copy.errors.sendMessage);
         return;
       }
@@ -696,14 +870,21 @@ export default function UnifiedInbox({
         id: payload.message.id,
         type: "message",
         channel: "sms",
-        direction: payload.message.direction === "INBOUND" ? "inbound" : "outbound",
+        direction:
+          payload.message.direction === "INBOUND" ? "inbound" : "outbound",
         body: payload.message.body,
-        status: payload.message.status ? payload.message.status.toLowerCase() as TimelineEvent["status"] : undefined,
+        status: payload.message.status
+          ? (payload.message.status.toLowerCase() as TimelineEvent["status"])
+          : undefined,
         createdAt: new Date(payload.message.createdAt).toISOString(),
       };
 
-      setPendingEvents((current) => current.filter((event) => event.id !== optimisticId));
-      setServerEvents((current) => mergeInboxTimelineEvents(current, [confirmedEvent]));
+      setPendingEvents((current) =>
+        current.filter((event) => event.id !== optimisticId),
+      );
+      setServerEvents((current) =>
+        mergeInboxTimelineEvents(current, [confirmedEvent]),
+      );
       markConversationSeen(selectedLeadId, confirmedEvent.createdAt);
       setConversations((current) =>
         current.map((row) =>
@@ -723,36 +904,48 @@ export default function UnifiedInbox({
             : row,
         ),
       );
-      setSendStatus(payload.notice || (payload.message.status === "FAILED" ? copy.messageFailed : copy.messageSent));
+      setSendStatus(
+        payload.notice ||
+          (payload.message.status === "FAILED"
+            ? copy.messageFailed
+            : copy.messageSent),
+      );
     } catch {
-      setPendingEvents((current) => current.filter((event) => event.id !== optimisticId));
+      setPendingEvents((current) =>
+        current.filter((event) => event.id !== optimisticId),
+      );
       setSendStatus(copy.errors.sendMessage);
     } finally {
       setSending(false);
     }
   }
 
-  function handleSelectLead(nextLeadId: string) {
-    shouldStickThreadToBottomRef.current = true;
-    setShowContextDrawer(false);
-    const existingRow = conversations.find((row) => row.leadId === nextLeadId);
-    markConversationSeen(nextLeadId, existingRow?.lastEventAt || null);
-    setSelectedLeadId(nextLeadId);
-    setConversations((current) =>
-      current.map((row) =>
-        row.leadId === nextLeadId
-          ? {
-              ...row,
-              unreadCount: 0,
-              atRisk: false,
-            }
-          : row,
-      ),
-    );
-    if (isNarrow) {
-      setView("thread");
-    }
-  }
+  const handleSelectLead = useCallback(
+    (nextLeadId: string) => {
+      shouldStickThreadToBottomRef.current = true;
+      setShowContextDrawer(false);
+      const existingRow = conversations.find(
+        (row) => row.leadId === nextLeadId,
+      );
+      markConversationSeen(nextLeadId, existingRow?.lastEventAt || null);
+      setSelectedLeadId(nextLeadId);
+      setConversations((current) =>
+        current.map((row) =>
+          row.leadId === nextLeadId
+            ? {
+                ...row,
+                unreadCount: 0,
+                atRisk: false,
+              }
+            : row,
+        ),
+      );
+      if (isNarrow) {
+        setView("thread");
+      }
+    },
+    [conversations, isNarrow, markConversationSeen],
+  );
 
   function handleLeadContextSaved(nextLead: InboxLeadContext) {
     setLeadContext(nextLead);
@@ -769,16 +962,28 @@ export default function UnifiedInbox({
               status: nextLead.status,
               priority: nextLead.priority,
               nextFollowUpAt: nextLead.nextFollowUpAt,
+              potentialSpam: Boolean(nextLead.potentialSpam),
+              potentialSpamSignals: nextLead.potentialSpamSignals || [],
+              failedOutboundCount: nextLead.failedOutboundCount || 0,
             }
           : row,
       ),
     );
   }
 
-  const emptyState = !loadingList && filteredConversations.length === 0;
-  const unreadThreadsCount = filteredConversations.filter((row) => row.unreadCount > 0).length;
-  const attentionThreadsCount = filteredConversations.filter((row) => row.atRisk || isOverdue(row.nextFollowUpAt)).length;
-  const callThreadsCount = filteredConversations.filter((row) => row.channels.call).length;
+  const hasConversations = conversations.length > 0;
+  const emptyState = !loadingList && hasConversations === false;
+  const noSearchResults =
+    !loadingList && hasConversations && filteredConversations.length === 0;
+  const unreadThreadsCount = searchedConversations.filter(
+    (row) => row.unreadCount > 0,
+  ).length;
+  const attentionThreadsCount = searchedConversations.filter((row) =>
+    matchesInboxLane(row, "attention"),
+  ).length;
+  const spamThreadsCount = searchedConversations.filter((row) =>
+    matchesInboxLane(row, "spam"),
+  ).length;
 
   const leadTitle =
     leadContext?.contactName?.trim() ||
@@ -791,7 +996,9 @@ export default function UnifiedInbox({
     ? withOrgQuery(`/app/jobs/${selectedLeadId}?tab=messages`)
     : withOrgQuery("/app/jobs");
   const calendarHref = selectedLeadId
-    ? withOrgQuery(`/app/calendar?quickAction=schedule&leadId=${encodeURIComponent(selectedLeadId)}`)
+    ? withOrgQuery(
+        `/app/calendar?quickAction=schedule&leadId=${encodeURIComponent(selectedLeadId)}`,
+      )
     : withOrgQuery("/app/calendar?quickAction=schedule");
 
   return (
@@ -826,9 +1033,9 @@ export default function UnifiedInbox({
             <small>{copy.needsAttentionBody}</small>
           </article>
           <article className="inbox-summary-stat">
-            <span>{copy.callHistory}</span>
-            <strong>{callThreadsCount}</strong>
-            <small>{copy.callHistoryBody}</small>
+            <span>{copy.spamReview}</span>
+            <strong>{spamThreadsCount}</strong>
+            <small>{copy.spamReviewBody}</small>
           </article>
         </div>
       ) : null}
@@ -841,7 +1048,11 @@ export default function UnifiedInbox({
         <div className="portal-empty-state" style={{ marginTop: 12 }}>
           <strong>{copy.inboxUnavailable}</strong>
           <p className="muted">{listError}</p>
-          <button className="btn secondary" type="button" onClick={() => window.location.reload()}>
+          <button
+            className="btn secondary"
+            type="button"
+            onClick={() => window.location.reload()}
+          >
             {copy.retry}
           </button>
         </div>
@@ -854,11 +1065,17 @@ export default function UnifiedInbox({
             <li>{copy.emptyBulletThree}</li>
           </ul>
           <div className="portal-empty-actions">
-            <Link className="btn primary" href={withOrgQuery("/app?quickAdd=1")}>
+            <Link
+              className="btn primary"
+              href={withOrgQuery("/app?quickAdd=1")}
+            >
               {copy.addLead}
             </Link>
             {!onboardingComplete ? (
-              <Link className="btn secondary" href={withOrgQuery("/app/onboarding?step=1")}>
+              <Link
+                className="btn secondary"
+                href={withOrgQuery("/app/onboarding?step=1")}
+              >
                 {copy.finishOnboarding}
               </Link>
             ) : null}
@@ -869,11 +1086,49 @@ export default function UnifiedInbox({
           {(!isNarrow || view === "list") && (
             <section className="unified-inbox-panel unified-inbox-list">
               <header className="unified-inbox-panel-header">
-                <div className="unified-inbox-panel-title">
-                  <strong>{copy.conversations}</strong>
-                  <span className="muted">{filteredConversations.length}</span>
+                <div className="stack-cell" style={{ gap: 8 }}>
+                  <div className="unified-inbox-panel-title">
+                    <strong>{copy.conversations}</strong>
+                    <span className="muted">
+                      {filteredConversations.length}
+                    </span>
+                  </div>
+                  <div
+                    className="portal-empty-actions"
+                    style={{ justifyContent: "flex-start", gap: 8 }}
+                  >
+                    <button
+                      className={`btn ${lane === "all" ? "primary" : "secondary"}`}
+                      type="button"
+                      onClick={() => setLane("all")}
+                    >
+                      {copy.laneAll}
+                    </button>
+                    <button
+                      className={`btn ${lane === "attention" ? "primary" : "secondary"}`}
+                      type="button"
+                      onClick={() => setLane("attention")}
+                    >
+                      {copy.laneAttention}
+                    </button>
+                    <button
+                      className={`btn ${lane === "spam" ? "primary" : "secondary"}`}
+                      type="button"
+                      onClick={() => setLane("spam")}
+                    >
+                      {copy.laneSpam}
+                    </button>
+                  </div>
                 </div>
                 <input
+                  ref={searchInputRef}
+                  type="search"
+                  inputMode="search"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="search"
                   className="unified-inbox-search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
@@ -883,52 +1138,128 @@ export default function UnifiedInbox({
               </header>
 
               <div className="unified-inbox-panel-scroll">
-                <ul className="thread-list inbox-thread-list">
-                  {filteredConversations.map((row) => {
-                    const active = row.leadId === selectedLeadId;
-                    const overdueFollowUp = isOverdue(row.nextFollowUpAt);
-                    const sourceClass = sourceBadgeClass(row.sourceType);
-
-                    return (
-                      <li
-                        key={row.leadId}
-                        className={`thread-item inbox-thread-item ${active ? "active" : ""} ${row.unreadCount ? "unread" : ""}`}
+                {noSearchResults ? (
+                  <div className="portal-empty-state" style={{ marginTop: 0 }}>
+                    <strong>
+                      {search.trim()
+                        ? copy.noSearchResultsTitle
+                        : copy.noLaneResultsTitle}
+                    </strong>
+                    <p className="muted">
+                      {search.trim()
+                        ? copy.noSearchResultsBody
+                        : copy.noLaneResultsBody}
+                    </p>
+                    <div className="portal-empty-actions">
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={() => {
+                          setSearch("");
+                          setLane("all");
+                          searchInputRef.current?.focus();
+                        }}
                       >
-                        <button
-                          type="button"
-                          className="thread-link inbox-thread-button"
-                          onClick={() => handleSelectLead(row.leadId)}
+                        {copy.clearSearch}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <ul className="thread-list inbox-thread-list">
+                    {filteredConversations.map((row) => {
+                      const active = row.leadId === selectedLeadId;
+                      const overdueFollowUp = isOverdue(row.nextFollowUpAt);
+                      const sourceClass = sourceBadgeClass(row.sourceType);
+
+                      return (
+                        <li
+                          key={row.leadId}
+                          className={`thread-item inbox-thread-item ${active ? "active" : ""} ${row.unreadCount ? "unread" : ""}`}
                         >
-                          <div className="thread-top">
-                            <div className="inbox-thread-title">
-                              <strong>{row.contactName}</strong>
-                              {row.unreadCount ? <span className="inbox-unread-badge">{row.unreadCount}</span> : null}
+                          <button
+                            type="button"
+                            className="thread-link inbox-thread-button"
+                            onClick={() => handleSelectLead(row.leadId)}
+                          >
+                            <div className="thread-top">
+                              <div className="inbox-thread-title">
+                                <strong>{row.contactName}</strong>
+                                {row.unreadCount ? (
+                                  <span className="inbox-unread-badge">
+                                    {row.unreadCount}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <span className="muted">
+                                {formatRelativeTimestamp(
+                                  row.lastEventAt,
+                                  locale,
+                                  copy,
+                                )}
+                              </span>
                             </div>
-                            <span className="muted">{formatRelativeTimestamp(row.lastEventAt, locale, copy)}</span>
-                          </div>
 
-                          <div className="inbox-thread-badges">
-                            <span className={`badge status-${row.status.toLowerCase()}`}>{formatLabel(row.status)}</span>
-                            <span className={`badge priority-${row.priority.toLowerCase()}`}>{formatLabel(row.priority)}</span>
-                            <span className={`badge ${sourceClass}`}>{formatLabel(row.sourceType)}</span>
-                            {overdueFollowUp ? <span className="badge status-overdue">{copy.overdue}</span> : null}
-                            {row.atRisk ? <span className="badge status-overdue">{copy.atRisk}</span> : null}
-                          </div>
+                            <div className="inbox-thread-badges">
+                              <span
+                                className={`badge status-${row.status.toLowerCase()}`}
+                              >
+                                {formatLabel(row.status)}
+                              </span>
+                              <span
+                                className={`badge priority-${row.priority.toLowerCase()}`}
+                              >
+                                {formatLabel(row.priority)}
+                              </span>
+                              <span className={`badge ${sourceClass}`}>
+                                {formatLabel(row.sourceType)}
+                              </span>
+                              {overdueFollowUp ? (
+                                <span className="badge status-overdue">
+                                  {copy.overdue}
+                                </span>
+                              ) : null}
+                              {row.atRisk ? (
+                                <span className="badge status-overdue">
+                                  {copy.atRisk}
+                                </span>
+                              ) : null}
+                              {row.potentialSpam ? (
+                                <span className="badge status-overdue">
+                                  {copy.potentialSpam}
+                                </span>
+                              ) : null}
+                              {row.failedOutboundCount > 0 ? (
+                                <span className="badge status-overdue">
+                                  {copy.failedSms}: {row.failedOutboundCount}
+                                </span>
+                              ) : null}
+                            </div>
 
-                          <p className={`inbox-thread-snippet ${row.unreadCount ? "" : "muted"}`}>
-                            {row.lastSnippet || copy.noMessagesYet}
-                          </p>
+                            <p
+                              className={`inbox-thread-snippet ${row.unreadCount ? "" : "muted"}`}
+                            >
+                              {row.lastSnippet || copy.noMessagesYet}
+                            </p>
 
-                          <div className="inbox-thread-channels">
-                            {row.channels.sms ? <span className="inbox-channel-chip">SMS</span> : null}
-                            {row.channels.call ? <span className="inbox-channel-chip">{copy.call}</span> : null}
-                            {row.channels.meta ? <span className="inbox-channel-chip">Meta</span> : null}
-                          </div>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                            <div className="inbox-thread-channels">
+                              {row.channels.sms ? (
+                                <span className="inbox-channel-chip">SMS</span>
+                              ) : null}
+                              {row.channels.call ? (
+                                <span className="inbox-channel-chip">
+                                  {copy.call}
+                                </span>
+                              ) : null}
+                              {row.channels.meta ? (
+                                <span className="inbox-channel-chip">Meta</span>
+                              ) : null}
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             </section>
           )}
@@ -937,7 +1268,11 @@ export default function UnifiedInbox({
             <section className="unified-inbox-panel unified-inbox-thread">
               <header className="unified-inbox-panel-header thread-header">
                 {isNarrow ? (
-                  <button className="btn secondary inbox-back" type="button" onClick={() => setView("list")}>
+                  <button
+                    className="btn secondary inbox-back"
+                    type="button"
+                    onClick={() => setView("list")}
+                  >
                     {copy.back}
                   </button>
                 ) : null}
@@ -949,7 +1284,11 @@ export default function UnifiedInbox({
 
                 <div className="thread-header-actions">
                   {leadContext?.phoneE164 ? (
-                    <a className="btn secondary" href={`tel:${leadContext.phoneE164}`} aria-label={copy.call}>
+                    <a
+                      className="btn secondary"
+                      href={`tel:${leadContext.phoneE164}`}
+                      aria-label={copy.call}
+                    >
                       {copy.call}
                     </a>
                   ) : null}
@@ -979,7 +1318,9 @@ export default function UnifiedInbox({
                   <p className="muted">{copy.noMessagesYet}</p>
                 ) : (
                   <>
-                    {threadError ? <p className="form-status">{threadError}</p> : null}
+                    {threadError ? (
+                      <p className="form-status">{threadError}</p>
+                    ) : null}
                     {renderItems.map((item) => {
                       if (item.kind === "day") {
                         return (
@@ -993,7 +1334,9 @@ export default function UnifiedInbox({
                       if (event.type === "call") {
                         return (
                           <div key={item.id} className="inbox-call-row">
-                            <span className="inbox-call-pill">{callRowLabel(event)}</span>
+                            <span className="inbox-call-pill">
+                              {callRowLabel(event)}
+                            </span>
                           </div>
                         );
                       }
@@ -1001,18 +1344,31 @@ export default function UnifiedInbox({
                       if (event.type === "system") {
                         return (
                           <div key={item.id} className="inbox-call-row">
-                            <span className="inbox-call-pill">{event.body || copy.update}</span>
+                            <span className="inbox-call-pill">
+                              {event.body || copy.update}
+                            </span>
                           </div>
                         );
                       }
 
                       const inbound = event.direction !== "outbound";
-                      const timeLabel = formatMessageTime(event.createdAt, locale);
-                      const statusLabel = !inbound && event.status ? ` • ${event.status.toUpperCase()}` : "";
+                      const timeLabel = formatMessageTime(
+                        event.createdAt,
+                        locale,
+                      );
+                      const statusLabel =
+                        !inbound && event.status
+                          ? ` • ${event.status.toUpperCase()}`
+                          : "";
 
                       return (
-                        <div key={item.id} className={`message-row ${inbound ? "inbound" : "outbound"}`}>
-                          <div className={`message-bubble ${inbound ? "inbound" : "outbound"}`}>
+                        <div
+                          key={item.id}
+                          className={`message-row ${inbound ? "inbound" : "outbound"}`}
+                        >
+                          <div
+                            className={`message-bubble ${inbound ? "inbound" : "outbound"}`}
+                          >
                             <p>{event.body}</p>
                             <p className="message-meta">
                               {timeLabel}
@@ -1060,7 +1416,11 @@ export default function UnifiedInbox({
                     type="button"
                     className="template-chip"
                     onClick={() =>
-                      setDraft(locale.startsWith("es") ? "Entendido; te contactamos en breve." : "Got it — we’ll reach out shortly.")
+                      setDraft(
+                        locale.startsWith("es")
+                          ? "Entendido; te contactamos en breve."
+                          : "Got it — we’ll reach out shortly.",
+                      )
                     }
                     disabled={sending || !canManage}
                   >
@@ -1090,14 +1450,20 @@ export default function UnifiedInbox({
                     className="btn primary"
                     type="button"
                     onClick={() => void handleSend()}
-                    disabled={!draft.trim() || sending || !selectedLeadId || !canManage}
+                    disabled={
+                      !draft.trim() || sending || !selectedLeadId || !canManage
+                    }
                   >
                     {copy.send}
                   </button>
                 </div>
 
-                {!canManage ? <p className="muted">{copy.readOnlyBody}</p> : null}
-                {sendStatus ? <p className="form-status">{sendStatus}</p> : null}
+                {!canManage ? (
+                  <p className="muted">{copy.readOnlyBody}</p>
+                ) : null}
+                {sendStatus ? (
+                  <p className="form-status">{sendStatus}</p>
+                ) : null}
               </div>
             </section>
           )}
@@ -1106,7 +1472,11 @@ export default function UnifiedInbox({
             <section className="unified-inbox-panel unified-inbox-context">
               <header className="unified-inbox-panel-header">
                 <strong>{copy.context}</strong>
-                {leadContext ? <span className="muted">{formatLabel(leadContext.status)}</span> : null}
+                {leadContext ? (
+                  <span className="muted">
+                    {formatLabel(leadContext.status)}
+                  </span>
+                ) : null}
               </header>
 
               <div className="unified-inbox-panel-scroll context-scroll">
@@ -1115,7 +1485,11 @@ export default function UnifiedInbox({
                   canManage={canManage}
                   jobHref={jobHref}
                   calendarHref={calendarHref}
-                  initialEditing={Boolean(initialOpenContextEditor && initialLeadId && selectedLeadId === initialLeadId)}
+                  initialEditing={Boolean(
+                    initialOpenContextEditor &&
+                    initialLeadId &&
+                    selectedLeadId === initialLeadId,
+                  )}
                   onSaved={handleLeadContextSaved}
                 />
               </div>
@@ -1135,7 +1509,11 @@ export default function UnifiedInbox({
           <div className="inbox-context-drawer-card">
             <div className="inbox-context-drawer-head">
               <strong>{copy.jobContext}</strong>
-              <button className="btn secondary" type="button" onClick={closeContextDrawer}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={closeContextDrawer}
+              >
                 {copy.close}
               </button>
             </div>
@@ -1146,7 +1524,11 @@ export default function UnifiedInbox({
                 canManage={canManage}
                 jobHref={jobHref}
                 calendarHref={calendarHref}
-                initialEditing={Boolean(initialOpenContextEditor && initialLeadId && selectedLeadId === initialLeadId)}
+                initialEditing={Boolean(
+                  initialOpenContextEditor &&
+                  initialLeadId &&
+                  selectedLeadId === initialLeadId,
+                )}
                 onSaved={handleLeadContextSaved}
               />
             </div>

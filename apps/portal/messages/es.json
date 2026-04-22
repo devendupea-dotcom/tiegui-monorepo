@@ -368,7 +368,41 @@
     "window": "Ventana",
     "daysCount": "{count} días",
     "addEvent": "Agregar evento",
-    "addLeadAndSchedule": "Agregar lead + agendar"
+    "addLeadAndSchedule": "Agregar lead + agendar",
+    "loadEventsError": "No se pudieron cargar los eventos del calendario.",
+    "saveRetryError": "No se pudo guardar. Intenta de nuevo.",
+    "saveEventError": "No se pudo guardar el evento.",
+    "deleteEventError": "No se pudo eliminar el evento.",
+    "resolveConflictError": "No se pudo resolver el conflicto.",
+    "findOpenTimeError": "No se encontró un horario libre.",
+    "pendingChanges": "Pendiente",
+    "moreCount": "+{count} más",
+    "todayPill": "Hoy",
+    "addJob": "+ Agregar trabajo",
+    "close": "Cerrar",
+    "noEventsForDay": "No hay eventos para este día.",
+    "addFromEmptySlot": "Agregar desde espacio libre",
+    "emptySlotDetails": "{date} a las {time} por {minutes} minutos.",
+    "createEvent": "Crear evento",
+    "editEvent": "Editar evento",
+    "cancel": "Cancelar",
+    "linkedLeadNotice": "Esta reserva está vinculada al lead seleccionado.",
+    "customerTitle": "Cliente / título",
+    "customerName": "Nombre del cliente",
+    "address": "Dirección",
+    "type": "Tipo",
+    "eventStatus": "Estado",
+    "start": "Inicio",
+    "end": "Fin",
+    "assignedWorkers": "Trabajadores asignados",
+    "notes": "Notas",
+    "busyEvent": "Evento ocupado (bloquea disponibilidad)",
+    "deleteEvent": "Eliminar",
+    "saveEvent": "Guardar evento",
+    "savingEvent": "Guardando...",
+    "resolveConflict": "Resolver conflicto",
+    "conflictBody": "El horario seleccionado entra en conflicto con otra asignación. Elige un horario sugerido:",
+    "resizeEvent": "Redimensionar {value}"
   },
   "jobs": {
     "title": "CRM",
@@ -402,6 +436,7 @@
       "folderData": "Datos CRM",
       "city": "Ciudad",
       "type": "Tipo",
+      "nextStep": "Próximo paso",
       "followUp": "Seguimiento",
       "updated": "Actualizado"
     }
@@ -412,6 +447,7 @@
     "emptyTitle": "Aún no hay facturas.",
     "onboardingBody": "Termina el onboarding y luego abre una carpeta de trabajo para crear tu primera factura.",
     "statusLabel": "Estado de factura",
+    "all": "Todas",
     "openOnlyLabel": "Solo abiertas",
     "yes": "Sí",
     "no": "No",
@@ -440,6 +476,101 @@
       "due": "Vence",
       "updated": "Actualizado"
     }
+  },
+  "portalActionFeedback": {
+    "titleError": "Acción bloqueada",
+    "titleSuccess": "Guardado",
+    "dismiss": "Cerrar mensaje",
+    "success": {
+      "saved": "Cambios guardados.",
+      "validated": "Validación aprobada.",
+      "tested": "Prueba completada con éxito.",
+      "created": "Creado con éxito.",
+      "updated": "Actualizado con éxito.",
+      "deleted": "Eliminado con éxito.",
+      "sent": "Enviado con éxito.",
+      "approved": "Aprobado con éxito.",
+      "declined": "Rechazado con éxito.",
+      "converted": "Convertido con éxito."
+    }
+  },
+  "invoiceTemplateSettings": {
+    "page": {
+      "back": "← Volver a configuración",
+      "title": "Plantillas de factura",
+      "description": "Elige el estilo de factura que tu negocio usará por defecto para vistas previas, impresión y exportaciones PDF."
+    },
+    "selector": {
+      "title": "Estilo de factura",
+      "description": "Elige la plantilla predeterminada que tu equipo usa al abrir vistas previas de facturas e imprimir PDFs.",
+      "readOnly": "Los usuarios de solo lectura pueden ver el estilo actual de la factura, pero solo los propietarios y administradores pueden cambiarlo."
+    },
+    "preview": {
+      "title": "Vista previa en vivo",
+      "description": "Esta muestra usa tu marca guardada y el diseño seleccionado actualmente."
+    },
+    "actions": {
+      "save": "Guardar preferencia",
+      "saving": "Guardando...",
+      "dismiss": "Cerrar"
+    },
+    "selected": "Seleccionada",
+    "messages": {
+      "saveError": "No se pudo guardar la preferencia de la plantilla de factura."
+    },
+    "toast": {
+      "savedTitle": "Guardado",
+      "savedMessage": "Se actualizó la preferencia de la plantilla de factura.",
+      "saveFailedTitle": "No se pudo guardar"
+    },
+    "templates": {
+      "classic": {
+        "name": "Clásica",
+        "description": "Diseño limpio en negro, blanco y gris para facturas de contratistas generales."
+      },
+      "bold": {
+        "name": "Audaz",
+        "description": "Encabezado oscuro, color de acento y una presentación con total destacado para oficios."
+      },
+      "minimal": {
+        "name": "Minimalista",
+        "description": "Diseño ultra limpio y compacto con acentos grises suaves para cuadrillas pequeñas y operadores."
+      }
+    },
+    "previewInvoice": {
+      "jobTitle": "Limpieza de primavera y ajuste de riego",
+      "termsLabel": "Pago al recibir",
+      "customerName": "Megan Carter",
+      "lineItemOne": "Limpieza de primavera y retiro de residuos",
+      "lineItemTwo": "Inspección de riego, reparaciones y ajuste del controlador",
+      "taxLabel": "Impuesto (8.25%)",
+      "notes": "Gracias por la oportunidad. El trabajo incluye limpieza, retiro y ajustes de riego completados en el lugar.",
+      "paymentTerms": "Pago al recibir. Se aceptan ACH, cheque y tarjeta."
+    }
+  },
+  "invoicePreview": {
+    "title": "Factura",
+    "projectTitle": "Factura del proyecto",
+    "jobFor": "Trabajo para {name}",
+    "job": "Trabajo",
+    "totalDue": "Total pendiente",
+    "paidWatermark": "PAGADA",
+    "invoiceNumber": "Factura #",
+    "issueDate": "Fecha de emisión",
+    "dueDate": "Fecha de vencimiento",
+    "terms": "Términos",
+    "billTo": "Cobrar a",
+    "invoiceDetails": "Detalles de la factura",
+    "numberShort": "Núm.",
+    "issuedShort": "Emitida.",
+    "dueShort": "Vence.",
+    "termsShort": "Térm.",
+    "description": "Descripción",
+    "quantity": "Cant.",
+    "unitPrice": "Precio unitario",
+    "subtotal": "Subtotal",
+    "notes": "Notas",
+    "paymentTerms": "Términos de pago"
   },
   "status": {
     "new": "Nuevo",
@@ -471,6 +602,11 @@
     "overdue": "Vencido",
     "draft": "Borrador",
     "sent": "Enviado",
+    "viewed": "Visto",
+    "approved": "Aprobado",
+    "declined": "Rechazado",
+    "expired": "Vencido",
+    "converted": "Convertido",
     "paid": "Pagado",
     "partial": "Pago parcial",
     "answered": "Contestada",

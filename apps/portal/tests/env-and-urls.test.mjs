@@ -126,3 +126,16 @@ test("getConfiguredBaseUrl falls back to Vercel host when NEXTAUTH_URL is absent
     },
   );
 });
+
+test("getConfiguredBaseUrl ignores localhost NEXTAUTH_URL when a deployment host is available", () => {
+  withEnv(
+    {
+      NEXTAUTH_URL: "http://localhost:3000",
+      VERCEL_PROJECT_PRODUCTION_URL: "app.tieguisolutions.com",
+      VERCEL_URL: "preview-branch.example.vercel.app",
+    },
+    () => {
+      assert.equal(getConfiguredBaseUrl(), "https://app.tieguisolutions.com");
+    },
+  );
+});

@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { AppApiError } from "@/lib/app-api-permissions";
+import { buildValidOperationalJobWhere } from "@/lib/booking-read-model";
 import {
   BUSINESS_EXPENSE_CATEGORY_MAX,
   BUSINESS_EXPENSE_DESCRIPTION_MAX,
@@ -58,7 +59,11 @@ type NormalizedExpensePayload = {
   notes: string | null;
 };
 
-function normalizeOptionalText(value: unknown, label: string, maxLength: number): string | null {
+function normalizeOptionalText(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string | null {
   if (value == null || value === "") return null;
   if (typeof value !== "string") {
     throw new AppApiError(`${label} must be text.`, 400);
@@ -67,13 +72,20 @@ function normalizeOptionalText(value: unknown, label: string, maxLength: number)
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (trimmed.length > maxLength) {
-    throw new AppApiError(`${label} must be ${maxLength} characters or less.`, 400);
+    throw new AppApiError(
+      `${label} must be ${maxLength} characters or less.`,
+      400,
+    );
   }
 
   return trimmed;
 }
 
-function normalizeRequiredText(value: unknown, label: string, maxLength: number): string {
+function normalizeRequiredText(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string {
   if (typeof value !== "string") {
     throw new AppApiError(`${label} is required.`, 400);
   }
@@ -83,7 +95,10 @@ function normalizeRequiredText(value: unknown, label: string, maxLength: number)
     throw new AppApiError(`${label} is required.`, 400);
   }
   if (trimmed.length > maxLength) {
-    throw new AppApiError(`${label} must be ${maxLength} characters or less.`, 400);
+    throw new AppApiError(
+      `${label} must be ${maxLength} characters or less.`,
+      400,
+    );
   }
 
   return trimmed;
@@ -108,7 +123,10 @@ function normalizeDate(value: unknown, label: string): Date {
   return parsed;
 }
 
-function normalizeNonNegativeDecimal(value: unknown, label: string): Prisma.Decimal {
+function normalizeNonNegativeDecimal(
+  value: unknown,
+  label: string,
+): Prisma.Decimal {
   const normalized =
     typeof value === "string"
       ? value.trim()
@@ -126,20 +144,41 @@ function normalizeNonNegativeDecimal(value: unknown, label: string): Prisma.Deci
   return decimal;
 }
 
-function normalizeExpensePayload(payload: BusinessExpensePayload | null | undefined): NormalizedExpensePayload {
+function normalizeExpensePayload(
+  payload: BusinessExpensePayload | null | undefined,
+): NormalizedExpensePayload {
   return {
     jobId: normalizeOptionalId(payload?.jobId),
     purchaseOrderId: normalizeOptionalId(payload?.purchaseOrderId),
     expenseDate: normalizeDate(payload?.expenseDate, "Expense date"),
-    vendorName: normalizeOptionalText(payload?.vendorName, "Vendor name", BUSINESS_EXPENSE_VENDOR_MAX),
-    category: normalizeRequiredText(payload?.category, "Category", BUSINESS_EXPENSE_CATEGORY_MAX),
-    description: normalizeRequiredText(payload?.description, "Description", BUSINESS_EXPENSE_DESCRIPTION_MAX),
+    vendorName: normalizeOptionalText(
+      payload?.vendorName,
+      "Vendor name",
+      BUSINESS_EXPENSE_VENDOR_MAX,
+    ),
+    category: normalizeRequiredText(
+      payload?.category,
+      "Category",
+      BUSINESS_EXPENSE_CATEGORY_MAX,
+    ),
+    description: normalizeRequiredText(
+      payload?.description,
+      "Description",
+      BUSINESS_EXPENSE_DESCRIPTION_MAX,
+    ),
     amount: normalizeNonNegativeDecimal(payload?.amount, "Amount"),
-    notes: normalizeOptionalText(payload?.notes, "Notes", BUSINESS_EXPENSE_NOTES_MAX),
+    notes: normalizeOptionalText(
+      payload?.notes,
+      "Notes",
+      BUSINESS_EXPENSE_NOTES_MAX,
+    ),
   };
 }
 
-async function ensureJobBelongsToOrg(orgId: string, jobId: string | null): Promise<string | null> {
+async function ensureJobBelongsToOrg(
+  orgId: string,
+  jobId: string | null,
+): Promise<string | null> {
   if (!jobId) return null;
 
   const job = await prisma.job.findFirst({
@@ -157,7 +196,16 @@ async function ensureJobBelongsToOrg(orgId: string, jobId: string | null): Promi
   return job.id;
 }
 
-async function ensurePurchaseOrderBelongsToOrg(orgId: string, purchaseOrderId: string | null): Promise<string | null> {
+async function ensurePurchaseOrderBelongsToOrg(input: {
+  orgId: string;
+  purchaseOrderId: string | null;
+  allowedCancelledPurchaseOrderId?: string | null;
+}): Promise<string | null> {
+  const {
+    orgId,
+    purchaseOrderId,
+    allowedCancelledPurchaseOrderId = null,
+  } = input;
   if (!purchaseOrderId) return null;
 
   const purchaseOrder = await prisma.purchaseOrder.findFirst({
@@ -165,11 +213,24 @@ async function ensurePurchaseOrderBelongsToOrg(orgId: string, purchaseOrderId: s
       id: purchaseOrderId,
       orgId,
     },
-    select: { id: true },
+    select: {
+      id: true,
+      status: true,
+    },
   });
 
   if (!purchaseOrder) {
     throw new AppApiError("Purchase order not found for this workspace.", 404);
+  }
+
+  if (
+    purchaseOrder.status === "CANCELLED" &&
+    purchaseOrder.id !== allowedCancelledPurchaseOrderId
+  ) {
+    throw new AppApiError(
+      "Cancelled purchase orders cannot be linked to expenses.",
+      400,
+    );
   }
 
   return purchaseOrder.id;
@@ -178,7 +239,7 @@ async function ensurePurchaseOrderBelongsToOrg(orgId: string, purchaseOrderId: s
 export async function listExpenseReferences(orgId: string) {
   const [jobs, purchaseOrders] = await Promise.all([
     prisma.job.findMany({
-      where: { orgId },
+      where: buildValidOperationalJobWhere(orgId),
       select: {
         id: true,
         customerName: true,
@@ -229,7 +290,11 @@ export async function listBusinessExpenses(input: {
             { category: { contains: input.query, mode: "insensitive" } },
             { description: { contains: input.query, mode: "insensitive" } },
             { notes: { contains: input.query, mode: "insensitive" } },
-            { purchaseOrder: { poNumber: { contains: input.query, mode: "insensitive" } } },
+            {
+              purchaseOrder: {
+                poNumber: { contains: input.query, mode: "insensitive" },
+              },
+            },
           ],
         }
       : {}),
@@ -284,7 +349,11 @@ export async function saveBusinessExpense(input: {
   const normalized = normalizeExpensePayload(input.payload);
   const [jobId, purchaseOrderId] = await Promise.all([
     ensureJobBelongsToOrg(input.orgId, normalized.jobId),
-    ensurePurchaseOrderBelongsToOrg(input.orgId, normalized.purchaseOrderId),
+    ensurePurchaseOrderBelongsToOrg({
+      orgId: input.orgId,
+      purchaseOrderId: normalized.purchaseOrderId,
+      allowedCancelledPurchaseOrderId: existing?.purchaseOrder?.id || null,
+    }),
   ]);
 
   const expense =
@@ -367,7 +436,10 @@ export async function setBusinessExpenseReceipt(input: {
     });
 
     if (!photo) {
-      throw new AppApiError("Receipt upload not found for this workspace.", 404);
+      throw new AppApiError(
+        "Receipt upload not found for this workspace.",
+        404,
+      );
     }
   }
 

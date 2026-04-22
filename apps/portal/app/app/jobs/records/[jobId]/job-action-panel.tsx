@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { JobStatus } from "@prisma/client";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import {
   dispatchStatusValues,
   formatDispatchSmsDeliveryStateLabel,
@@ -33,7 +34,11 @@ import {
   shouldAutoRefreshOperationalJobRemediation,
   type OperationalJobRemediationAction,
 } from "@/lib/operational-job-remediation";
-import { jobStatusOptions } from "@/lib/job-records";
+import {
+  canSelectOperationalJobStatus,
+  jobStatusOptions,
+  operationalJobExecutionRequiresBookingMessage,
+} from "@/lib/job-records";
 
 type DispatchJobResponse =
   | {
@@ -145,6 +150,8 @@ type OperationalJobActionPanelProps = {
   initialScheduledDate: string;
   initialScheduledStartTime: string | null;
   initialScheduledEndTime: string | null;
+  canEditSchedule: boolean;
+  hasActiveBooking: boolean;
   dispatchCommunicationState: DispatchCommunicationState;
   remediationActions: OperationalJobRemediationAction[];
   inboundResponseHandoff: OperationalJobRemediationAction | null;
@@ -153,17 +160,14 @@ type OperationalJobActionPanelProps = {
 
 function formatDateTimeLabel(value: string | Date | null | undefined): string | null {
   if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
+  const formatted = formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
+  }, { fallback: "" });
+
+  return formatted || null;
 }
 
 function formatChangedFieldsLabel(fields: string[]): string | null {
@@ -201,6 +205,8 @@ export default function OperationalJobActionPanel({
   initialScheduledDate,
   initialScheduledStartTime,
   initialScheduledEndTime,
+  canEditSchedule,
+  hasActiveBooking,
   dispatchCommunicationState,
   remediationActions,
   inboundResponseHandoff,
@@ -290,6 +296,10 @@ export default function OperationalJobActionPanel({
     Boolean(customerUpdateState.pending && customerUpdateState.canSend) &&
     (lastCustomerUpdate?.deliveryState === "failed" || lastCustomerUpdate?.deliveryState === "suppressed");
   const hasUnsavedLocalChanges = dispatchDirty || jobStatusDirty;
+  const selectedJobStatusAllowed = canSelectOperationalJobStatus({
+    status: jobStatus,
+    hasActiveBooking,
+  });
   const previousIssueKeyRef = useRef<string | null>(remediationIssueKey);
   const recoveryCompletionSettled = Boolean(recoveryCompletionAt && !customerUpdateState.pending && alreadySentAt);
   const manualOutcomeCompletionSettled = Boolean(manualOutcomeCompletion && !customerUpdateState.pending && alreadySentAt);
@@ -573,6 +583,10 @@ export default function OperationalJobActionPanel({
     setNotice(null);
 
     try {
+      if (!canEditSchedule) {
+        throw new Error("This job has no active linked booking event. Schedule it from Calendar before editing dispatch details.");
+      }
+
       if (!scheduledDate.trim()) {
         throw new Error("Scheduled date is required.");
       }
@@ -614,6 +628,10 @@ export default function OperationalJobActionPanel({
     setNotice(null);
 
     try {
+      if (!selectedJobStatusAllowed) {
+        throw new Error(operationalJobExecutionRequiresBookingMessage);
+      }
+
       const response = await fetch(`/api/jobs/${jobId}/operational-status`, {
         method: "PATCH",
         headers: {
@@ -919,6 +937,12 @@ export default function OperationalJobActionPanel({
   function handleEditScheduleNow() {
     setError(null);
     setNotice(null);
+
+    if (!canEditSchedule) {
+      setError("This job has no active linked booking event. Schedule it from Calendar before editing dispatch details.");
+      return;
+    }
+
     dispatchSectionRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "start",
@@ -934,6 +958,11 @@ export default function OperationalJobActionPanel({
         <section ref={dispatchSectionRef} className="operational-job-action-card">
           <div className="stack-cell">
             <h4>Dispatch</h4>
+            {!canEditSchedule ? (
+              <p className="muted">
+                Dispatch schedule fields are read from the active linked calendar booking. Create or relink an active booking before editing dispatch timing.
+              </p>
+            ) : null}
             <label className="stack-cell">
               <span className="muted">Scheduled date</span>
               <input
@@ -941,6 +970,7 @@ export default function OperationalJobActionPanel({
                 type="date"
                 value={scheduledDate}
                 onChange={(event) => setScheduledDate(event.target.value)}
+                disabled={!canEditSchedule}
               />
             </label>
 
@@ -951,6 +981,7 @@ export default function OperationalJobActionPanel({
                   type="time"
                   value={scheduledStartTime}
                   onChange={(event) => setScheduledStartTime(event.target.value)}
+                  disabled={!canEditSchedule}
                 />
               </label>
 
@@ -960,13 +991,18 @@ export default function OperationalJobActionPanel({
                   type="time"
                   value={scheduledEndTime}
                   onChange={(event) => setScheduledEndTime(event.target.value)}
+                  disabled={!canEditSchedule}
                 />
               </label>
             </div>
 
             <label className="stack-cell">
               <span className="muted">Dispatch status</span>
-              <select value={dispatchStatus} onChange={(event) => setDispatchStatus(event.target.value as DispatchStatusValue)}>
+              <select
+                value={dispatchStatus}
+                onChange={(event) => setDispatchStatus(event.target.value as DispatchStatusValue)}
+                disabled={!canEditSchedule}
+              >
                 {dispatchStatusValues.map((value) => (
                   <option key={value} value={value}>
                     {formatDispatchStatusLabel(value)}
@@ -977,7 +1013,7 @@ export default function OperationalJobActionPanel({
 
             <label className="stack-cell">
               <span className="muted">Crew</span>
-              <select value={assignedCrewId} onChange={(event) => setAssignedCrewId(event.target.value)}>
+              <select value={assignedCrewId} onChange={(event) => setAssignedCrewId(event.target.value)} disabled={!canEditSchedule}>
                 <option value="">Unassigned</option>
                 {crews.map((crew) => (
                   <option key={crew.id} value={crew.id}>
@@ -992,7 +1028,7 @@ export default function OperationalJobActionPanel({
               type="button"
               className="btn primary"
               onClick={() => void handleSaveDispatch()}
-              disabled={!dispatchDirty || savingDispatch}
+              disabled={!canEditSchedule || !dispatchDirty || savingDispatch}
             >
               {savingDispatch ? "Saving..." : "Save Dispatch"}
             </button>
@@ -1006,18 +1042,26 @@ export default function OperationalJobActionPanel({
               <span className="muted">Operational job status</span>
               <select value={jobStatus} onChange={(event) => setJobStatus(event.target.value as JobStatus)}>
                 {jobStatusOptions.map((value) => (
-                  <option key={value} value={value}>
+                  <option
+                    key={value}
+                    value={value}
+                    disabled={!canSelectOperationalJobStatus({ status: value, hasActiveBooking })}
+                  >
                     {formatOperationalJobStatusLabel(value)}
+                    {!canSelectOperationalJobStatus({ status: value, hasActiveBooking }) ? " (Requires active booking)" : ""}
                   </option>
                 ))}
               </select>
             </label>
+            {!hasActiveBooking ? (
+              <p className="muted">Schedule the job in Calendar before moving it to In Progress or Completed.</p>
+            ) : null}
 
             <button
               type="button"
               className="btn secondary"
               onClick={() => void handleSaveJobStatus()}
-              disabled={!jobStatusDirty || savingJobStatus}
+              disabled={!jobStatusDirty || savingJobStatus || !selectedJobStatusAllowed}
             >
               {savingJobStatus ? "Saving..." : "Save Job Status"}
             </button>

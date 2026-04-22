@@ -1,9 +1,15 @@
 import Link from "next/link";
+import { getRequestTranslator } from "@/lib/i18n";
 import { resolveOrganizationLogoUrl } from "@/lib/organization-logo";
 import { normalizeInvoiceTemplate } from "@/lib/invoice-template";
 import { prisma } from "@/lib/prisma";
 import type { InvoicePreviewData } from "../../_components/invoice-preview";
-import { getParam, requireAppOrgActor, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import {
+  getParam,
+  requireAppOrgActor,
+  resolveAppScope,
+  withOrgQuery,
+} from "../../_lib/portal-scope";
 import InvoiceTemplateSettings from "./invoice-template-settings";
 
 export const dynamic = "force-dynamic";
@@ -15,8 +21,13 @@ function buildAddressLines(input: {
   state: string | null;
   zip: string | null;
 }): string[] {
-  const locality = [input.city, input.state, input.zip].map((part) => (part || "").trim()).filter(Boolean).join(", ");
-  return [input.addressLine1, input.addressLine2, locality].map((part) => (part || "").trim()).filter(Boolean);
+  const locality = [input.city, input.state, input.zip]
+    .map((part) => (part || "").trim())
+    .filter(Boolean)
+    .join(", ");
+  return [input.addressLine1, input.addressLine2, locality]
+    .map((part) => (part || "").trim())
+    .filter(Boolean);
 }
 
 export default async function InvoiceTemplateSettingsPage({
@@ -24,10 +35,17 @@ export default async function InvoiceTemplateSettingsPage({
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
+  const t = await getRequestTranslator();
   const requestedOrgId = getParam(searchParams?.orgId);
-  const scope = await resolveAppScope({ nextPath: "/app/settings/invoice", requestedOrgId });
+  const scope = await resolveAppScope({
+    nextPath: "/app/settings/invoice",
+    requestedOrgId,
+  });
   const actor = await requireAppOrgActor("/app/settings/invoice", scope.orgId);
-  const canManage = actor.internalUser || actor.calendarAccessRole === "OWNER" || actor.calendarAccessRole === "ADMIN";
+  const canManage =
+    actor.internalUser ||
+    actor.calendarAccessRole === "OWNER" ||
+    actor.calendarAccessRole === "ADMIN";
 
   const organization = await prisma.organization.findUnique({
     where: { id: scope.orgId },
@@ -64,47 +82,54 @@ export default async function InvoiceTemplateSettingsPage({
     state: organization.state,
     zip: organization.zip,
   });
-  const settingsPath = withOrgQuery("/app/settings", scope.orgId, scope.internalUser);
+  const settingsPath = withOrgQuery(
+    "/app/settings",
+    scope.orgId,
+    scope.internalUser,
+  );
 
   const previewInvoice: InvoicePreviewData = {
     invoiceNumber: "INV-2026-1042",
     issueDate: new Date("2026-04-13T12:00:00.000Z").toISOString(),
     dueDate: new Date("2026-04-20T12:00:00.000Z").toISOString(),
     status: "SENT",
-    jobTitle: "Spring cleanup and irrigation tune-up",
-    termsLabel: "Due on receipt",
+    jobTitle: t("invoiceTemplateSettings.previewInvoice.jobTitle"),
+    termsLabel: t("invoiceTemplateSettings.previewInvoice.termsLabel"),
     business: {
       name: businessName,
       logoUrl,
       addressLines:
-        businessAddressLines.length > 0 ? businessAddressLines : ["1280 Foundry Lane", "San Antonio, TX 78205"],
+        businessAddressLines.length > 0
+          ? businessAddressLines
+          : ["1280 Foundry Lane", "San Antonio, TX 78205"],
       phone: organization.phone || "(210) 555-0188",
     },
     customer: {
-      name: "Megan Carter",
+      name: t("invoiceTemplateSettings.previewInvoice.customerName"),
       addressLines: ["1842 Juniper Ridge Drive", "Austin, TX 78704"],
     },
     lineItems: [
       {
-        description: "Spring cleanup and debris haul-away",
+        description: t("invoiceTemplateSettings.previewInvoice.lineItemOne"),
         quantity: "1",
         unitPrice: "850.00",
         subtotal: "850.00",
       },
       {
-        description: "Irrigation inspection, repairs, and controller tune-up",
+        description: t("invoiceTemplateSettings.previewInvoice.lineItemTwo"),
         quantity: "1",
         unitPrice: "1000.00",
         subtotal: "1000.00",
       },
     ],
     subtotal: "1850.00",
-    taxLabel: "Tax (8.25%)",
+    taxLabel: t("invoiceTemplateSettings.previewInvoice.taxLabel"),
     taxAmount: "152.63",
     total: "2002.63",
-    notes: "Thank you for the opportunity. Work includes cleanup, haul-away, and irrigation adjustments completed onsite.",
+    notes: t("invoiceTemplateSettings.previewInvoice.notes"),
     paymentTerms:
-      organization.invoicePaymentInstructions?.trim() || "Payment due upon receipt. ACH, check, and card are accepted.",
+      organization.invoicePaymentInstructions?.trim() ||
+      t("invoiceTemplateSettings.previewInvoice.paymentTerms"),
   };
 
   return (
@@ -113,10 +138,12 @@ export default async function InvoiceTemplateSettingsPage({
         <div className="invoice-header-row">
           <div className="stack-cell">
             <Link className="table-link" href={settingsPath}>
-              ← Back to Settings
+              {t("invoiceTemplateSettings.page.back")}
             </Link>
-            <h2>Invoice Templates</h2>
-            <p className="muted">Pick the invoice style your business uses by default for previews, printing, and PDF exports.</p>
+            <h2>{t("invoiceTemplateSettings.page.title")}</h2>
+            <p className="muted">
+              {t("invoiceTemplateSettings.page.description")}
+            </p>
           </div>
         </div>
       </div>

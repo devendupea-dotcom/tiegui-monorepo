@@ -10,7 +10,7 @@ import {
 } from "../lib/estimate-share.ts";
 
 test("estimate share creation is limited to shareable statuses", () => {
-  assert.equal(canCreateEstimateShare("DRAFT"), true);
+  assert.equal(canCreateEstimateShare("DRAFT"), false);
   assert.equal(canCreateEstimateShare("SENT"), true);
   assert.equal(canCreateEstimateShare("VIEWED"), true);
   assert.equal(canCreateEstimateShare("APPROVED"), true);
@@ -19,7 +19,7 @@ test("estimate share creation is limited to shareable statuses", () => {
 });
 
 test("customer responses are blocked once the estimate is finalized", () => {
-  assert.equal(canCustomerRespondToEstimate("DRAFT"), true);
+  assert.equal(canCustomerRespondToEstimate("DRAFT"), false);
   assert.equal(canCustomerRespondToEstimate("SENT"), true);
   assert.equal(canCustomerRespondToEstimate("VIEWED"), true);
   assert.equal(canCustomerRespondToEstimate("APPROVED"), false);

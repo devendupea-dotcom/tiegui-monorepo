@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { LeadStatus } from "@prisma/client";
+import { ensureTimeZone, getLocalMinutesInDay } from "@/lib/calendar/dates";
 import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
 import { containsLegacyTemplatePollution } from "@/lib/inbox-message-display";
@@ -29,16 +30,7 @@ function clampNudges(value: number | null | undefined): number {
 }
 
 function minuteOfDayInTimeZone(value: Date, timeZone: string): number {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const parts = formatter.formatToParts(value);
-  const hour = Number(parts.find((part) => part.type === "hour")?.value || "0");
-  const minute = Number(parts.find((part) => part.type === "minute")?.value || "0");
-  return hour * 60 + minute;
+  return getLocalMinutesInDay(value, ensureTimeZone(timeZone));
 }
 
 function isInsideQuietHours(input: {

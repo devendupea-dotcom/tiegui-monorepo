@@ -1,11 +1,13 @@
+import {
+  DEFAULT_CALENDAR_TIMEZONE,
+  formatDateTimeLocalInputValue,
+  toUtcFromLocalDateTime,
+} from "@/lib/calendar/dates";
+
 export type InboxTimelineEventLike = {
   id: string;
   createdAt: string;
 };
-
-function padDatePart(value: number): string {
-  return String(value).padStart(2, "0");
-}
 
 export function mergeInboxTimelineEvents<T extends InboxTimelineEventLike>(serverEvents: T[], optimisticEvents: T[]): T[] {
   const merged = new Map<string, T>();
@@ -28,25 +30,28 @@ export function mergeInboxTimelineEvents<T extends InboxTimelineEventLike>(serve
 }
 
 export function toDateTimeLocalInputValue(value: string | null | undefined): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-
-  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(
-    date.getHours(),
-  )}:${padDatePart(date.getMinutes())}`;
+  return formatDateTimeLocalInputValue(value, DEFAULT_CALENDAR_TIMEZONE);
 }
 
 export function fromDateTimeLocalInputValue(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) {
+  const [date, timeWithMaybeSeconds] = trimmed.split("T");
+  const time = (timeWithMaybeSeconds || "").slice(0, 5);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
     return null;
   }
 
-  return parsed.toISOString();
+  try {
+    return toUtcFromLocalDateTime({
+      date,
+      time,
+      timeZone: DEFAULT_CALENDAR_TIMEZONE,
+    }).toISOString();
+  } catch {
+    return null;
+  }
 }
 
 export function formatRevenueInputCents(value: number | null | undefined): string {

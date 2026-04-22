@@ -1,6 +1,8 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import { useTranslations } from "next-intl";
+import { formatDateForDisplay } from "@/lib/calendar/dates";
 import type { InvoiceTemplate } from "@/lib/invoice-template";
 
 export type InvoicePreviewData = {
@@ -47,12 +49,6 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
-const dateFormatter = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "2-digit",
-  year: "numeric",
-});
-
 function toNumber(value: string | number | null | undefined): number {
   if (typeof value === "number") return value;
   const parsed = Number(value || 0);
@@ -64,8 +60,7 @@ function formatCurrency(value: string | number | null | undefined): string {
 }
 
 function formatDate(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
+  return formatDateForDisplay(value, { fallback: value });
 }
 
 function formatQuantity(value: string | number): string {
@@ -73,14 +68,21 @@ function formatQuantity(value: string | number): string {
   if (!Number.isFinite(parsed)) {
     return String(value);
   }
-  return Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(2).replace(/\.00$/, "");
+  return Number.isInteger(parsed)
+    ? String(parsed)
+    : parsed.toFixed(2).replace(/\.00$/, "");
 }
 
 function nonEmptyLines(values?: string[]): string[] {
   return (values || []).map((value) => value.trim()).filter(Boolean);
 }
 
-export default function InvoicePreview({ template, invoice, className }: InvoicePreviewProps) {
+export default function InvoicePreview({
+  template,
+  invoice,
+  className,
+}: InvoicePreviewProps) {
+  const t = useTranslations("invoicePreview");
   const businessLines = nonEmptyLines(invoice.business.addressLines);
   const customerLines = nonEmptyLines(invoice.customer.addressLines);
   const notes = invoice.notes?.trim() || null;
@@ -89,7 +91,7 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
 
   let accentClass = "invoice-preview--classic";
   let accentStyle: CSSProperties | undefined;
-  let titleLabel = "Invoice";
+  let titleLabel = t("title");
   let headline = invoice.jobTitle || invoice.customer.name;
 
   switch (template) {
@@ -99,8 +101,9 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
         ["--invoice-accent" as string]: "#f97316",
         ["--invoice-accent-soft" as string]: "rgba(249, 115, 22, 0.12)",
       };
-      titleLabel = "Project Invoice";
-      headline = invoice.jobTitle || `Job for ${invoice.customer.name}`;
+      titleLabel = t("projectTitle");
+      headline =
+        invoice.jobTitle || t("jobFor", { name: invoice.customer.name });
       break;
     case "minimal":
       accentClass = "invoice-preview--minimal";
@@ -108,7 +111,7 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
         ["--invoice-accent" as string]: "#5b6470",
         ["--invoice-accent-soft" as string]: "#f2f4f7",
       };
-      titleLabel = "Invoice";
+      titleLabel = t("title");
       break;
     case "classic":
     default:
@@ -117,13 +120,18 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
         ["--invoice-accent" as string]: "#111827",
         ["--invoice-accent-soft" as string]: "#f3f4f6",
       };
-      titleLabel = "Invoice";
+      titleLabel = t("title");
       break;
   }
 
   return (
-    <article className={`invoice-preview ${accentClass}${className ? ` ${className}` : ""}`} style={accentStyle}>
-      {isPaid ? <div className="invoice-preview__watermark">PAID</div> : null}
+    <article
+      className={`invoice-preview ${accentClass}${className ? ` ${className}` : ""}`}
+      style={accentStyle}
+    >
+      {isPaid ? (
+        <div className="invoice-preview__watermark">{t("paidWatermark")}</div>
+      ) : null}
 
       {template === "bold" ? (
         <header className="invoice-preview__header invoice-preview__header--bold">
@@ -131,11 +139,17 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
             <div className="invoice-preview__brand">
               {invoice.business.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img className="invoice-preview__logo" src={invoice.business.logoUrl} alt={`${invoice.business.name} logo`} />
+                <img
+                  className="invoice-preview__logo"
+                  src={invoice.business.logoUrl}
+                  alt={`${invoice.business.name} logo`}
+                />
               ) : null}
               <div>
                 <p className="invoice-preview__eyebrow">{titleLabel}</p>
-                <h2 className="invoice-preview__business-name">{invoice.business.name}</h2>
+                <h2 className="invoice-preview__business-name">
+                  {invoice.business.name}
+                </h2>
               </div>
             </div>
             <div className="invoice-preview__contact-list invoice-preview__contact-list--inverse">
@@ -148,11 +162,11 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
 
           <div className="invoice-preview__hero">
             <div>
-              <p className="invoice-preview__eyebrow">Job</p>
+              <p className="invoice-preview__eyebrow">{t("job")}</p>
               <h1 className="invoice-preview__headline">{headline}</h1>
             </div>
             <div className="invoice-preview__total-pill">
-              <span>Total Due</span>
+              <span>{t("totalDue")}</span>
               <strong>{formatCurrency(invoice.total)}</strong>
             </div>
           </div>
@@ -163,12 +177,22 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
             <div className="invoice-preview__brand">
               {invoice.business.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img className="invoice-preview__logo" src={invoice.business.logoUrl} alt={`${invoice.business.name} logo`} />
+                <img
+                  className="invoice-preview__logo"
+                  src={invoice.business.logoUrl}
+                  alt={`${invoice.business.name} logo`}
+                />
               ) : null}
               <div>
                 <p className="invoice-preview__eyebrow">{titleLabel}</p>
-                <h2 className="invoice-preview__business-name">{invoice.business.name}</h2>
-                {invoice.jobTitle ? <p className="invoice-preview__job-label">{invoice.jobTitle}</p> : null}
+                <h2 className="invoice-preview__business-name">
+                  {invoice.business.name}
+                </h2>
+                {invoice.jobTitle ? (
+                  <p className="invoice-preview__job-label">
+                    {invoice.jobTitle}
+                  </p>
+                ) : null}
               </div>
             </div>
 
@@ -184,20 +208,20 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
             <h3>{titleLabel}</h3>
             <dl>
               <div>
-                <dt>Invoice #</dt>
+                <dt>{t("invoiceNumber")}</dt>
                 <dd>{invoice.invoiceNumber}</dd>
               </div>
               <div>
-                <dt>Issue Date</dt>
+                <dt>{t("issueDate")}</dt>
                 <dd>{formatDate(invoice.issueDate)}</dd>
               </div>
               <div>
-                <dt>Due Date</dt>
+                <dt>{t("dueDate")}</dt>
                 <dd>{formatDate(invoice.dueDate)}</dd>
               </div>
               {invoice.termsLabel ? (
                 <div>
-                  <dt>Terms</dt>
+                  <dt>{t("terms")}</dt>
                   <dd>{invoice.termsLabel}</dd>
                 </div>
               ) : null}
@@ -209,7 +233,9 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
       {template === "bold" ? (
         <section className="invoice-preview__meta-row">
           <div className="invoice-preview__bill-card">
-            <span className="invoice-preview__section-label">Bill To</span>
+            <span className="invoice-preview__section-label">
+              {t("billTo")}
+            </span>
             <strong>{invoice.customer.name}</strong>
             {customerLines.map((line) => (
               <p key={line}>{line}</p>
@@ -217,19 +243,22 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
           </div>
 
           <div className="invoice-preview__bill-card">
-            <span className="invoice-preview__section-label">Invoice Details</span>
+            <span className="invoice-preview__section-label">
+              {t("invoiceDetails")}
+            </span>
             <p>
-              <strong>No.</strong> {invoice.invoiceNumber}
+              <strong>{t("numberShort")}</strong> {invoice.invoiceNumber}
             </p>
             <p>
-              <strong>Issued.</strong> {formatDate(invoice.issueDate)}
+              <strong>{t("issuedShort")}</strong>{" "}
+              {formatDate(invoice.issueDate)}
             </p>
             <p>
-              <strong>Due.</strong> {formatDate(invoice.dueDate)}
+              <strong>{t("dueShort")}</strong> {formatDate(invoice.dueDate)}
             </p>
             {invoice.termsLabel ? (
               <p>
-                <strong>Terms.</strong> {invoice.termsLabel}
+                <strong>{t("termsShort")}</strong> {invoice.termsLabel}
               </p>
             ) : null}
           </div>
@@ -237,7 +266,9 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
       ) : (
         <section className="invoice-preview__bill-row">
           <div className="invoice-preview__bill-card">
-            <span className="invoice-preview__section-label">Bill To</span>
+            <span className="invoice-preview__section-label">
+              {t("billTo")}
+            </span>
             <strong>{invoice.customer.name}</strong>
             {customerLines.map((line) => (
               <p key={line}>{line}</p>
@@ -250,10 +281,10 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
         <table className="invoice-preview__table">
           <thead>
             <tr>
-              <th>Description</th>
-              <th className="right">Qty</th>
-              <th className="right">Unit Price</th>
-              <th className="right">Subtotal</th>
+              <th>{t("description")}</th>
+              <th className="right">{t("quantity")}</th>
+              <th className="right">{t("unitPrice")}</th>
+              <th className="right">{t("subtotal")}</th>
             </tr>
           </thead>
           <tbody>
@@ -273,13 +304,17 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
         <div className="invoice-preview__notes">
           {notes ? (
             <div className="invoice-preview__note-block">
-              <span className="invoice-preview__section-label">Notes</span>
+              <span className="invoice-preview__section-label">
+                {t("notes")}
+              </span>
               <p>{notes}</p>
             </div>
           ) : null}
           {paymentTerms ? (
             <div className="invoice-preview__note-block">
-              <span className="invoice-preview__section-label">Payment Terms</span>
+              <span className="invoice-preview__section-label">
+                {t("paymentTerms")}
+              </span>
               <p>{paymentTerms}</p>
             </div>
           ) : null}
@@ -287,17 +322,19 @@ export default function InvoicePreview({ template, invoice, className }: Invoice
 
         <div className="invoice-preview__totals">
           <div>
-            <span>Subtotal</span>
+            <span>{t("subtotal")}</span>
             <strong>{formatCurrency(invoice.subtotal)}</strong>
           </div>
-          {invoice.taxLabel && invoice.taxAmount !== null && invoice.taxAmount !== undefined ? (
+          {invoice.taxLabel &&
+          invoice.taxAmount !== null &&
+          invoice.taxAmount !== undefined ? (
             <div>
               <span>{invoice.taxLabel}</span>
               <strong>{formatCurrency(invoice.taxAmount)}</strong>
             </div>
           ) : null}
           <div className="invoice-preview__total-row">
-            <span>Total Due</span>
+            <span>{t("totalDue")}</span>
             <strong>{formatCurrency(invoice.total)}</strong>
           </div>
         </div>

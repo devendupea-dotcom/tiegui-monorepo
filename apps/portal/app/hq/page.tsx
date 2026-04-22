@@ -15,7 +15,7 @@ export default async function HqDashboardPage() {
   const todayEnd = endOfToday();
   const now = new Date();
 
-  const [newLeads, dueToday, missedCalls, booked] = await Promise.all([
+  const [newLeads, dueToday, missedCalls, bookedLeads] = await Promise.all([
     prisma.lead.count({ where: { createdAt: { gte: daysAgo(7) } } }),
     prisma.lead.count({
       where: {
@@ -31,14 +31,18 @@ export default async function HqDashboardPage() {
         startedAt: { gte: daysAgo(7) },
       },
     }),
-    prisma.lead.count({
+    prisma.event.findMany({
       where: {
-        status: "BOOKED",
-        updatedAt: {
+        leadId: { not: null },
+        type: { in: ["JOB", "ESTIMATE"] },
+        status: { in: ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] },
+        startAt: {
           gte: daysAgo(30),
           lte: now,
         },
       },
+      distinct: ["leadId"],
+      select: { leadId: true },
     }),
   ]);
 
@@ -59,7 +63,7 @@ export default async function HqDashboardPage() {
         </article>
         <article className="card kpi-card">
           <h2>Booked (30d)</h2>
-          <p className="kpi-value">{booked}</p>
+          <p className="kpi-value">{bookedLeads.length}</p>
         </article>
       </section>
 

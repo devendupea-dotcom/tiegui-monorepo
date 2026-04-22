@@ -2,6 +2,8 @@ import "server-only";
 
 import { Prisma, type JobEventType } from "@prisma/client";
 import { AppApiError } from "@/lib/app-api-permissions";
+import { bookingEventTypes, deriveJobBookingProjection } from "@/lib/booking-read-model";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import {
   dispatchStatusFromDb,
   formatDispatchScheduledWindow,
@@ -38,6 +40,25 @@ const publicTrackingInclude = {
           name: true,
         },
       },
+      calendarEvents: {
+        where: {
+          type: {
+            in: bookingEventTypes,
+          },
+        },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          startAt: true,
+          endAt: true,
+          createdAt: true,
+          updatedAt: true,
+          jobId: true,
+        },
+        orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+        take: 12,
+      },
       linkedEstimate: {
         select: {
           title: true,
@@ -54,6 +75,11 @@ const publicTrackingInclude = {
           phone: true,
           email: true,
           website: true,
+          dashboardConfig: {
+            select: {
+              calendarTimezone: true,
+            },
+          },
         },
       },
     },
@@ -104,20 +130,20 @@ function recordChanges(
 }
 
 function formatTrackingDate(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(value);
+  }, { timeZone: "UTC" });
 }
 
 function formatTimelineDateTime(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(value);
+  });
 }
 
 function buildScheduleSummary(input: {
@@ -133,6 +159,10 @@ function buildScheduleSummary(input: {
     return `Scheduled for ${dateLabel}.`;
   }
   return `Scheduled for ${dateLabel}, ${windowLabel}.`;
+}
+
+function buildPendingScheduleSummary() {
+  return "Scheduling is still being confirmed.";
 }
 
 function buildEventScheduleSummary(metadata: Record<string, unknown> | null): string | null {
@@ -509,6 +539,19 @@ export async function createJobTrackingLink(input: {
 
 export async function getJobTrackingByToken(token: string): Promise<CustomerJobTrackingDetail> {
   const record = await getPublicTrackingRecordOrThrow(token);
+  const bookingProjection = deriveJobBookingProjection({
+    events: record.job.calendarEvents,
+    timeZone: record.job.org.dashboardConfig?.calendarTimezone || null,
+  });
+  const trackingScheduleSource = {
+    id: record.job.id,
+    scheduledDate: bookingProjection.scheduledDate,
+    scheduledStartTime: bookingProjection.scheduledStartTime,
+    scheduledEndTime: bookingProjection.scheduledEndTime,
+  };
+  const scheduleWindow = bookingProjection.hasBookingEvent
+    ? formatDispatchScheduledWindow(bookingProjection.scheduledStartTime, bookingProjection.scheduledEndTime)
+    : buildPendingScheduleSummary();
 
   const [jobEvents, communicationEvents] = await Promise.all([
     prisma.jobEvent.findMany({
@@ -551,7 +594,7 @@ export async function getJobTrackingByToken(token: string): Promise<CustomerJobT
     .map((event) =>
       mapJobEventToTimelineItem({
         event,
-        job: record.job,
+        job: trackingScheduleSource,
       }),
     )
     .filter((event): event is JobTrackingTimelineItem => Boolean(event));
@@ -574,8 +617,8 @@ export async function getJobTrackingByToken(token: string): Promise<CustomerJobT
     address: record.job.address,
     currentStatus: status,
     currentStatusLabel: formatJobTrackingStatusLabel(status),
-    scheduledDate: record.job.scheduledDate ? formatTrackingDate(record.job.scheduledDate) : null,
-    scheduledWindow: formatDispatchScheduledWindow(record.job.scheduledStartTime, record.job.scheduledEndTime),
+    scheduledDate: bookingProjection.scheduledDate ? formatTrackingDate(bookingProjection.scheduledDate) : null,
+    scheduledWindow: scheduleWindow,
     assignedCrewName: record.job.assignedCrew?.name || null,
     contractor: {
       name: record.job.org.name,

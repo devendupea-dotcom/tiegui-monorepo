@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { LeadPriority, LeadSourceType, LeadStatus } from "@prisma/client";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { prisma } from "@/lib/prisma";
 import { normalizeLeadCity } from "@/lib/lead-location";
@@ -154,6 +155,9 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       if (!status) {
         throw new AppApiError("Invalid lead status.", 400);
       }
+      if (status === "BOOKED") {
+        throw new AppApiError("Lead status BOOKED is derived from an active booking and cannot be edited directly.", 409);
+      }
       updateData.status = status;
     }
 
@@ -274,10 +278,41 @@ export async function PATCH(req: Request, { params }: RouteContext) {
         commissionEligible: true,
         nextFollowUpAt: true,
         updatedAt: true,
+        events: {
+          where: {
+            type: {
+              in: ["JOB", "ESTIMATE"],
+            },
+          },
+          select: {
+            id: true,
+            jobId: true,
+            type: true,
+            status: true,
+            startAt: true,
+            endAt: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          take: 12,
+        },
       },
     });
 
-    return NextResponse.json({ ok: true, lead: updated });
+    const bookingProjection = deriveLeadBookingProjection({
+      leadStatus: updated.status,
+      events: updated.events,
+    });
+    const { events: _events, ...leadResponse } = updated;
+
+    return NextResponse.json({
+      ok: true,
+      lead: {
+        ...leadResponse,
+        status: bookingProjection.derivedLeadStatus,
+        nextFollowUpAt: bookingProjection.hasActiveBooking ? null : updated.nextFollowUpAt,
+      },
+    });
   } catch (error) {
     if (error instanceof AppApiError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });

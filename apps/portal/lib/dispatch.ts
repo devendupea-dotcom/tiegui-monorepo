@@ -1,5 +1,11 @@
-import { addDays } from "date-fns";
 import type { DispatchJobStatus } from "@prisma/client";
+import {
+  DEFAULT_CALENDAR_TIMEZONE,
+  addDaysToDateKey,
+  formatDateTimeForDisplay,
+  localDateFromUtc,
+  parseIsoDateOnly,
+} from "@/lib/calendar/dates";
 
 export const DEFAULT_DISPATCH_CREW_NAMES = ["Crew 1", "Crew 2", "Crew 3"] as const;
 
@@ -152,6 +158,8 @@ export type DispatchJobSummary = {
   scheduledDate: string;
   scheduledStartTime: string | null;
   scheduledEndTime: string | null;
+  hasBookingHistory: boolean;
+  hasActiveBooking: boolean;
   status: DispatchStatusValue;
   assignedCrewId: string | null;
   assignedCrewName: string | null;
@@ -222,10 +230,7 @@ export function formatDispatchDateKey(value: Date): string {
 }
 
 export function formatDispatchLocalDateKey(value: Date): string {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return localDateFromUtc(value, DEFAULT_CALENDAR_TIMEZONE);
 }
 
 export function getDispatchTodayDateKey(now: Date = new Date()): string {
@@ -246,14 +251,17 @@ export function normalizeDispatchDateKey(value: string | null | undefined): stri
     return null;
   }
 
-  const parsed = parseDispatchDateKey(value.trim());
-  return parsed ? formatDispatchDateKey(parsed) : null;
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return null;
+  }
+
+  return parseIsoDateOnly(trimmed) ? trimmed : null;
 }
 
 export function nextDispatchDateKey(value: string): string | null {
-  const parsed = parseDispatchDateKey(value);
-  if (!parsed) return null;
-  return formatDispatchDateKey(addDays(parsed, 1));
+  const normalized = normalizeDispatchDateKey(value);
+  return normalized ? addDaysToDateKey(normalized, 1) : null;
 }
 
 export function formatDispatchScheduledWindow(startTime: string | null, endTime: string | null): string {
@@ -337,11 +345,10 @@ export function compareDispatchJobs(
 function formatDispatchSmsDate(dateKey: string, timeZone: string): string {
   const [year = 0, month = 1, day = 1] = dateKey.split("-").map((part) => Number.parseInt(part, 10));
   const date = new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12, 0, 0));
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(date, {
     month: "short",
     day: "numeric",
-    timeZone,
-  }).format(date);
+  }, { timeZone });
 }
 
 function buildScheduledWindowLabel(startTime: string | null, endTime: string | null): string {

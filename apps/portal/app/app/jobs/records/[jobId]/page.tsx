@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import { dispatchStatusFromDb, formatDispatchDateKey, formatDispatchScheduledWindow, formatDispatchStatusLabel } from "@/lib/dispatch";
 import { getDispatchCrewSettings } from "@/lib/dispatch-store";
 import { buildInvoiceWorkerLeadAccessWhere, formatCurrency, formatInvoiceNumber } from "@/lib/invoices";
@@ -24,11 +25,11 @@ type PageProps = {
 
 function formatDateOnly(value: Date | null | undefined): string {
   if (!value) return "Unscheduled";
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "2-digit",
     year: "numeric",
-  }).format(value);
+  }, { timeZone: "UTC" });
 }
 
 function buildLeadLabel(
@@ -144,8 +145,11 @@ export default async function OperationalJobDetailPage({ params, searchParams }:
   const customerPhone = job.customer?.phoneE164 || job.phone || job.lead?.phoneE164 || null;
   const customerAddress = job.customer?.addressLine || job.address || job.lead?.intakeLocationText || null;
   const leadLabel = buildLeadLabel(job.lead);
-  const dispatchDateKey = job.scheduledDate ? formatDispatchDateKey(job.scheduledDate) : "";
+  const dispatchDateKey = detail.bookingProjection.scheduledDate ? formatDispatchDateKey(detail.bookingProjection.scheduledDate) : "";
   const dispatchStatus = dispatchStatusFromDb(job.dispatchStatus);
+  const scheduleWindowLabel = detail.bookingProjection.hasBookingEvent
+    ? formatDispatchScheduledWindow(detail.bookingProjection.scheduledStartTime, detail.bookingProjection.scheduledEndTime)
+    : "No linked booking";
   const dispatchPath = withOrgQuery(
     `/app/dispatch${dispatchDateKey ? `?date=${encodeURIComponent(dispatchDateKey)}&jobId=${encodeURIComponent(job.id)}` : `?jobId=${encodeURIComponent(job.id)}`}`,
     scope.orgId,
@@ -187,7 +191,7 @@ export default async function OperationalJobDetailPage({ params, searchParams }:
             </Link>
             <h2>{job.customerName}</h2>
             <p className="muted">
-              {job.serviceType || job.projectType} • {formatDateOnly(job.scheduledDate)}
+              {job.serviceType || job.projectType} • {formatDateOnly(detail.bookingProjection.scheduledDate)}
             </p>
             <div className="quick-meta">
               <span className={`badge status-${dispatchStatus}`}>{formatDispatchStatusLabel(dispatchStatus)}</span>
@@ -279,7 +283,7 @@ export default async function OperationalJobDetailPage({ params, searchParams }:
               </div>
               <div>
                 <span className="muted">Scheduled Window</span>
-                <strong>{formatDispatchScheduledWindow(job.scheduledStartTime, job.scheduledEndTime)}</strong>
+                <strong>{scheduleWindowLabel}</strong>
               </div>
               <div>
                 <span className="muted">Updated</span>
@@ -306,9 +310,11 @@ export default async function OperationalJobDetailPage({ params, searchParams }:
                 initialDispatchStatus={dispatchStatus}
                 initialJobStatus={job.status}
                 initialCrewId={job.assignedCrew?.id || null}
-                initialScheduledDate={dispatchDateKey}
-                initialScheduledStartTime={job.scheduledStartTime}
-                initialScheduledEndTime={job.scheduledEndTime}
+                initialScheduledDate={detail.bookingProjection.scheduledDateKey || ""}
+                initialScheduledStartTime={detail.bookingProjection.scheduledStartTime}
+                initialScheduledEndTime={detail.bookingProjection.scheduledEndTime}
+                canEditSchedule={detail.bookingProjection.hasActiveBooking}
+                hasActiveBooking={detail.bookingProjection.hasActiveBooking}
                 dispatchCommunicationState={detail.dispatchCommunicationState}
                 remediationActions={remediationActions}
                 inboundResponseHandoff={inboundResponseHandoff}

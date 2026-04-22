@@ -5,6 +5,7 @@ type InvoiceTemplateCardProps = {
   description: string;
   previewImage: ReactNode;
   isSelected: boolean;
+  selectedLabel: string;
   onSelect: () => void;
 };
 
@@ -13,6 +14,7 @@ export default function InvoiceTemplateCard({
   description,
   previewImage,
   isSelected,
+  selectedLabel,
   onSelect,
 }: InvoiceTemplateCardProps) {
   return (
@@ -26,7 +28,7 @@ export default function InvoiceTemplateCard({
       <div className="invoice-template-card__copy">
         <div className="invoice-template-card__title-row">
           <strong>{name}</strong>
-          {isSelected ? <span className="badge">Selected</span> : null}
+          {isSelected ? <span className="badge">{selectedLabel}</span> : null}
         </div>
         <p>{description}</p>
       </div>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Prisma } from "@prisma/client";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
 import { getRequestTranslator } from "@/lib/i18n";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { normalizeLeadCity, resolveLeadLocationLabel } from "@/lib/lead-location";
@@ -16,8 +17,6 @@ import { getParam, isOpenJobStatus, resolveAppScope, withOrgQuery } from "../_li
 import { isWorkerScopedPageViewer, requireAppPageViewer } from "../_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
-
-const ACTIVE_BOOKED_EVENT_STATUSES = ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] as const;
 
 function isLeadStatus(value: string): value is (typeof leadStatusOptions)[number] {
   return leadStatusOptions.some((option) => option === value);
@@ -81,7 +80,7 @@ export default async function JobsPage({
       : {}),
   };
 
-  if (isLeadStatus(status)) {
+  if (isLeadStatus(status) && status !== "BOOKED") {
     where.status = status;
   }
 
@@ -113,16 +112,20 @@ export default async function JobsPage({
           type: {
             in: ["JOB", "ESTIMATE"],
           },
-          status: {
-            in: [...ACTIVE_BOOKED_EVENT_STATUSES],
-          },
         },
         select: {
           id: true,
+          jobId: true,
+          type: true,
+          status: true,
+          startAt: true,
+          endAt: true,
+          createdAt: true,
+          updatedAt: true,
           addressLine: true,
         },
         orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
-        take: 1,
+        take: 12,
       },
       invoices: {
         select: {
@@ -168,11 +171,14 @@ export default async function JobsPage({
     take: 500,
   });
   const hydratedJobs = jobs.map((job) => {
-    const hasActiveBookedJob = job.events.length > 0;
-    const effectiveStatus = job.status === "DNC" ? job.status : hasActiveBookedJob ? "BOOKED" : job.status;
+    const bookingProjection = deriveLeadBookingProjection({
+      leadStatus: job.status,
+      events: job.events,
+      jobs: job.jobs,
+    });
     const locationLabel =
       resolveLeadLocationLabel({
-        eventAddressLine: job.events[0]?.addressLine,
+        eventAddressLine: bookingProjection.activeBookingEvent?.addressLine || null,
         customerAddressLine: job.customer?.addressLine,
         intakeLocationText: job.intakeLocationText,
         city: job.city,
@@ -180,18 +186,23 @@ export default async function JobsPage({
       normalizeLeadCity(job.city) ||
       "-";
     const workTypeLabel = sanitizeLeadBusinessTypeLabel(job.businessType);
-    const operationalJob = selectReusableOperationalJobCandidate({
-      candidates: job.jobs,
-    });
+    const operationalJob =
+      (bookingProjection.linkedOperationalJobId
+        ? job.jobs.find((candidate) => candidate.id === bookingProjection.linkedOperationalJobId) || null
+        : null) ||
+      selectReusableOperationalJobCandidate({
+        candidates: job.jobs,
+        preferredJobId: bookingProjection.linkedOperationalJobId,
+      });
     const latestEstimate = job.estimates.find((estimate) => estimate.status !== "CONVERTED") || job.estimates[0] || null;
     const latestInvoice = job.invoices[0] || null;
     const overviewHref = withOrgQuery(`/app/jobs/${job.id}`, scope.orgId, scope.internalUser);
     const workflow = resolveContractorWorkflow({
       hasMessagingWorkspace: job.messages.length > 0,
       latestMessageDirection: job.messages[0]?.direction || null,
-      nextFollowUpAt: hasActiveBookedJob ? null : job.nextFollowUpAt,
+      nextFollowUpAt: bookingProjection.hasActiveBooking ? null : job.nextFollowUpAt,
       latestEstimateStatus: latestEstimate?.status || null,
-      hasScheduledJob: hasActiveBookedJob,
+      hasScheduledJob: bookingProjection.hasActiveBooking,
       hasOperationalJob: Boolean(operationalJob?.id),
       hasLatestInvoice: Boolean(latestInvoice),
       hasOpenInvoice: job.invoices.some((invoice) => invoice.balanceDue.gt(0)),
@@ -223,8 +234,8 @@ export default async function JobsPage({
 
     return {
       ...job,
-      status: effectiveStatus,
-      nextFollowUpAt: hasActiveBookedJob ? null : job.nextFollowUpAt,
+      status: bookingProjection.derivedLeadStatus,
+      nextFollowUpAt: bookingProjection.hasActiveBooking ? null : job.nextFollowUpAt,
       locationLabel,
       workTypeLabel,
       operationalJobId: operationalJob?.id || null,

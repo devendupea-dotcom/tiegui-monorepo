@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Prisma, type JobStatus } from "@prisma/client";
+import { bookingEventTypes, deriveJobBookingProjection } from "@/lib/booking-read-model";
 import { formatDispatchDateKey } from "@/lib/dispatch";
 import { formatOperationalJobStatusLabel } from "@/lib/job-tracking";
 import { prisma } from "@/lib/prisma";
@@ -16,8 +17,10 @@ import {
   JOB_MEASUREMENT_VALUE_MAX,
   JOB_NOTES_MAX,
   JOB_PROJECT_TYPE_MAX,
+  canSelectOperationalJobStatus,
   computeJobLineTotal,
   jobStatusOptions,
+  operationalJobExecutionRequiresBookingMessage,
   serializeJobDetail,
 } from "@/lib/job-records";
 import { roundMoney, toMoneyDecimal } from "@/lib/invoices";
@@ -485,27 +488,62 @@ export async function updateJobRecordStatus(input: {
 }) {
   const nextStatus = normalizeRequiredJobStatus(input.status);
 
-  const existing = await prisma.job.findFirst({
-    where: {
-      id: input.jobId,
-      orgId: input.orgId,
-    },
-    select: {
-      id: true,
-      status: true,
-      scheduledDate: true,
-      scheduledStartTime: true,
-      scheduledEndTime: true,
-      customerId: true,
-      leadId: true,
-      linkedEstimateId: true,
-      sourceEstimateId: true,
-      assignedCrewId: true,
-    },
-  });
+  const [existing, config] = await Promise.all([
+    prisma.job.findFirst({
+      where: {
+        id: input.jobId,
+        orgId: input.orgId,
+      },
+      select: {
+        id: true,
+        status: true,
+        customerId: true,
+        leadId: true,
+        linkedEstimateId: true,
+        sourceEstimateId: true,
+        assignedCrewId: true,
+        calendarEvents: {
+          where: {
+            type: {
+              in: bookingEventTypes,
+            },
+          },
+          select: {
+            id: true,
+            type: true,
+            status: true,
+            startAt: true,
+            endAt: true,
+            createdAt: true,
+            updatedAt: true,
+            jobId: true,
+          },
+          orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+          take: 12,
+        },
+      },
+    }),
+    prisma.orgDashboardConfig.findUnique({
+      where: {
+        orgId: input.orgId,
+      },
+      select: {
+        calendarTimezone: true,
+      },
+    }),
+  ]);
 
   if (!existing) {
     throw new AppApiError("Job not found.", 404);
+  }
+
+  const bookingProjection = deriveJobBookingProjection({
+    events: existing.calendarEvents,
+    timeZone: config?.calendarTimezone || null,
+  });
+
+  if (!canSelectOperationalJobStatus({ status: nextStatus, hasActiveBooking: bookingProjection.hasActiveBooking })) {
+    throw new AppApiError(operationalJobExecutionRequiresBookingMessage, 409);
   }
 
   if (existing.status === nextStatus) {
@@ -540,9 +578,9 @@ export async function updateJobRecordStatus(input: {
           fromStatusLabel: formatOperationalJobStatusLabel(existing.status),
           toStatusLabel: formatOperationalJobStatusLabel(nextStatus),
           statusLabel: formatOperationalJobStatusLabel(nextStatus),
-          scheduledDate: existing.scheduledDate ? formatDispatchDateKey(existing.scheduledDate) : null,
-          scheduledStartTime: existing.scheduledStartTime,
-          scheduledEndTime: existing.scheduledEndTime,
+          scheduledDate: bookingProjection.scheduledDate ? formatDispatchDateKey(bookingProjection.scheduledDate) : null,
+          scheduledStartTime: bookingProjection.scheduledStartTime,
+          scheduledEndTime: bookingProjection.scheduledEndTime,
           customerId: existing.customerId,
           leadId: existing.leadId,
           linkedEstimateId: getOperationalJobPrimaryEstimateId(existing),

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Prisma } from "@prisma/client";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
 import { prisma } from "@/lib/prisma";
 import {
   endOfToday,
@@ -39,7 +40,7 @@ export default async function HqInboxPage({
 
   const where: Prisma.LeadWhereInput = {};
 
-  if (isLeadStatus(status)) {
+  if (isLeadStatus(status) && status !== "BOOKED") {
     where.status = status;
   }
 
@@ -87,11 +88,45 @@ export default async function HqInboxPage({
       include: {
         org: { select: { id: true, name: true } },
         assignedTo: { select: { id: true, name: true, email: true } },
+        events: {
+          where: {
+            type: {
+              in: ["JOB", "ESTIMATE"],
+            },
+          },
+          select: {
+            id: true,
+            jobId: true,
+            type: true,
+            status: true,
+            startAt: true,
+            endAt: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+          take: 12,
+        },
       },
       orderBy: [{ nextFollowUpAt: "asc" }, { createdAt: "desc" }],
       take: 300,
     }),
   ]);
+
+  const visibleLeads = leads
+    .map((lead) => {
+      const bookingProjection = deriveLeadBookingProjection({
+        leadStatus: lead.status,
+        events: lead.events,
+      });
+
+      return {
+        ...lead,
+        status: bookingProjection.derivedLeadStatus,
+        nextFollowUpAt: bookingProjection.hasActiveBooking ? null : lead.nextFollowUpAt,
+      };
+    })
+    .filter((lead) => (isLeadStatus(status) ? lead.status === status : true));
 
   return (
     <>
@@ -171,7 +206,7 @@ export default async function HqInboxPage({
       <section className="card">
         <h2>Leads</h2>
 
-        {leads.length === 0 ? (
+        {visibleLeads.length === 0 ? (
           <p className="muted" style={{ marginTop: 10 }}>
             No leads yet.
           </p>
@@ -191,7 +226,7 @@ export default async function HqInboxPage({
                 </tr>
               </thead>
               <tbody>
-                {leads.map((lead) => {
+                {visibleLeads.map((lead) => {
                   const overdue = isOverdueFollowUp(lead.nextFollowUpAt);
                   return (
                     <tr key={lead.id}>

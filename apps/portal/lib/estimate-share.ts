@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { EstimateStatus } from "@prisma/client";
+import { formatDateForDisplay } from "@/lib/calendar/dates";
 import { hashToken } from "./tokens";
 
 export const ESTIMATE_SHARE_RECIPIENT_NAME_MAX = 160;
@@ -64,11 +65,11 @@ export function createEstimateShareToken(): { token: string; tokenHash: string }
 }
 
 export function canCreateEstimateShare(status: EstimateStatus): boolean {
-  return status === "DRAFT" || status === "SENT" || status === "VIEWED" || status === "APPROVED";
+  return status === "SENT" || status === "VIEWED" || status === "APPROVED";
 }
 
 export function canCustomerRespondToEstimate(status: EstimateStatus): boolean {
-  return status === "DRAFT" || status === "SENT" || status === "VIEWED";
+  return status === "SENT" || status === "VIEWED";
 }
 
 export function normalizeOptionalShareText(value: unknown, label: string, maxLength: number): string | null {
@@ -151,7 +152,7 @@ export function buildEstimateShareEmailDraft(input: {
     "",
     "Total investment",
     `$${input.estimate.total.toFixed(2)}`,
-    ...(input.estimate.validUntil ? [`Pricing valid through ${new Date(input.estimate.validUntil).toLocaleDateString("en-US")}.`] : []),
+    ...(input.estimate.validUntil ? [`Pricing valid through ${formatDateForDisplay(input.estimate.validUntil)}.`] : []),
     "",
     "What to do next",
     "Review and approve your estimate here:",

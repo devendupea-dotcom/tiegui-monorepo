@@ -14,6 +14,7 @@ import {
   getDispatchScheduleChangeFields,
   getDispatchTodayDateKey,
   isMeaningfulDispatchScheduleChange,
+  nextDispatchDateKey,
   normalizeDispatchDateKey,
   serializeDispatchNotificationSettings,
   shouldSendDispatchStatusNotification,
@@ -30,12 +31,17 @@ test("dispatch status labels stay normalized for UI", () => {
 
 test("dispatch date helpers preserve local calendar dates", () => {
   const latePacificEvening = new Date("2026-04-01T23:30:00-07:00");
+  const utcSameMoment = new Date("2026-04-02T06:30:00.000Z");
 
   assert.equal(formatDispatchLocalDateKey(latePacificEvening), "2026-04-01");
+  assert.equal(formatDispatchLocalDateKey(utcSameMoment), "2026-04-01");
   assert.equal(getDispatchTodayDateKey(latePacificEvening), "2026-04-01");
+  assert.equal(getDispatchTodayDateKey(utcSameMoment), "2026-04-01");
   assert.equal(normalizeDispatchDateKey("2026-04-01"), "2026-04-01");
   assert.equal(normalizeDispatchDateKey(" 2026-04-01 "), "2026-04-01");
   assert.equal(normalizeDispatchDateKey("2026-4-1"), null);
+  assert.equal(normalizeDispatchDateKey("2026-02-30"), null);
+  assert.equal(nextDispatchDateKey("2026-04-01"), "2026-04-02");
 });
 
 test("dispatch scheduled window formatter handles optional times", () => {

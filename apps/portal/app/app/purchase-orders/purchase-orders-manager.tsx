@@ -2,8 +2,8 @@
 
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { formatCurrency } from "@/lib/invoices";
-import type { JobListItem } from "@/lib/job-records";
+import { useLocale } from "next-intl";
+import { formatJobReferenceLabel, type JobListItem } from "@/lib/job-records";
 import type { MaterialListItem } from "@/lib/materials";
 import {
   computePurchaseOrderLineTotal,
@@ -22,51 +22,41 @@ type PurchaseOrdersManagerProps = {
   initialJobId: string | null;
 };
 
-type PurchaseOrdersResponse =
-  | {
-      ok?: boolean;
-      purchaseOrders?: PurchaseOrderListItem[];
-      error?: string;
-    }
-  | null;
+type PurchaseOrdersResponse = {
+  ok?: boolean;
+  purchaseOrders?: PurchaseOrderListItem[];
+  error?: string;
+} | null;
 
-type PurchaseOrderResponse =
-  | {
-      ok?: boolean;
-      purchaseOrder?: PurchaseOrderDetail;
-      error?: string;
-    }
-  | null;
+type PurchaseOrderResponse = {
+  ok?: boolean;
+  purchaseOrder?: PurchaseOrderDetail;
+  error?: string;
+} | null;
 
-type MaterialsResponse =
-  | {
-      ok?: boolean;
-      materials?: MaterialListItem[];
-      error?: string;
-    }
-  | null;
+type MaterialsResponse = {
+  ok?: boolean;
+  materials?: MaterialListItem[];
+  error?: string;
+} | null;
 
-type JobsResponse =
-  | {
-      ok?: boolean;
-      jobs?: JobListItem[];
-      error?: string;
-    }
-  | null;
+type JobsResponse = {
+  ok?: boolean;
+  jobs?: JobListItem[];
+  error?: string;
+} | null;
 
-type SendDraftResponse =
-  | {
-      ok?: boolean;
-      delivery?: "outlook" | "manual-draft";
-      recipientEmail?: string | null;
-      subject?: string;
-      body?: string;
-      mailtoUrl?: string | null;
-      message?: string;
-      purchaseOrder?: PurchaseOrderDetail;
-      error?: string;
-    }
-  | null;
+type SendDraftResponse = {
+  ok?: boolean;
+  delivery?: "outlook" | "manual-draft";
+  recipientEmail?: string | null;
+  subject?: string;
+  body?: string;
+  mailtoUrl?: string | null;
+  message?: string;
+  purchaseOrder?: PurchaseOrderDetail;
+  error?: string;
+} | null;
 
 type PurchaseOrderFormState = {
   jobId: string;
@@ -81,6 +71,8 @@ type PurchaseOrderFormState = {
   lineItems: PurchaseOrderLineItemRow[];
 };
 
+type PurchaseOrderStatus = (typeof purchaseOrderStatusOptions)[number];
+
 const defaultFormState: PurchaseOrderFormState = {
   jobId: "",
   vendorName: "",
@@ -94,7 +86,249 @@ const defaultFormState: PurchaseOrderFormState = {
   lineItems: [createEmptyPurchaseOrderLineItem()],
 };
 
-function applyLineTotal(row: PurchaseOrderLineItemRow): PurchaseOrderLineItemRow {
+function formatMoney(value: number, locale: string): string {
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function getPurchaseOrdersCopy(locale: string) {
+  const isSpanish = locale.startsWith("es");
+  if (isSpanish) {
+    return {
+      errors: {
+        loadJobs: "No se pudieron cargar los trabajos.",
+        loadMaterials: "No se pudieron cargar los materiales.",
+        loadReferences:
+          "No se pudieron cargar las referencias de órdenes de compra.",
+        loadOrders: "No se pudieron cargar las órdenes de compra.",
+        loadOrder: "No se pudo cargar la orden de compra.",
+        selectMaterial: "Elige primero un material.",
+        readOnlySave:
+          "Los usuarios en solo lectura no pueden guardar órdenes de compra.",
+        save: "No se pudo guardar la orden de compra.",
+        cancel: "No se pudo cancelar la orden de compra.",
+        saveBeforeEmail:
+          "Guarda la orden de compra antes de preparar el correo.",
+        sendDraft: "No se pudo preparar el correo de la orden de compra.",
+      },
+      notices: {
+        updated: "Orden de compra actualizada.",
+        created: "Orden de compra creada.",
+        cancelled: "Orden de compra cancelada.",
+        sentOutlook: "Orden de compra enviada por Outlook.",
+        emailDraftOpened:
+          "Se abrió el borrador del correo en tu app. Actualiza la OC a Enviada cuando la entregues.",
+        emailDraftNoVendor:
+          "Se preparó el borrador del correo, pero no hay un email del proveedor adjunto.",
+      },
+      title: "Órdenes de compra",
+      subtitle: (orgName: string) =>
+        `Crea órdenes para proveedores de ${orgName}, vincúlalas a trabajos y envíalas desde Outlook cuando esté conectado.`,
+      operationalJobHint:
+        "Usa la página de trabajo operativo para despacho, agenda, seguimiento y comunicación con el cliente.",
+      openOperationalJob: "Abrir trabajo operativo",
+      newPurchaseOrder: "Nueva orden de compra",
+      summary: {
+        total: "Total de OCs",
+        draftSent: "Borrador / Enviada",
+        openCommitments: "Compromisos abiertos",
+      },
+      lookup: {
+        title: "Búsqueda de órdenes de compra",
+        subtitle:
+          "Encuentra órdenes de proveedores ligadas a trabajos cuando necesites detalle de compras.",
+        search: "Buscar",
+        searchPlaceholder: "Número de OC, proveedor o título",
+        status: "Estado",
+        allStatuses: "Todos",
+        job: "Trabajo",
+        allJobs: "Todos los trabajos",
+        table: {
+          po: "OC",
+          vendor: "Proveedor",
+          job: "Trabajo",
+          status: "Estado",
+          total: "Total",
+          loading: "Cargando órdenes de compra...",
+          empty: "Aún no hay órdenes de compra.",
+          noJob: "-",
+        },
+      },
+      editor: {
+        editTitle: "Editar orden de compra",
+        addTitle: "Nueva orden de compra",
+        subtitle:
+          "Guarda primero la OC y luego envíala desde Outlook o prepara un borrador de correo si Outlook no está conectado para esta organización.",
+        loading: "Cargando...",
+        job: "Trabajo",
+        standalonePo: "OC independiente",
+        status: "Estado",
+        vendorName: "Nombre del proveedor",
+        poTitle: "Título de la OC",
+        vendorEmail: "Email del proveedor",
+        vendorPhone: "Teléfono del proveedor",
+        vendorAddress: "Dirección del proveedor",
+        notes: "Notas",
+        taxRate: "Tasa de impuesto %",
+        currentTotals: "Totales actuales",
+        subtotal: "Subtotal",
+        tax: "Impuesto",
+        total: "Total",
+      },
+      lineItems: {
+        title: "Partidas",
+        subtitle:
+          "Construye la OC desde materiales del catálogo o agrega artículos personalizados del proveedor.",
+        addCatalogMaterial: "Agregar material del catálogo",
+        addCatalogItem: "Agregar artículo del catálogo",
+        addCustomLine: "Agregar línea personalizada",
+        table: {
+          item: "Artículo",
+          qty: "Cant.",
+          unit: "Unidad",
+          unitCost: "Costo unitario",
+          total: "Total",
+          remove: "Quitar",
+          namePlaceholder: "Grava drenante / block / flete",
+          descriptionPlaceholder:
+            "Especificación opcional o nota del proveedor",
+        },
+      },
+      actions: {
+        saving: "Guardando...",
+        save: "Guardar OC",
+        create: "Crear OC",
+        sendEmail: "Enviar / Borrador de correo",
+        cancelPo: "Cancelar OC",
+      },
+      statuses: {
+        DRAFT: "Borrador",
+        SENT: "Enviada",
+        RECEIVED: "Recibida",
+        CANCELLED: "Cancelada",
+      } as Record<PurchaseOrderStatus, string>,
+    };
+  }
+
+  return {
+    errors: {
+      loadJobs: "Failed to load jobs.",
+      loadMaterials: "Failed to load materials.",
+      loadReferences: "Failed to load purchase order references.",
+      loadOrders: "Failed to load purchase orders.",
+      loadOrder: "Failed to load purchase order.",
+      selectMaterial: "Select a material first.",
+      readOnlySave: "Read-only users cannot save purchase orders.",
+      save: "Failed to save purchase order.",
+      cancel: "Failed to cancel purchase order.",
+      saveBeforeEmail: "Save the purchase order before preparing the email.",
+      sendDraft: "Failed to prepare purchase order email.",
+    },
+    notices: {
+      updated: "Purchase order updated.",
+      created: "Purchase order created.",
+      cancelled: "Purchase order cancelled.",
+      sentOutlook: "Purchase order sent through Outlook.",
+      emailDraftOpened:
+        "Email draft opened in your mail app. Update the PO status to Sent once you deliver it.",
+      emailDraftNoVendor:
+        "Email draft prepared, but no vendor email is attached.",
+    },
+    title: "Purchase Orders",
+    subtitle: (orgName: string) =>
+      `Create supplier orders for ${orgName}, tie them to jobs, and send from Outlook when connected.`,
+    operationalJobHint:
+      "Use the Operational Job page for dispatch, schedule, tracking, and customer communication.",
+    openOperationalJob: "Open Operational Job",
+    newPurchaseOrder: "New Purchase Order",
+    summary: {
+      total: "Total POs",
+      draftSent: "Draft / Sent",
+      openCommitments: "Open Commitments",
+    },
+    lookup: {
+      title: "Purchase Order Lookup",
+      subtitle:
+        "Find job-linked supplier orders when you need procurement detail.",
+      search: "Search",
+      searchPlaceholder: "PO number, vendor, title",
+      status: "Status",
+      allStatuses: "All",
+      job: "Job",
+      allJobs: "All jobs",
+      table: {
+        po: "PO",
+        vendor: "Vendor",
+        job: "Job",
+        status: "Status",
+        total: "Total",
+        loading: "Loading purchase orders...",
+        empty: "No purchase orders yet.",
+        noJob: "-",
+      },
+    },
+    editor: {
+      editTitle: "Edit Purchase Order",
+      addTitle: "New Purchase Order",
+      subtitle:
+        "Save the PO first, then send from Outlook or prepare a mail draft if Outlook is not connected for this org.",
+      loading: "Loading...",
+      job: "Job",
+      standalonePo: "Standalone PO",
+      status: "Status",
+      vendorName: "Vendor name",
+      poTitle: "PO title",
+      vendorEmail: "Vendor email",
+      vendorPhone: "Vendor phone",
+      vendorAddress: "Vendor address",
+      notes: "Notes",
+      taxRate: "Tax rate %",
+      currentTotals: "Current totals",
+      subtotal: "Subtotal",
+      tax: "Tax",
+      total: "Total",
+    },
+    lineItems: {
+      title: "Line Items",
+      subtitle:
+        "Build the PO from catalog materials or add custom supplier items.",
+      addCatalogMaterial: "Add catalog material",
+      addCatalogItem: "Add Catalog Item",
+      addCustomLine: "Add Custom Line",
+      table: {
+        item: "Item",
+        qty: "Qty",
+        unit: "Unit",
+        unitCost: "Unit Cost",
+        total: "Total",
+        remove: "Remove",
+        namePlaceholder: "Drain rock / block / freight",
+        descriptionPlaceholder: "Optional spec or vendor note",
+      },
+    },
+    actions: {
+      saving: "Saving...",
+      save: "Save PO",
+      create: "Create PO",
+      sendEmail: "Send / Draft Email",
+      cancelPo: "Cancel PO",
+    },
+    statuses: {
+      DRAFT: "Draft",
+      SENT: "Sent",
+      RECEIVED: "Received",
+      CANCELLED: "Cancelled",
+    } as Record<PurchaseOrderStatus, string>,
+  };
+}
+
+function applyLineTotal(
+  row: PurchaseOrderLineItemRow,
+): PurchaseOrderLineItemRow {
   return {
     ...row,
     total: computePurchaseOrderLineTotal({
@@ -150,12 +384,20 @@ export default function PurchaseOrdersManager({
   canManage,
   initialJobId,
 }: PurchaseOrdersManagerProps) {
+  const locale = useLocale();
+  const displayLocale = locale.startsWith("es") ? "es-US" : "en-US";
+  const copy = useMemo(() => getPurchaseOrdersCopy(locale), [locale]);
   const router = useRouter();
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderListItem[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderListItem[]>(
+    [],
+  );
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [materials, setMaterials] = useState<MaterialListItem[]>([]);
-  const [selectedPurchaseOrderId, setSelectedPurchaseOrderId] = useState<string | null>(null);
-  const [selectedCatalogMaterialId, setSelectedCatalogMaterialId] = useState("");
+  const [selectedPurchaseOrderId, setSelectedPurchaseOrderId] = useState<
+    string | null
+  >(null);
+  const [selectedCatalogMaterialId, setSelectedCatalogMaterialId] =
+    useState("");
   const [form, setForm] = useState<PurchaseOrderFormState>({
     ...defaultFormState,
     jobId: initialJobId || "",
@@ -172,7 +414,9 @@ export default function PurchaseOrdersManager({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const currentOperationalJobId = selectedPurchaseOrderId ? form.jobId || "" : jobFilter || form.jobId || "";
+  const currentOperationalJobId = selectedPurchaseOrderId
+    ? form.jobId || ""
+    : jobFilter || form.jobId || "";
   const selectedOperationalJobHref = currentOperationalJobId
     ? internalUser
       ? `/app/jobs/records/${currentOperationalJobId}?orgId=${orgId}`
@@ -205,14 +449,26 @@ export default function PurchaseOrdersManager({
           }),
         ]);
 
-        const jobsPayload = (await jobsResponse.json().catch(() => null)) as JobsResponse;
-        const materialsPayload = (await materialsResponse.json().catch(() => null)) as MaterialsResponse;
+        const jobsPayload = (await jobsResponse
+          .json()
+          .catch(() => null)) as JobsResponse;
+        const materialsPayload = (await materialsResponse
+          .json()
+          .catch(() => null)) as MaterialsResponse;
 
-        if (!jobsResponse.ok || !jobsPayload?.ok || !Array.isArray(jobsPayload.jobs)) {
-          throw new Error(jobsPayload?.error || "Failed to load jobs.");
+        if (
+          !jobsResponse.ok ||
+          !jobsPayload?.ok ||
+          !Array.isArray(jobsPayload.jobs)
+        ) {
+          throw new Error(jobsPayload?.error || copy.errors.loadJobs);
         }
-        if (!materialsResponse.ok || !materialsPayload?.ok || !Array.isArray(materialsPayload.materials)) {
-          throw new Error(materialsPayload?.error || "Failed to load materials.");
+        if (
+          !materialsResponse.ok ||
+          !materialsPayload?.ok ||
+          !Array.isArray(materialsPayload.materials)
+        ) {
+          throw new Error(materialsPayload?.error || copy.errors.loadMaterials);
         }
 
         if (cancelled) return;
@@ -222,7 +478,11 @@ export default function PurchaseOrdersManager({
         if (cancelled) return;
         setJobs([]);
         setMaterials([]);
-        setError(loadError instanceof Error ? loadError.message : "Failed to load purchase order references.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : copy.errors.loadReferences,
+        );
       } finally {
         if (!cancelled) {
           setLoadingReferences(false);
@@ -234,7 +494,13 @@ export default function PurchaseOrdersManager({
     return () => {
       cancelled = true;
     };
-  }, [internalUser, orgId]);
+  }, [
+    copy.errors.loadJobs,
+    copy.errors.loadMaterials,
+    copy.errors.loadReferences,
+    internalUser,
+    orgId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -257,9 +523,15 @@ export default function PurchaseOrdersManager({
           },
         );
 
-        const payload = (await response.json().catch(() => null)) as PurchaseOrdersResponse;
-        if (!response.ok || !payload?.ok || !Array.isArray(payload.purchaseOrders)) {
-          throw new Error(payload?.error || "Failed to load purchase orders.");
+        const payload = (await response
+          .json()
+          .catch(() => null)) as PurchaseOrdersResponse;
+        if (
+          !response.ok ||
+          !payload?.ok ||
+          !Array.isArray(payload.purchaseOrders)
+        ) {
+          throw new Error(payload?.error || copy.errors.loadOrders);
         }
 
         if (cancelled) return;
@@ -267,7 +539,11 @@ export default function PurchaseOrdersManager({
       } catch (loadError) {
         if (cancelled) return;
         setPurchaseOrders([]);
-        setError(loadError instanceof Error ? loadError.message : "Failed to load purchase orders.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : copy.errors.loadOrders,
+        );
       } finally {
         if (!cancelled) {
           setLoadingList(false);
@@ -279,7 +555,15 @@ export default function PurchaseOrdersManager({
     return () => {
       cancelled = true;
     };
-  }, [deferredSearch, internalUser, jobFilter, orgId, refreshToken, statusFilter]);
+  }, [
+    copy.errors.loadOrders,
+    deferredSearch,
+    internalUser,
+    jobFilter,
+    orgId,
+    refreshToken,
+    statusFilter,
+  ]);
 
   useEffect(() => {
     if (!selectedPurchaseOrderId) return;
@@ -290,21 +574,30 @@ export default function PurchaseOrdersManager({
       setLoadingDetail(true);
 
       try {
-        const response = await fetch(`/api/purchase-orders/${selectedPurchaseOrderId}`, {
-          method: "GET",
-          cache: "no-store",
-        });
+        const response = await fetch(
+          `/api/purchase-orders/${selectedPurchaseOrderId}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          },
+        );
 
-        const payload = (await response.json().catch(() => null)) as PurchaseOrderResponse;
+        const payload = (await response
+          .json()
+          .catch(() => null)) as PurchaseOrderResponse;
         if (!response.ok || !payload?.ok || !payload.purchaseOrder) {
-          throw new Error(payload?.error || "Failed to load purchase order.");
+          throw new Error(payload?.error || copy.errors.loadOrder);
         }
 
         if (cancelled) return;
         setForm(applyDetailToForm(payload.purchaseOrder));
       } catch (loadError) {
         if (cancelled) return;
-        setError(loadError instanceof Error ? loadError.message : "Failed to load purchase order.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : copy.errors.loadOrder,
+        );
       } finally {
         if (!cancelled) {
           setLoadingDetail(false);
@@ -316,7 +609,7 @@ export default function PurchaseOrdersManager({
     return () => {
       cancelled = true;
     };
-  }, [selectedPurchaseOrderId]);
+  }, [copy.errors.loadOrder, selectedPurchaseOrderId]);
 
   const totals = useMemo(() => {
     const subtotal = form.lineItems.reduce((sum, item) => sum + item.total, 0);
@@ -331,8 +624,12 @@ export default function PurchaseOrdersManager({
   }, [form.lineItems, form.taxRatePercent]);
 
   const summary = useMemo(() => {
-    const draftCount = purchaseOrders.filter((order) => order.status === "DRAFT").length;
-    const sentCount = purchaseOrders.filter((order) => order.status === "SENT").length;
+    const draftCount = purchaseOrders.filter(
+      (order) => order.status === "DRAFT",
+    ).length;
+    const sentCount = purchaseOrders.filter(
+      (order) => order.status === "SENT",
+    ).length;
     const totalOpen = purchaseOrders
       .filter((order) => order.status !== "CANCELLED")
       .reduce((sum, order) => sum + order.total, 0);
@@ -360,7 +657,10 @@ export default function PurchaseOrdersManager({
     setError(null);
   }
 
-  function updateForm<K extends keyof PurchaseOrderFormState>(field: K, value: PurchaseOrderFormState[K]) {
+  function updateForm<K extends keyof PurchaseOrderFormState>(
+    field: K,
+    value: PurchaseOrderFormState[K],
+  ) {
     setForm((current) => ({
       ...current,
       [field]: value,
@@ -368,13 +668,18 @@ export default function PurchaseOrdersManager({
   }
 
   function addCustomLine() {
-    updateForm("lineItems", [...form.lineItems, createEmptyPurchaseOrderLineItem()]);
+    updateForm("lineItems", [
+      ...form.lineItems,
+      createEmptyPurchaseOrderLineItem(),
+    ]);
   }
 
   function addCatalogMaterial() {
-    const material = materials.find((entry) => entry.id === selectedCatalogMaterialId);
+    const material = materials.find(
+      (entry) => entry.id === selectedCatalogMaterialId,
+    );
     if (!material) {
-      setError("Select a material first.");
+      setError(copy.errors.selectMaterial);
       return;
     }
 
@@ -393,7 +698,10 @@ export default function PurchaseOrdersManager({
     setError(null);
   }
 
-  function updateLineItem(index: number, patch: Partial<PurchaseOrderLineItemRow>) {
+  function updateLineItem(
+    index: number,
+    patch: Partial<PurchaseOrderLineItemRow>,
+  ) {
     updateForm(
       "lineItems",
       form.lineItems.map((lineItem, lineIndex) =>
@@ -416,7 +724,7 @@ export default function PurchaseOrdersManager({
 
   async function savePurchaseOrder() {
     if (!canManage) {
-      setError("Read-only users cannot save purchase orders.");
+      setError(copy.errors.readOnlySave);
       return;
     }
 
@@ -446,26 +754,37 @@ export default function PurchaseOrdersManager({
         })),
       };
 
-      const response = await fetch(selectedPurchaseOrderId ? `/api/purchase-orders/${selectedPurchaseOrderId}` : "/api/purchase-orders", {
-        method: selectedPurchaseOrderId ? "PATCH" : "POST",
-        headers: {
-          "content-type": "application/json",
+      const response = await fetch(
+        selectedPurchaseOrderId
+          ? `/api/purchase-orders/${selectedPurchaseOrderId}`
+          : "/api/purchase-orders",
+        {
+          method: selectedPurchaseOrderId ? "PATCH" : "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify(body),
-      });
+      );
 
-      const payload = (await response.json().catch(() => null)) as PurchaseOrderResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as PurchaseOrderResponse;
       if (!response.ok || !payload?.ok || !payload.purchaseOrder) {
-        throw new Error(payload?.error || "Failed to save purchase order.");
+        throw new Error(payload?.error || copy.errors.save);
       }
 
       setSelectedPurchaseOrderId(payload.purchaseOrder.id);
       setForm(applyDetailToForm(payload.purchaseOrder));
-      setNotice(selectedPurchaseOrderId ? "Purchase order updated." : "Purchase order created.");
+      setNotice(
+        selectedPurchaseOrderId ? copy.notices.updated : copy.notices.created,
+      );
       setRefreshToken((current) => current + 1);
       router.refresh();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save purchase order.");
+      setError(
+        saveError instanceof Error ? saveError.message : copy.errors.save,
+      );
     } finally {
       setSaving(false);
     }
@@ -479,19 +798,27 @@ export default function PurchaseOrdersManager({
     setNotice(null);
 
     try {
-      const response = await fetch(`/api/purchase-orders/${selectedPurchaseOrderId}`, {
-        method: "DELETE",
-      });
-      const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      const response = await fetch(
+        `/api/purchase-orders/${selectedPurchaseOrderId}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+      } | null;
       if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.error || "Failed to cancel purchase order.");
+        throw new Error(payload?.error || copy.errors.cancel);
       }
 
-      setNotice("Purchase order cancelled.");
+      setNotice(copy.notices.cancelled);
       resetEditor();
       setRefreshToken((current) => current + 1);
     } catch (cancelError) {
-      setError(cancelError instanceof Error ? cancelError.message : "Failed to cancel purchase order.");
+      setError(
+        cancelError instanceof Error ? cancelError.message : copy.errors.cancel,
+      );
     } finally {
       setSaving(false);
     }
@@ -499,7 +826,7 @@ export default function PurchaseOrdersManager({
 
   async function prepareEmailDraft() {
     if (!selectedPurchaseOrderId) {
-      setError("Save the purchase order before preparing the email.");
+      setError(copy.errors.saveBeforeEmail);
       return;
     }
 
@@ -508,27 +835,34 @@ export default function PurchaseOrdersManager({
     setNotice(null);
 
     try {
-      const response = await fetch(`/api/purchase-orders/${selectedPurchaseOrderId}/send`, {
-        method: "POST",
-      });
+      const response = await fetch(
+        `/api/purchase-orders/${selectedPurchaseOrderId}/send`,
+        {
+          method: "POST",
+        },
+      );
 
-      const payload = (await response.json().catch(() => null)) as SendDraftResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as SendDraftResponse;
       if (!response.ok || !payload?.ok || !payload.purchaseOrder) {
-        throw new Error(payload?.error || "Failed to prepare purchase order email.");
+        throw new Error(payload?.error || copy.errors.sendDraft);
       }
 
       setForm(applyDetailToForm(payload.purchaseOrder));
 
       if (payload.delivery === "outlook") {
-        setNotice(payload.message || "Purchase order sent through Outlook.");
+        setNotice(payload.message || copy.notices.sentOutlook);
       } else if (payload.mailtoUrl) {
         window.location.href = payload.mailtoUrl;
-        setNotice(payload.message || "Email draft opened in your mail app. Update the PO status to Sent once you deliver it.");
+        setNotice(payload.message || copy.notices.emailDraftOpened);
       } else {
-        setNotice(payload.message || "Email draft prepared, but no vendor email is attached.");
+        setNotice(payload.message || copy.notices.emailDraftNoVendor);
       }
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : "Failed to prepare purchase order email.");
+      setError(
+        sendError instanceof Error ? sendError.message : copy.errors.sendDraft,
+      );
     } finally {
       setSaving(false);
     }
@@ -539,87 +873,106 @@ export default function PurchaseOrdersManager({
       <section className="card">
         <div className="invoice-header-row">
           <div className="stack-cell">
-            <h2>Purchase Orders</h2>
-            <p className="muted">
-              Create supplier orders for {orgName}, tie them to jobs, and send from Outlook when connected. Without
-              Outlook, the portal falls back to a vendor email draft.
-            </p>
-            <p className="muted">Use the Operational Job page for dispatch, schedule, tracking, and customer communication.</p>
+            <h2>{copy.title}</h2>
+            <p className="muted">{copy.subtitle(orgName)}</p>
+            <p className="muted">{copy.operationalJobHint}</p>
           </div>
           <div className="portal-empty-actions">
             {selectedOperationalJobHref ? (
-              <button className="btn primary" type="button" onClick={() => router.push(selectedOperationalJobHref)}>
-                Open Operational Job
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => router.push(selectedOperationalJobHref)}
+              >
+                {copy.openOperationalJob}
               </button>
             ) : null}
             <button
-              className={selectedOperationalJobHref ? "btn secondary" : "btn primary"}
+              className={
+                selectedOperationalJobHref ? "btn secondary" : "btn primary"
+              }
               type="button"
               onClick={beginCreate}
             >
-              New Purchase Order
+              {copy.newPurchaseOrder}
             </button>
           </div>
         </div>
 
         <div className="grid three-col" style={{ marginTop: 16 }}>
           <article className="card" style={{ margin: 0 }}>
-            <p className="mini-label">Total POs</p>
+            <p className="mini-label">{copy.summary.total}</p>
             <h3 style={{ marginTop: 6 }}>{summary.totalCount}</h3>
           </article>
           <article className="card" style={{ margin: 0 }}>
-            <p className="mini-label">Draft / Sent</p>
+            <p className="mini-label">{copy.summary.draftSent}</p>
             <h3 style={{ marginTop: 6 }}>
               {summary.draftCount} / {summary.sentCount}
             </h3>
           </article>
           <article className="card" style={{ margin: 0 }}>
-            <p className="mini-label">Open Commitments</p>
-            <h3 style={{ marginTop: 6 }}>{formatCurrency(summary.totalOpen)}</h3>
+            <p className="mini-label">{copy.summary.openCommitments}</p>
+            <h3 style={{ marginTop: 6 }}>
+              {formatMoney(summary.totalOpen, displayLocale)}
+            </h3>
           </article>
         </div>
 
-        {notice ? <p className="form-status" style={{ marginTop: 12 }}>{notice}</p> : null}
-        {error ? <p className="form-status" style={{ marginTop: 12 }}>{error}</p> : null}
+        {notice ? (
+          <p className="form-status" style={{ marginTop: 12 }}>
+            {notice}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="form-status" style={{ marginTop: 12 }}>
+            {error}
+          </p>
+        ) : null}
       </section>
 
       <div className="job-records-grid">
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>Purchase Order Lookup</h3>
-              <p className="muted">Find job-linked supplier orders when you need procurement detail.</p>
+              <h3>{copy.lookup.title}</h3>
+              <p className="muted">{copy.lookup.subtitle}</p>
             </div>
           </div>
 
           <form className="filters" style={{ marginTop: 12 }}>
             <label>
-              Search
+              {copy.lookup.search}
               <input
                 type="search"
                 value={search}
                 onChange={(event) => setSearch(event.currentTarget.value)}
-                placeholder="PO number, vendor, title"
+                placeholder={copy.lookup.searchPlaceholder}
               />
             </label>
             <label>
-              Status
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value)}>
-                <option value="">All</option>
+              {copy.lookup.status}
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.currentTarget.value)}
+              >
+                <option value="">{copy.lookup.allStatuses}</option>
                 {purchaseOrderStatusOptions.map((status) => (
                   <option key={status} value={status}>
-                    {status.replace(/_/g, " ")}
+                    {copy.statuses[status]}
                   </option>
                 ))}
               </select>
             </label>
             <label>
-              Job
-              <select value={jobFilter} onChange={(event) => setJobFilter(event.currentTarget.value)}>
-                <option value="">All jobs</option>
+              {copy.lookup.job}
+              <select
+                value={jobFilter}
+                onChange={(event) => setJobFilter(event.currentTarget.value)}
+              >
+                <option value="">{copy.lookup.allJobs}</option>
                 {jobs.map((job) => (
                   <option key={job.id} value={job.id}>
-                    {job.customerName} • {job.projectType}
+                    {formatJobReferenceLabel(job)}
                   </option>
                 ))}
               </select>
@@ -630,21 +983,21 @@ export default function PurchaseOrdersManager({
             <table>
               <thead>
                 <tr>
-                  <th>PO</th>
-                  <th>Vendor</th>
-                  <th>Job</th>
-                  <th>Status</th>
-                  <th>Total</th>
+                  <th>{copy.lookup.table.po}</th>
+                  <th>{copy.lookup.table.vendor}</th>
+                  <th>{copy.lookup.table.job}</th>
+                  <th>{copy.lookup.table.status}</th>
+                  <th>{copy.lookup.table.total}</th>
                 </tr>
               </thead>
               <tbody>
                 {loadingList ? (
                   <tr>
-                    <td colSpan={5}>Loading purchase orders…</td>
+                    <td colSpan={5}>{copy.lookup.table.loading}</td>
                   </tr>
                 ) : purchaseOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={5}>No purchase orders yet.</td>
+                    <td colSpan={5}>{copy.lookup.table.empty}</td>
                   </tr>
                 ) : (
                   purchaseOrders.map((order) => (
@@ -658,9 +1011,13 @@ export default function PurchaseOrdersManager({
                         <div className="muted">{order.title}</div>
                       </td>
                       <td>{order.vendorName}</td>
-                      <td>{order.job ? `${order.job.customerName} • ${order.job.projectType}` : "-"}</td>
-                      <td>{order.status.replace(/_/g, " ")}</td>
-                      <td>{formatCurrency(order.total)}</td>
+                      <td>
+                        {order.job
+                          ? formatJobReferenceLabel(order.job)
+                          : copy.lookup.table.noJob}
+                      </td>
+                      <td>{copy.statuses[order.status]}</td>
+                      <td>{formatMoney(order.total, displayLocale)}</td>
                     </tr>
                   ))
                 )}
@@ -672,44 +1029,54 @@ export default function PurchaseOrdersManager({
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>{selectedPurchaseOrderId ? "Edit Purchase Order" : "New Purchase Order"}</h3>
-              <p className="muted">
-                Save the PO first, then send from Outlook or prepare a mail draft if Outlook is not connected for this
-                org.
-              </p>
+              <h3>
+                {selectedPurchaseOrderId
+                  ? copy.editor.editTitle
+                  : copy.editor.addTitle}
+              </h3>
+              <p className="muted">{copy.editor.subtitle}</p>
             </div>
           </div>
 
-          {loadingDetail || loadingReferences ? <p className="form-status">Loading…</p> : null}
+          {loadingDetail || loadingReferences ? (
+            <p className="form-status">{copy.editor.loading}</p>
+          ) : null}
 
           <div className="auth-form" style={{ marginTop: 12 }}>
             <div className="grid two-col">
               <label>
-                Job
-                <select value={form.jobId} onChange={(event) => updateForm("jobId", event.currentTarget.value)} disabled={!canManage}>
-                  <option value="">Standalone PO</option>
+                {copy.editor.job}
+                <select
+                  value={form.jobId}
+                  onChange={(event) =>
+                    updateForm("jobId", event.currentTarget.value)
+                  }
+                  disabled={!canManage}
+                >
+                  <option value="">{copy.editor.standalonePo}</option>
                   {jobs.map((job) => (
                     <option key={job.id} value={job.id}>
-                      {job.customerName} • {job.projectType}
+                      {formatJobReferenceLabel(job)}
                     </option>
                   ))}
                 </select>
               </label>
               <label>
-                Status
+                {copy.editor.status}
                 <select
                   value={form.status}
                   onChange={(event) =>
                     updateForm(
                       "status",
-                      event.currentTarget.value as (typeof purchaseOrderStatusOptions)[number],
+                      event.currentTarget
+                        .value as (typeof purchaseOrderStatusOptions)[number],
                     )
                   }
                   disabled={!canManage}
                 >
                   {purchaseOrderStatusOptions.map((status) => (
                     <option key={status} value={status}>
-                      {status.replace(/_/g, " ")}
+                      {copy.statuses[status]}
                     </option>
                   ))}
                 </select>
@@ -718,56 +1085,97 @@ export default function PurchaseOrdersManager({
 
             <div className="grid two-col">
               <label>
-                Vendor name
-                <input value={form.vendorName} onChange={(event) => updateForm("vendorName", event.currentTarget.value)} disabled={!canManage} />
+                {copy.editor.vendorName}
+                <input
+                  value={form.vendorName}
+                  onChange={(event) =>
+                    updateForm("vendorName", event.currentTarget.value)
+                  }
+                  disabled={!canManage}
+                />
               </label>
               <label>
-                PO title
-                <input value={form.title} onChange={(event) => updateForm("title", event.currentTarget.value)} disabled={!canManage} />
+                {copy.editor.poTitle}
+                <input
+                  value={form.title}
+                  onChange={(event) =>
+                    updateForm("title", event.currentTarget.value)
+                  }
+                  disabled={!canManage}
+                />
               </label>
             </div>
 
             <div className="grid two-col">
               <label>
-                Vendor email
-                <input value={form.vendorEmail} onChange={(event) => updateForm("vendorEmail", event.currentTarget.value)} disabled={!canManage} />
+                {copy.editor.vendorEmail}
+                <input
+                  value={form.vendorEmail}
+                  onChange={(event) =>
+                    updateForm("vendorEmail", event.currentTarget.value)
+                  }
+                  disabled={!canManage}
+                />
               </label>
               <label>
-                Vendor phone
-                <input value={form.vendorPhone} onChange={(event) => updateForm("vendorPhone", event.currentTarget.value)} disabled={!canManage} />
+                {copy.editor.vendorPhone}
+                <input
+                  value={form.vendorPhone}
+                  onChange={(event) =>
+                    updateForm("vendorPhone", event.currentTarget.value)
+                  }
+                  disabled={!canManage}
+                />
               </label>
             </div>
 
             <label>
-              Vendor address
+              {copy.editor.vendorAddress}
               <textarea
                 rows={2}
                 value={form.vendorAddress}
-                onChange={(event) => updateForm("vendorAddress", event.currentTarget.value)}
+                onChange={(event) =>
+                  updateForm("vendorAddress", event.currentTarget.value)
+                }
                 disabled={!canManage}
               />
             </label>
 
             <label>
-              Notes
-              <textarea rows={3} value={form.notes} onChange={(event) => updateForm("notes", event.currentTarget.value)} disabled={!canManage} />
+              {copy.editor.notes}
+              <textarea
+                rows={3}
+                value={form.notes}
+                onChange={(event) =>
+                  updateForm("notes", event.currentTarget.value)
+                }
+                disabled={!canManage}
+              />
             </label>
 
             <div className="grid two-col">
               <label>
-                Tax rate %
+                {copy.editor.taxRate}
                 <input
                   inputMode="decimal"
                   value={form.taxRatePercent}
-                  onChange={(event) => updateForm("taxRatePercent", event.currentTarget.value)}
+                  onChange={(event) =>
+                    updateForm("taxRatePercent", event.currentTarget.value)
+                  }
                   disabled={!canManage}
                 />
               </label>
-              <div className="stack-cell" style={{ justifyContent: "flex-end" }}>
-                <p className="mini-label">Current totals</p>
+              <div
+                className="stack-cell"
+                style={{ justifyContent: "flex-end" }}
+              >
+                <p className="mini-label">{copy.editor.currentTotals}</p>
                 <p className="muted">
-                  Subtotal {formatCurrency(totals.subtotal)} • Tax {formatCurrency(totals.taxAmount)} • Total{" "}
-                  {formatCurrency(totals.total)}
+                  {copy.editor.subtotal}{" "}
+                  {formatMoney(totals.subtotal, displayLocale)} •{" "}
+                  {copy.editor.tax}{" "}
+                  {formatMoney(totals.taxAmount, displayLocale)} •{" "}
+                  {copy.editor.total} {formatMoney(totals.total, displayLocale)}
                 </p>
               </div>
             </div>
@@ -776,27 +1184,39 @@ export default function PurchaseOrdersManager({
           <section className="card" style={{ marginTop: 16 }}>
             <div className="invoice-header-row">
               <div className="stack-cell">
-                <h3>Line Items</h3>
-                <p className="muted">Build the PO from catalog materials or add custom supplier items.</p>
+                <h3>{copy.lineItems.title}</h3>
+                <p className="muted">{copy.lineItems.subtitle}</p>
               </div>
               <div className="portal-empty-actions">
                 <select
                   value={selectedCatalogMaterialId}
-                  onChange={(event) => setSelectedCatalogMaterialId(event.currentTarget.value)}
+                  onChange={(event) =>
+                    setSelectedCatalogMaterialId(event.currentTarget.value)
+                  }
                   disabled={!canManage}
                 >
-                  <option value="">Add catalog material</option>
+                  <option value="">{copy.lineItems.addCatalogMaterial}</option>
                   {materials.map((material) => (
                     <option key={material.id} value={material.id}>
                       {material.name} • {material.category}
                     </option>
                   ))}
                 </select>
-                <button className="btn secondary" type="button" onClick={addCatalogMaterial} disabled={!canManage}>
-                  Add Catalog Item
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={addCatalogMaterial}
+                  disabled={!canManage}
+                >
+                  {copy.lineItems.addCatalogItem}
                 </button>
-                <button className="btn secondary" type="button" onClick={addCustomLine} disabled={!canManage}>
-                  Add Custom Line
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={addCustomLine}
+                  disabled={!canManage}
+                >
+                  {copy.lineItems.addCustomLine}
                 </button>
               </div>
             </div>
@@ -805,11 +1225,11 @@ export default function PurchaseOrdersManager({
               <table>
                 <thead>
                   <tr>
-                    <th>Item</th>
-                    <th>Qty</th>
-                    <th>Unit</th>
-                    <th>Unit Cost</th>
-                    <th>Total</th>
+                    <th>{copy.lineItems.table.item}</th>
+                    <th>{copy.lineItems.table.qty}</th>
+                    <th>{copy.lineItems.table.unit}</th>
+                    <th>{copy.lineItems.table.unitCost}</th>
+                    <th>{copy.lineItems.table.total}</th>
                     <th />
                   </tr>
                 </thead>
@@ -819,15 +1239,25 @@ export default function PurchaseOrdersManager({
                       <td style={{ minWidth: 220 }}>
                         <input
                           value={item.name}
-                          onChange={(event) => updateLineItem(index, { name: event.currentTarget.value })}
-                          placeholder="Drain rock / block / freight"
+                          onChange={(event) =>
+                            updateLineItem(index, {
+                              name: event.currentTarget.value,
+                            })
+                          }
+                          placeholder={copy.lineItems.table.namePlaceholder}
                           disabled={!canManage}
                         />
                         <textarea
                           rows={2}
                           value={item.description}
-                          onChange={(event) => updateLineItem(index, { description: event.currentTarget.value })}
-                          placeholder="Optional spec or vendor note"
+                          onChange={(event) =>
+                            updateLineItem(index, {
+                              description: event.currentTarget.value,
+                            })
+                          }
+                          placeholder={
+                            copy.lineItems.table.descriptionPlaceholder
+                          }
                           disabled={!canManage}
                           style={{ marginTop: 8 }}
                         />
@@ -836,14 +1266,22 @@ export default function PurchaseOrdersManager({
                         <input
                           inputMode="decimal"
                           value={item.quantity}
-                          onChange={(event) => updateLineItem(index, { quantity: event.currentTarget.value })}
+                          onChange={(event) =>
+                            updateLineItem(index, {
+                              quantity: event.currentTarget.value,
+                            })
+                          }
                           disabled={!canManage}
                         />
                       </td>
                       <td>
                         <input
                           value={item.unit}
-                          onChange={(event) => updateLineItem(index, { unit: event.currentTarget.value })}
+                          onChange={(event) =>
+                            updateLineItem(index, {
+                              unit: event.currentTarget.value,
+                            })
+                          }
                           disabled={!canManage}
                         />
                       </td>
@@ -851,14 +1289,23 @@ export default function PurchaseOrdersManager({
                         <input
                           inputMode="decimal"
                           value={item.unitCost}
-                          onChange={(event) => updateLineItem(index, { unitCost: event.currentTarget.value })}
+                          onChange={(event) =>
+                            updateLineItem(index, {
+                              unitCost: event.currentTarget.value,
+                            })
+                          }
                           disabled={!canManage}
                         />
                       </td>
-                      <td>{formatCurrency(item.total)}</td>
+                      <td>{formatMoney(item.total, displayLocale)}</td>
                       <td>
-                        <button className="btn secondary" type="button" onClick={() => removeLineItem(index)} disabled={!canManage}>
-                          Remove
+                        <button
+                          className="btn secondary"
+                          type="button"
+                          onClick={() => removeLineItem(index)}
+                          disabled={!canManage}
+                        >
+                          {copy.lineItems.table.remove}
                         </button>
                       </td>
                     </tr>
@@ -869,8 +1316,17 @@ export default function PurchaseOrdersManager({
           </section>
 
           <div className="portal-empty-actions" style={{ marginTop: 16 }}>
-            <button className="btn primary" type="button" onClick={() => void savePurchaseOrder()} disabled={saving || !canManage}>
-              {saving ? "Saving..." : selectedPurchaseOrderId ? "Save PO" : "Create PO"}
+            <button
+              className="btn primary"
+              type="button"
+              onClick={() => void savePurchaseOrder()}
+              disabled={saving || !canManage}
+            >
+              {saving
+                ? copy.actions.saving
+                : selectedPurchaseOrderId
+                  ? copy.actions.save
+                  : copy.actions.create}
             </button>
             <button
               className="btn secondary"
@@ -878,7 +1334,7 @@ export default function PurchaseOrdersManager({
               onClick={() => void prepareEmailDraft()}
               disabled={saving || !selectedPurchaseOrderId}
             >
-              Send / Draft Email
+              {copy.actions.sendEmail}
             </button>
             <button
               className="btn secondary"
@@ -886,7 +1342,7 @@ export default function PurchaseOrdersManager({
               onClick={() => void cancelSelectedPurchaseOrder()}
               disabled={saving || !selectedPurchaseOrderId || !canManage}
             >
-              Cancel PO
+              {copy.actions.cancelPo}
             </button>
           </div>
         </section>

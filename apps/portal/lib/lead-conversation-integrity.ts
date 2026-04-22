@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
+import { isBookingEventType as isLeadBookingEvent } from "@/lib/booking-read-model";
 import { prisma } from "@/lib/prisma";
-import { isLeadBookingEvent } from "@/lib/lead-booking";
 
 const INBOUND_CONVERSATION_EVENT_TYPES = ["INBOUND_SMS_RECEIVED", "INBOUND_CALL_RECEIVED", "VOICEMAIL_LEFT"] as const;
 const OUTBOUND_CONVERSATION_EVENT_TYPES = ["OUTBOUND_SMS_SENT"] as const;

@@ -60,3 +60,22 @@ export async function resolveOrganizationLogoUrl(
 
   return signedUrl;
 }
+
+export async function resolveOrganizationLogoUrlBestEffort(
+  input: ResolveOrganizationLogoUrlInput,
+): Promise<string | null> {
+  try {
+    return await resolveOrganizationLogoUrl({
+      ...input,
+      // Avoid blocking page renders on remote cache round-trips for invoice/detail style pages.
+      useCache: input.useCache ?? false,
+    });
+  } catch (error) {
+    console.error("Failed to resolve organization logo URL. Continuing without logo.", {
+      orgId: input.orgId,
+      logoPhotoId: input.logoPhotoId || null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
