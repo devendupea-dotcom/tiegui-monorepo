@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "eslint . --quiet",
     "lint:warnings": "eslint .",
-    "check-types": "tsc --noEmit",
+    "check-types": "prisma generate && tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.mjs",
     "backfill:communication-events": "ts-node scripts/backfill-communication-events.ts",
     "backfill:event-job-links": "node --import tsx scripts/backfill-event-job-links.ts",
