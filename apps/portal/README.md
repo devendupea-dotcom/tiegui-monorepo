@@ -261,6 +261,13 @@ Phase 1 integrations readiness UI, only if those providers should connect in sta
 - `JOBBER_CLIENT_ID`, `JOBBER_CLIENT_SECRET`, `JOBBER_REDIRECT_URI`
 - `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REDIRECT_URI`
 
+Billing + collections readiness, if Stripe pay links or recurring billing should work in staging:
+
+- `STRIPE_SECRET_KEY`
+- `STRIPE_CONNECT_CLIENT_ID`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_REDIRECT_URI` optional
+
 Phase 2 only. Do not treat these as required for the Phase 1 go-live:
 
 - `TWILIO_TOKEN_ENCRYPTION_KEY`
@@ -308,6 +315,7 @@ Phase 1 core release does not require cron.
 For Phase 2 staging and later production activation, install a secured job that sends:
 
 - `POST /api/cron/intake`
+- `POST /api/cron/invoice-collections`
 - Header: `Authorization: Bearer <CRON_SECRET>`
 
 Do not rely on cron-driven missed-call intros or follow-ups until Twilio staging tests pass.
@@ -316,7 +324,7 @@ If the portal is deployed on a Vercel Hobby plan, Vercel's built-in cron limits 
 
 - every 5 minutes: `/api/cron/intake`, `/api/cron/integrations/refresh`, `/api/cron/google/sync`
 - every 30 minutes: `/api/cron/ghost-buster`
-- daily at 06:00: `/api/cron/invoice-assist`
+- daily at 06:00: `/api/cron/invoice-assist`, `/api/cron/invoice-collections`
 
 A ready-to-paste Apps Script template lives at `apps/portal/ops/google-apps-script/production-cron-scheduler.gs`.
 
