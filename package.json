@@ -10,6 +10,7 @@
     "test": "turbo run test"
   },
   "devDependencies": {
+    "next": "^16.2.4",
     "prettier": "^3.7.4",
     "turbo": "^2.8.1",
     "typescript": "5.9.2"

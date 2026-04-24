@@ -24,11 +24,12 @@ type CalendarItem = {
   overdue: boolean;
 };
 
-export default async function HqCalendarPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function HqCalendarPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const orgId = getParam(searchParams?.orgId);
   const assignedToUserId = getParam(searchParams?.assignedToUserId);
 

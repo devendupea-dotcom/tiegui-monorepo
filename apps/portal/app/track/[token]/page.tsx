@@ -9,13 +9,14 @@ export const metadata = {
   },
 };
 
-export default async function JobTrackingPage({
-  params,
-}: {
-  params: {
-    token: string;
-  };
-}) {
+export default async function JobTrackingPage(
+  props: {
+    params: Promise<{
+      token: string;
+    }>;
+  }
+) {
+  const params = await props.params;
   try {
     const tracking = await getJobTrackingByToken(params.token);
 

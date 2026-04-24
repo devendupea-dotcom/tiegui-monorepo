@@ -39,7 +39,7 @@ const steps = [
     href: "/app/invoices",
     actionKey: "dashboard.workflow.steps.invoice.action",
   },
-];
+] as const;
 
 export default async function WorkflowGuidanceCard({ orgId, internalUser }: WorkflowGuidanceCardProps) {
   const t = await getRequestTranslator();

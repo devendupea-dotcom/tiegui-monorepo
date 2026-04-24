@@ -27,11 +27,12 @@ function isLeadPriority(value: string): value is (typeof leadPriorityOptions)[nu
   return leadPriorityOptions.some((option) => option === value);
 }
 
-export default async function HqInboxPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function HqInboxPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const status = getParam(searchParams?.status);
   const assignedToUserId = getParam(searchParams?.assignedToUserId);
   const orgId = getParam(searchParams?.orgId);

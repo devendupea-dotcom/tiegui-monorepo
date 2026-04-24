@@ -7,12 +7,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     token: string;
-  };
+  }>;
 };
 
-export async function GET(_: Request, { params }: RouteContext) {
+export async function GET(_: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const estimate = await getEstimateShareByToken(params.token);
     return NextResponse.json({

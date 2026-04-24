@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
-export default function HqOrgPage({ params }: { params: { orgId: string } }) {
+export default async function HqOrgPage(props: { params: Promise<{ orgId: string }> }) {
+  const params = await props.params;
   redirect(`/hq/businesses/${params.orgId}`);
 }

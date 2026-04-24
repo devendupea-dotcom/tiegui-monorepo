@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
-import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
-import { sendOutboundSms } from "@/lib/sms";
+import { sendManualLeadSms } from "@/lib/manual-outbound-sms";
 import {
   AppApiError,
   assertCanMutateLeadJob,
@@ -16,7 +14,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { leadId: string };
+  params: Promise<{ leadId: string }>;
 };
 
 async function assertWorkerCanViewLead(input: { actorId: string; orgId: string; leadId: string }) {
@@ -79,7 +77,8 @@ async function getScopedLeadOrResponse(leadId: string) {
   }
 }
 
-export async function GET(_req: Request, { params }: RouteContext) {
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   const leadId = params.leadId;
   const scoped = await getScopedLeadOrResponse(leadId);
   if ("response" in scoped) {
@@ -106,7 +105,8 @@ export async function GET(_req: Request, { params }: RouteContext) {
   return NextResponse.json({ ok: true, messages });
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   const leadId = params.leadId;
   const scoped = await getScopedLeadOrResponse(leadId);
   if ("response" in scoped) {
@@ -147,148 +147,33 @@ export async function POST(req: Request, { params }: RouteContext) {
     return NextResponse.json({ ok: false, error: "Message must be 1600 characters or less." }, { status: 400 });
   }
 
-  const organization = await prisma.organization.findUnique({
-    where: { id: scoped.lead.orgId },
-    select: {
-      smsFromNumberE164: true,
-      twilioConfig: {
-        select: {
-          phoneNumber: true,
-        },
-      },
-    },
-  });
-
-  const resolvedFromNumber =
-    fromNumberE164 ||
-    normalizeE164(organization?.twilioConfig?.phoneNumber || null) ||
-    normalizeE164(organization?.smsFromNumberE164 || null);
-
-  if (!resolvedFromNumber) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "No outbound SMS number is configured for this business yet.",
-      },
-      { status: 400 },
-    );
-  }
-
-  const now = new Date();
-  const pausedUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-
-  const providerResult = await sendOutboundSms({
-    orgId: scoped.lead.orgId,
-    fromNumberE164: resolvedFromNumber,
-    toNumberE164: scoped.lead.phoneE164,
+  const result = await sendManualLeadSms({
+    actor: scoped.actor,
+    lead: scoped.lead,
     body: cleanedBody,
+    fromNumberE164,
   });
-  const finalFromNumber = providerResult.resolvedFromNumberE164 || resolvedFromNumber;
 
-  if (!finalFromNumber) {
+  if (!result.ok) {
     return NextResponse.json(
       {
         ok: false,
-        error: providerResult.notice || "No outbound SMS number is configured for this business yet.",
+        error: result.error,
+        notice: result.notice,
+        deliveryState: result.deliveryState,
+        liveSend: result.liveSend,
+        readinessCode: result.readinessCode,
       },
-      { status: 400 },
+      { status: result.httpStatus },
     );
   }
 
-  const created = await prisma.$transaction(async (tx) => {
-    const message = await tx.message.create({
-      data: {
-        orgId: scoped.lead.orgId,
-        leadId: scoped.lead.id,
-        direction: "OUTBOUND",
-        type: "MANUAL",
-        fromNumberE164: finalFromNumber,
-        toNumberE164: scoped.lead.phoneE164,
-        body: cleanedBody,
-        provider: "TWILIO",
-        providerMessageSid: providerResult.providerMessageSid,
-        status: providerResult.status,
-      },
-      select: {
-        id: true,
-        direction: true,
-        type: true,
-        fromNumberE164: true,
-        toNumberE164: true,
-        body: true,
-        provider: true,
-        providerMessageSid: true,
-        status: true,
-        createdAt: true,
-      },
-    });
-
-    await recordOutboundSmsCommunicationEvent(tx, {
-      orgId: scoped.lead.orgId,
-      leadId: scoped.lead.id,
-      contactId: scoped.lead.customerId,
-      conversationId: scoped.lead.conversationState?.id || null,
-      messageId: message.id,
-      actorUserId: scoped.actor.id || null,
-      body: cleanedBody,
-      fromNumberE164: finalFromNumber,
-      toNumberE164: scoped.lead.phoneE164,
-      providerMessageSid: providerResult.providerMessageSid,
-      status: providerResult.status,
-      occurredAt: message.createdAt,
-    });
-
-    await tx.lead.update({
-      where: { id: scoped.lead.id },
-      data: {
-        lastContactedAt: now,
-        lastOutboundAt: now,
-      },
-    });
-
-    await tx.leadConversationState.updateMany({
-      where: {
-        leadId: scoped.lead.id,
-        stage: {
-          in: ["NEW", "ASKED_WORK", "ASKED_ADDRESS", "ASKED_TIMEFRAME", "OFFERED_BOOKING", "HUMAN_TAKEOVER"],
-        },
-      },
-      data: {
-        stage: "HUMAN_TAKEOVER",
-        pausedUntil,
-        nextFollowUpAt: null,
-        followUpStep: 0,
-        bookingOptions: Prisma.DbNull,
-      },
-    });
-
-    await tx.leadConversationAuditEvent.create({
-      data: {
-        orgId: scoped.lead.orgId,
-        leadId: scoped.lead.id,
-        action: "TAKEOVER_TRIGGERED",
-        metadataJson: {
-          reason: "Manual outbound message",
-          actorUserId: scoped.actor.id || "unknown",
-          pausedUntil: pausedUntil.toISOString(),
-        },
-      },
-    });
-
-    await tx.smsDispatchQueue.updateMany({
-      where: {
-        orgId: scoped.lead.orgId,
-        leadId: scoped.lead.id,
-        status: "QUEUED",
-      },
-      data: {
-        status: "FAILED",
-        lastError: "Canceled after manual outbound message.",
-      },
-    });
-
-    return message;
+  return NextResponse.json({
+    ok: true,
+    message: result.message,
+    notice: result.notice,
+    deliveryState: result.deliveryState,
+    liveSend: result.liveSend,
+    readinessCode: result.readinessCode,
   });
-
-  return NextResponse.json({ ok: true, message: created, notice: providerResult.notice });
 }

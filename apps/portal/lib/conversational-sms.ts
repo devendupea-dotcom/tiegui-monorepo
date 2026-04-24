@@ -19,7 +19,6 @@ import { rankConversationalSmsSlotCandidates } from "@/lib/conversational-sms-sc
 import { renderSmsTemplate } from "@/lib/conversational-sms-templates";
 import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 import {
-  TAKEOVER_PATTERN,
   buildSlotList,
   buildSlotTemplateContext,
   buildTemplateBundle,
@@ -34,6 +33,7 @@ import {
   parseTimeframe,
   parseWorkAndLocation,
   sanitizeMessageBody,
+  shouldRouteInboundSmsToHuman,
   type ConversationLead,
   type ConversationOrgConfig,
   type SlotOption,
@@ -41,7 +41,7 @@ import {
   withSignature,
 } from "@/lib/conversational-sms-core";
 import {
-  getConversationalSmsLlmReplyBody,
+  getTrustedConversationalSmsLlmReplyBody,
   hasConversationalSmsLlmExtractionConfidence,
   hasConversationalSmsLlmHandoffConfidence,
 } from "@/lib/conversational-sms-llm-contract";
@@ -815,19 +815,19 @@ export async function handleConversationalSmsInbound(input: {
     return { stage: state.stage, action: "IGNORED" };
   }
 
-  if (TAKEOVER_PATTERN.test(body)) {
+  if (shouldRouteInboundSmsToHuman(body)) {
     await activateHumanTakeover({
       organization,
       lead,
       stateId: state.id,
       currentStage: state.stage,
-      reason: "Lead requested phone follow-up",
+      reason: "Lead asked for human follow-up",
       inboundBody: body,
       workSummary: state.workSummary,
       addressText: state.addressText,
       addressCity: state.addressCity,
       timeframe: state.timeframe,
-      sendAck: false,
+      sendAck: true,
       templates,
     });
     return { stage: "HUMAN_TAKEOVER", action: "TAKEOVER" };
@@ -978,7 +978,7 @@ export async function handleConversationalSmsInbound(input: {
         lead,
         stateId: state.id,
         body: withSignature({
-          body: preferLlmReplyBody(askTimeframe, getConversationalSmsLlmReplyBody(llmDecision)),
+          body: preferLlmReplyBody(askTimeframe, getTrustedConversationalSmsLlmReplyBody(llmDecision)),
           websiteSignature: organization.smsWebsiteSignature,
         }),
         messageType: "AUTOMATION",
@@ -1024,7 +1024,7 @@ export async function handleConversationalSmsInbound(input: {
               bizName: organization.name,
               missingField: formatMissingField("ASKED_WORK", templates.locale),
             }),
-            getConversationalSmsLlmReplyBody(llmDecision),
+            getTrustedConversationalSmsLlmReplyBody(llmDecision),
           ),
           websiteSignature: organization.smsWebsiteSignature,
         }),
@@ -1069,7 +1069,7 @@ export async function handleConversationalSmsInbound(input: {
       body: withSignature({
         body: preferLlmReplyBody(
           renderSmsTemplate(templates.askAddress, { bizName: organization.name }),
-          getConversationalSmsLlmReplyBody(llmDecision),
+          getTrustedConversationalSmsLlmReplyBody(llmDecision),
         ),
         websiteSignature: organization.smsWebsiteSignature,
       }),
@@ -1172,7 +1172,7 @@ export async function handleConversationalSmsInbound(input: {
               bizName: organization.name,
               workingHours: organization.smsWorkingHoursText || "",
             }),
-            getConversationalSmsLlmReplyBody(llmDecision),
+            getTrustedConversationalSmsLlmReplyBody(llmDecision),
           ),
           websiteSignature: organization.smsWebsiteSignature,
         }),
@@ -1196,11 +1196,11 @@ export async function handleConversationalSmsInbound(input: {
             bizName: organization.name,
             missingField: formatMissingField("ASKED_ADDRESS", templates.locale),
           }),
-          getConversationalSmsLlmReplyBody(replyLlmDecision),
+          getTrustedConversationalSmsLlmReplyBody(replyLlmDecision),
         )
       : preferLlmReplyBody(
           renderSmsTemplate(templates.askAddress, { bizName: organization.name }),
-          getConversationalSmsLlmReplyBody(replyLlmDecision),
+          getTrustedConversationalSmsLlmReplyBody(replyLlmDecision),
         );
     await queueConversationReply({
       organization,
@@ -1261,7 +1261,7 @@ export async function handleConversationalSmsInbound(input: {
               bizName: organization.name,
               missingField: formatMissingField("ASKED_TIMEFRAME", templates.locale),
             }),
-            getConversationalSmsLlmReplyBody(llmDecision),
+            getTrustedConversationalSmsLlmReplyBody(llmDecision),
           ),
           websiteSignature: organization.smsWebsiteSignature,
         }),
@@ -1337,7 +1337,7 @@ export async function handleConversationalSmsInbound(input: {
         lead,
         stateId: state.id,
         body: withSignature({
-          body: preferLlmReplyBody(fallback, getConversationalSmsLlmReplyBody(llmDecision)),
+          body: preferLlmReplyBody(fallback, getTrustedConversationalSmsLlmReplyBody(llmDecision)),
           websiteSignature: organization.smsWebsiteSignature,
         }),
         messageType: "AUTOMATION",
@@ -1355,7 +1355,7 @@ export async function handleConversationalSmsInbound(input: {
         lead,
         stateId: state.id,
         body: withSignature({
-          body: preferLlmReplyBody(offer, getConversationalSmsLlmReplyBody(llmDecision)),
+          body: preferLlmReplyBody(offer, getTrustedConversationalSmsLlmReplyBody(llmDecision)),
           websiteSignature: organization.smsWebsiteSignature,
         }),
         messageType: "AUTOMATION",
@@ -1466,7 +1466,7 @@ export async function handleConversationalSmsInbound(input: {
       lead,
       stateId: state.id,
       body: withSignature({
-        body: preferLlmReplyBody(`${prompt}${slotList}`, getConversationalSmsLlmReplyBody(llmDecision)),
+        body: preferLlmReplyBody(`${prompt}${slotList}`, getTrustedConversationalSmsLlmReplyBody(llmDecision)),
         websiteSignature: organization.smsWebsiteSignature,
       }),
       messageType: "AUTOMATION",

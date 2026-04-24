@@ -1,12 +1,13 @@
-import { cache } from "react";
 import { cookies, headers } from "next/headers";
-import type { AbstractIntlMessages } from "next-intl";
 import { createTranslator } from "next-intl";
+import type enMessages from "@/messages/en.json";
 import {
   PORTAL_DEFAULT_LOCALE,
   PORTAL_LOCALE_COOKIE,
   type PortalLocale,
 } from "./i18n-shared";
+
+type PortalMessages = typeof enMessages;
 
 function isSupportedLocale(value: string | null | undefined): value is PortalLocale {
   return value === "en" || value === "es";
@@ -40,40 +41,41 @@ function detectLocaleFromAcceptLanguage(headerValue: string | null): PortalLocal
   return PORTAL_DEFAULT_LOCALE;
 }
 
-export const getRequestLocale = cache((): PortalLocale => {
-  const cookieLocale = normalizeLocale(cookies().get(PORTAL_LOCALE_COOKIE)?.value);
+export async function getRequestLocale(): Promise<PortalLocale> {
+  const [cookieStore, headerStore] = await Promise.all([cookies(), headers()]);
+  const cookieLocale = normalizeLocale(cookieStore.get(PORTAL_LOCALE_COOKIE)?.value);
   if (cookieLocale) {
     return cookieLocale;
   }
-  return detectLocaleFromAcceptLanguage(headers().get("accept-language"));
-});
+  return detectLocaleFromAcceptLanguage(headerStore.get("accept-language"));
+}
 
-const getMessagesForLocale = cache(async (locale: PortalLocale): Promise<AbstractIntlMessages> => {
+async function getMessagesForLocale(locale: PortalLocale): Promise<PortalMessages> {
   switch (locale) {
     case "es":
-      return (await import("@/messages/es.json")).default as AbstractIntlMessages;
+      return (await import("@/messages/es.json")).default as PortalMessages;
     case "en":
     default:
-      return (await import("@/messages/en.json")).default as AbstractIntlMessages;
+      return (await import("@/messages/en.json")).default;
   }
-});
+}
 
-export const getRequestMessages = cache(async (): Promise<AbstractIntlMessages> => {
-  const locale = getRequestLocale();
+export async function getRequestMessages(): Promise<PortalMessages> {
+  const locale = await getRequestLocale();
   return getMessagesForLocale(locale);
-});
+}
 
-export const getRequestTranslator = cache(async () => {
-  const locale = getRequestLocale();
+export async function getRequestTranslator() {
+  const locale = await getRequestLocale();
   const messages = await getMessagesForLocale(locale);
   return createTranslator({
     locale,
     messages,
   });
-});
+}
 
 export async function getRequestI18nContext() {
-  const locale = getRequestLocale();
+  const locale = await getRequestLocale();
   const messages = await getMessagesForLocale(locale);
   return { locale, messages };
 }

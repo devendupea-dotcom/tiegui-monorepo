@@ -33,6 +33,7 @@ import {
 } from "@/lib/estimates";
 import { getDispatchTodayDateKey } from "@/lib/dispatch";
 import type { MaterialListItem } from "@/lib/materials";
+import type enMessages from "@/messages/en.json";
 
 type EstimateManagerProps = {
   orgId: string;
@@ -98,6 +99,18 @@ type EstimateFormState = {
   status: (typeof estimateStatusOptions)[number];
   lineItems: EstimateItemRow[];
 };
+
+type StatusTranslationKey = keyof typeof enMessages.status;
+
+const ESTIMATE_STATUS_TRANSLATION_KEYS = new Set<StatusTranslationKey>([
+  "draft",
+  "sent",
+  "viewed",
+  "approved",
+  "declined",
+  "expired",
+  "converted",
+]);
 
 type EstimateManagerCopy = {
   page: {
@@ -1104,9 +1117,12 @@ function formatShareStateLabelLocalized(
 
 function formatEstimateStatusLabelLocalized(
   status: string,
-  translate: (key: string) => string,
+  translate: (key: StatusTranslationKey) => string,
 ): string {
-  return translate(status.toLowerCase());
+  const key = status.toLowerCase() as StatusTranslationKey;
+  return ESTIMATE_STATUS_TRANSLATION_KEYS.has(key)
+    ? translate(key)
+    : status.replace(/_/g, " ");
 }
 
 function formatEstimateItemTypeLabelLocalized(

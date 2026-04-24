@@ -1,7 +1,11 @@
 import "server-only";
 
 import { addDays, addMonths, startOfMonth, startOfWeek } from "date-fns";
-import type { CalendarAccessRole, MarketingChannel, Prisma as PrismaNamespace } from "@prisma/client";
+import type {
+  CalendarAccessRole,
+  MarketingChannel,
+  Prisma as PrismaNamespace,
+} from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { activeBookingEventStatuses } from "@/lib/booking-read-model";
 import {
@@ -19,6 +23,7 @@ import {
 } from "@/lib/calendar/dates";
 import { getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { prisma } from "@/lib/prisma";
+import { resolveTwilioMessagingReadiness } from "@/lib/twilio-readiness";
 import {
   listWorkspaceUsers,
   sortWorkspaceUsersByCalendarRoleThenCreatedAt,
@@ -33,7 +38,12 @@ export type AnalyticsViewer = {
   orgId: string;
 };
 
-type AnalyticsChannel = "GOOGLE_ADS" | "META_ADS" | "ORGANIC" | "REFERRAL" | "OTHER";
+type AnalyticsChannel =
+  | "GOOGLE_ADS"
+  | "META_ADS"
+  | "ORGANIC"
+  | "REFERRAL"
+  | "OTHER";
 
 type ChannelMetrics = {
   key: AnalyticsChannel;
@@ -122,13 +132,21 @@ type WorkerLikeFilter = {
     | { assignedToUserId: string }
     | { createdByUserId: string }
     | { events: { some: { assignedToUserId: string } } }
-    | { events: { some: { workerAssignments: { some: { workerUserId: string } } } } }
+    | {
+        events: {
+          some: { workerAssignments: { some: { workerUserId: string } } };
+        };
+      }
   >;
 };
 
 const OPEN_INVOICE_STATUSES = ["DRAFT", "SENT", "PARTIAL", "OVERDUE"] as const;
 const REVENUE_STATUS_FALLBACK = ["PAID", "PARTIAL"] as const;
-const DISPLAY_CHANNELS: Array<{ key: AnalyticsChannel; label: string; editable: boolean }> = [
+const DISPLAY_CHANNELS: Array<{
+  key: AnalyticsChannel;
+  label: string;
+  editable: boolean;
+}> = [
   { key: "GOOGLE_ADS", label: "Google Ads", editable: true },
   { key: "META_ADS", label: "Facebook / Instagram", editable: true },
   { key: "ORGANIC", label: "Organic", editable: false },
@@ -137,7 +155,11 @@ const DISPLAY_CHANNELS: Array<{ key: AnalyticsChannel; label: string; editable: 
 ];
 
 function canViewFinancialAnalytics(viewer: AnalyticsViewer): boolean {
-  return viewer.internalUser || viewer.calendarAccessRole === "OWNER" || viewer.calendarAccessRole === "ADMIN";
+  return (
+    viewer.internalUser ||
+    viewer.calendarAccessRole === "OWNER" ||
+    viewer.calendarAccessRole === "ADMIN"
+  );
 }
 
 function isWorkerScoped(viewer: AnalyticsViewer): boolean {
@@ -151,7 +173,11 @@ function buildLeadScope(viewer: AnalyticsViewer): WorkerLikeFilter | undefined {
       { assignedToUserId: viewer.id },
       { createdByUserId: viewer.id },
       { events: { some: { assignedToUserId: viewer.id } } },
-      { events: { some: { workerAssignments: { some: { workerUserId: viewer.id } } } } },
+      {
+        events: {
+          some: { workerAssignments: { some: { workerUserId: viewer.id } } },
+        },
+      },
     ],
   };
 }
@@ -173,7 +199,9 @@ function buildEventScope(viewer: AnalyticsViewer):
   };
 }
 
-function buildInvoiceScope(viewer: AnalyticsViewer): PrismaNamespace.InvoiceWhereInput | undefined {
+function buildInvoiceScope(
+  viewer: AnalyticsViewer,
+): PrismaNamespace.InvoiceWhereInput | undefined {
   if (!isWorkerScoped(viewer)) return undefined;
   return {
     legacyLead: {
@@ -181,7 +209,11 @@ function buildInvoiceScope(viewer: AnalyticsViewer): PrismaNamespace.InvoiceWher
         { assignedToUserId: viewer.id },
         { createdByUserId: viewer.id },
         { events: { some: { assignedToUserId: viewer.id } } },
-        { events: { some: { workerAssignments: { some: { workerUserId: viewer.id } } } } },
+        {
+          events: {
+            some: { workerAssignments: { some: { workerUserId: viewer.id } } },
+          },
+        },
       ],
     },
   };
@@ -207,12 +239,14 @@ function decimalToCents(value: unknown): number {
 }
 
 function pct(value: number, total: number): number | null {
-  if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return null;
+  if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0)
+    return null;
   return Math.round((value / total) * 1000) / 10;
 }
 
 function ratio(value: number, total: number): number | null {
-  if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return null;
+  if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0)
+    return null;
   return Math.round((value / total) * 100) / 100;
 }
 
@@ -289,12 +323,21 @@ function buildChannelAccumulator(): Record<AnalyticsChannel, number> {
   };
 }
 
-function sumChannelAccumulator(values: Record<AnalyticsChannel, number>): number {
+function sumChannelAccumulator(
+  values: Record<AnalyticsChannel, number>,
+): number {
   return Object.values(values).reduce((sum, value) => sum + value, 0);
 }
 
-function toAnalyticsChannel(value: string | null | undefined): AnalyticsChannel {
-  if (value === "GOOGLE_ADS" || value === "META_ADS" || value === "ORGANIC" || value === "REFERRAL") {
+function toAnalyticsChannel(
+  value: string | null | undefined,
+): AnalyticsChannel {
+  if (
+    value === "GOOGLE_ADS" ||
+    value === "META_ADS" ||
+    value === "ORGANIC" ||
+    value === "REFERRAL"
+  ) {
     return value;
   }
   return "OTHER";
@@ -322,14 +365,25 @@ function getPortalWeekStart(value: Date): Date {
 }
 
 function addWeeklyValue(
-  target: Map<AnalyticsChannel, Map<string, { weekStart: string; label: string; leads: number; revenueCents: number }>>,
+  target: Map<
+    AnalyticsChannel,
+    Map<
+      string,
+      { weekStart: string; label: string; leads: number; revenueCents: number }
+    >
+  >,
   channel: AnalyticsChannel,
   weekStart: Date,
   kind: "leads" | "revenueCents",
   amount: number,
 ) {
   const weekKey = localDateFromUtc(weekStart, DEFAULT_CALENDAR_TIMEZONE);
-  const channelMap = target.get(channel) || new Map<string, { weekStart: string; label: string; leads: number; revenueCents: number }>();
+  const channelMap =
+    target.get(channel) ||
+    new Map<
+      string,
+      { weekStart: string; label: string; leads: number; revenueCents: number }
+    >();
   const current = channelMap.get(weekKey) || {
     weekStart: weekKey,
     label: weekLabel(weekStart),
@@ -348,7 +402,9 @@ async function getRevenueByChannelForRange(input: {
 }): Promise<Record<AnalyticsChannel, number>> {
   const totals = buildChannelAccumulator();
 
-  const paymentRows = await prisma.$queryRaw<Array<{ channel: string | null; cents: bigint | number | null }>>(Prisma.sql`
+  const paymentRows = await prisma.$queryRaw<
+    Array<{ channel: string | null; cents: bigint | number | null }>
+  >(Prisma.sql`
     SELECT
       COALESCE("Lead"."sourceChannel"::text, 'OTHER') AS "channel",
       COALESCE(
@@ -389,7 +445,9 @@ async function getRevenueByChannelForRange(input: {
   });
 
   for (const row of fallbackRows) {
-    totals[toAnalyticsChannel(row.legacyLead?.sourceChannel)] += decimalToCents(row.amountPaid);
+    totals[toAnalyticsChannel(row.legacyLead?.sourceChannel)] += decimalToCents(
+      row.amountPaid,
+    );
   }
 
   return totals;
@@ -400,7 +458,12 @@ async function getCollectedRevenueForRange(input: {
   start: Date;
   endExclusive: Date;
 }): Promise<number | null> {
-  const paymentRows = await prisma.$queryRaw<Array<{ paymentCount: bigint | number | null; cents: bigint | number | null }>>(Prisma.sql`
+  const paymentRows = await prisma.$queryRaw<
+    Array<{
+      paymentCount: bigint | number | null;
+      cents: bigint | number | null;
+    }>
+  >(Prisma.sql`
     SELECT
       COUNT(*) AS "paymentCount",
       COALESCE(
@@ -437,7 +500,9 @@ async function getCollectedRevenueForRange(input: {
     return null;
   }
 
-  return fallback._sum.amountPaid ? decimalToCents(fallback._sum.amountPaid) : 0;
+  return fallback._sum.amountPaid
+    ? decimalToCents(fallback._sum.amountPaid)
+    : 0;
 }
 
 async function getGrossRevenueForRange(input: {
@@ -445,7 +510,12 @@ async function getGrossRevenueForRange(input: {
   start: Date;
   endExclusive: Date;
 }): Promise<number | null> {
-  const rows = await prisma.$queryRaw<Array<{ completedJobsCount: bigint | number | null; cents: bigint | number | null }>>(Prisma.sql`
+  const rows = await prisma.$queryRaw<
+    Array<{
+      completedJobsCount: bigint | number | null;
+      cents: bigint | number | null;
+    }>
+  >(Prisma.sql`
     WITH completed_jobs AS (
       SELECT DISTINCT ON ("Event"."leadId")
         "Event"."leadId"
@@ -490,7 +560,9 @@ async function getAverageFirstResponseMinutes(input: {
   start: Date;
   endExclusive: Date;
 }): Promise<number | null> {
-  const rows = await prisma.$queryRaw<Array<{ avgMinutes: number | null }>>(Prisma.sql`
+  const rows = await prisma.$queryRaw<
+    Array<{ avgMinutes: number | null }>
+  >(Prisma.sql`
     WITH candidate_leads AS (
       SELECT "id", "createdAt"
       FROM "Lead"
@@ -523,7 +595,9 @@ async function getAverageFirstResponseMinutes(input: {
   `);
 
   const avg = rows[0]?.avgMinutes;
-  return typeof avg === "number" && Number.isFinite(avg) ? Math.round(avg * 10) / 10 : null;
+  return typeof avg === "number" && Number.isFinite(avg)
+    ? Math.round(avg * 10) / 10
+    : null;
 }
 
 async function getRecoveredMissedCallsCount(input: {
@@ -531,7 +605,9 @@ async function getRecoveredMissedCallsCount(input: {
   start: Date;
   endExclusive: Date;
 }): Promise<number> {
-  const rows = await prisma.$queryRaw<Array<{ count: bigint | number | null }>>(Prisma.sql`
+  const rows = await prisma.$queryRaw<
+    Array<{ count: bigint | number | null }>
+  >(Prisma.sql`
     WITH missed_calls AS (
       SELECT "id", "leadId", "startedAt"
       FROM "Call"
@@ -613,7 +689,9 @@ async function resolveAnalyticsWorkers(viewer: AnalyticsViewer) {
   }));
 }
 
-function mergeIntervals(intervals: Array<{ startMinute: number; endMinute: number }>) {
+function mergeIntervals(
+  intervals: Array<{ startMinute: number; endMinute: number }>,
+) {
   if (intervals.length === 0) return [];
   const sorted = [...intervals].sort((a, b) => a.startMinute - b.startMinute);
   const merged: Array<{ startMinute: number; endMinute: number }> = [];
@@ -634,8 +712,14 @@ function mergeIntervals(intervals: Array<{ startMinute: number; endMinute: numbe
   return merged;
 }
 
-function intervalMinutes(intervals: Array<{ startMinute: number; endMinute: number }>): number {
-  return intervals.reduce((sum, interval) => sum + Math.max(0, interval.endMinute - interval.startMinute), 0);
+function intervalMinutes(
+  intervals: Array<{ startMinute: number; endMinute: number }>,
+): number {
+  return intervals.reduce(
+    (sum, interval) =>
+      sum + Math.max(0, interval.endMinute - interval.startMinute),
+    0,
+  );
 }
 
 function minutesForDateRange(input: {
@@ -645,17 +729,25 @@ function minutesForDateRange(input: {
   dayEndUtc: Date;
   timeZone: string;
 }) {
-  const boundedStart = input.startAt < input.dayStartUtc ? input.dayStartUtc : input.startAt;
-  const boundedEnd = input.endAt > input.dayEndUtc ? input.dayEndUtc : input.endAt;
+  const boundedStart =
+    input.startAt < input.dayStartUtc ? input.dayStartUtc : input.startAt;
+  const boundedEnd =
+    input.endAt > input.dayEndUtc ? input.dayEndUtc : input.endAt;
   if (boundedEnd <= boundedStart) {
     return null;
   }
 
-  const startMinute = Math.max(0, Math.min(24 * 60, getLocalMinutesInDay(boundedStart, input.timeZone)));
+  const startMinute = Math.max(
+    0,
+    Math.min(24 * 60, getLocalMinutesInDay(boundedStart, input.timeZone)),
+  );
   const endMinute =
     boundedEnd >= input.dayEndUtc
       ? 24 * 60
-      : Math.max(startMinute + 1, Math.min(24 * 60, getLocalMinutesInDay(boundedEnd, input.timeZone)));
+      : Math.max(
+          startMinute + 1,
+          Math.min(24 * 60, getLocalMinutesInDay(boundedEnd, input.timeZone)),
+        );
 
   return {
     startMinute,
@@ -680,9 +772,13 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
     date: addDaysToDateKey(startDateKey, 7),
     timeZone: DEFAULT_CALENDAR_TIMEZONE,
   }).startUtc;
-  const dateKeys = Array.from({ length: 7 }, (_, index) => addDaysToDateKey(startDateKey, index));
+  const dateKeys = Array.from({ length: 7 }, (_, index) =>
+    addDaysToDateKey(startDateKey, index),
+  );
   const workerIds = workers.map((worker) => worker.id);
-  const dayOfWeekSet = new Set(dateKeys.map((dateKey) => new Date(`${dateKey}T12:00:00`).getDay()));
+  const dayOfWeekSet = new Set(
+    dateKeys.map((dateKey) => new Date(`${dateKey}T12:00:00`).getDay()),
+  );
 
   const [workingHours, events, holds, timeOffEntries] = await Promise.all([
     prisma.workingHours.findMany({
@@ -710,7 +806,11 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
           {
             OR: [
               { assignedToUserId: { in: workerIds } },
-              { workerAssignments: { some: { workerUserId: { in: workerIds } } } },
+              {
+                workerAssignments: {
+                  some: { workerUserId: { in: workerIds } },
+                },
+              },
             ],
           },
         ],
@@ -757,7 +857,10 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
     }),
   ]);
 
-  const workingHoursByWorkerDay = new Map<string, { startMinute: number; endMinute: number; isWorking: boolean }>();
+  const workingHoursByWorkerDay = new Map<
+    string,
+    { startMinute: number; endMinute: number; isWorking: boolean }
+  >();
   for (const row of workingHours) {
     workingHoursByWorkerDay.set(`${row.workerUserId}:${row.dayOfWeek}`, {
       startMinute: row.startMinute,
@@ -766,7 +869,10 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
     });
   }
 
-  const eventIntervalsByWorker = new Map<string, Array<{ startAt: Date; endAt: Date }>>();
+  const eventIntervalsByWorker = new Map<
+    string,
+    Array<{ startAt: Date; endAt: Date }>
+  >();
   for (const event of events) {
     const participantIds = new Set<string>();
     if (event.assignedToUserId) {
@@ -780,13 +886,18 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
       const list = eventIntervalsByWorker.get(workerUserId) || [];
       list.push({
         startAt: event.startAt,
-        endAt: event.endAt || new Date(event.startAt.getTime() + slotMinutes * 60 * 1000),
+        endAt:
+          event.endAt ||
+          new Date(event.startAt.getTime() + slotMinutes * 60 * 1000),
       });
       eventIntervalsByWorker.set(workerUserId, list);
     }
   }
 
-  const holdIntervalsByWorker = new Map<string, Array<{ startAt: Date; endAt: Date }>>();
+  const holdIntervalsByWorker = new Map<
+    string,
+    Array<{ startAt: Date; endAt: Date }>
+  >();
   for (const hold of holds) {
     const list = holdIntervalsByWorker.get(hold.workerUserId) || [];
     list.push({
@@ -796,7 +907,10 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
     holdIntervalsByWorker.set(hold.workerUserId, list);
   }
 
-  const timeOffIntervalsByWorker = new Map<string, Array<{ startAt: Date; endAt: Date }>>();
+  const timeOffIntervalsByWorker = new Map<
+    string,
+    Array<{ startAt: Date; endAt: Date }>
+  >();
   for (const row of timeOffEntries) {
     const list = timeOffIntervalsByWorker.get(row.workerUserId) || [];
     list.push({
@@ -811,10 +925,12 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
   let totalCapacityMinutes = 0;
 
   for (const worker of workers) {
-    const timeZone = worker.timezone || settings.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE;
+    const timeZone =
+      worker.timezone || settings.calendarTimezone || DEFAULT_CALENDAR_TIMEZONE;
     const workerEventIntervals = eventIntervalsByWorker.get(worker.id) || [];
     const workerHoldIntervals = holdIntervalsByWorker.get(worker.id) || [];
-    const workerTimeOffIntervals = timeOffIntervalsByWorker.get(worker.id) || [];
+    const workerTimeOffIntervals =
+      timeOffIntervalsByWorker.get(worker.id) || [];
 
     for (const dateKey of dateKeys) {
       const { startUtc, endUtc } = getUtcRangeForDate({
@@ -822,14 +938,21 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
         timeZone,
       });
       const dayOfWeek = new Date(`${dateKey}T12:00:00`).getDay();
-      const workingWindow =
-        workingHoursByWorkerDay.get(`${worker.id}:${dayOfWeek}`) || {
-          startMinute: settings.defaultUntimedStartHour * 60,
-          endMinute: Math.min(24 * 60, settings.defaultUntimedStartHour * 60 + 8 * 60),
-          isWorking: true,
-        };
+      const workingWindow = workingHoursByWorkerDay.get(
+        `${worker.id}:${dayOfWeek}`,
+      ) || {
+        startMinute: settings.defaultUntimedStartHour * 60,
+        endMinute: Math.min(
+          24 * 60,
+          settings.defaultUntimedStartHour * 60 + 8 * 60,
+        ),
+        isWorking: true,
+      };
 
-      if (!workingWindow.isWorking || workingWindow.endMinute <= workingWindow.startMinute) {
+      if (
+        !workingWindow.isWorking ||
+        workingWindow.endMinute <= workingWindow.startMinute
+      ) {
         continue;
       }
 
@@ -869,8 +992,14 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
 
       const mergedEvents = mergeIntervals(eventMinutes);
       const mergedUnavailable = mergeIntervals(unavailableMinutes);
-      const workingMinutes = Math.max(0, workingWindow.endMinute - workingWindow.startMinute);
-      const capacityMinutes = Math.max(0, workingMinutes - intervalMinutes(mergedUnavailable));
+      const workingMinutes = Math.max(
+        0,
+        workingWindow.endMinute - workingWindow.startMinute,
+      );
+      const capacityMinutes = Math.max(
+        0,
+        workingMinutes - intervalMinutes(mergedUnavailable),
+      );
       totalBookedMinutes += intervalMinutes(mergedEvents);
       totalCapacityMinutes += capacityMinutes;
 
@@ -889,7 +1018,8 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
       ) {
         const slotEnd = minute + slotMinutes;
         const overlaps = blockedForSlots.some(
-          (interval) => interval.startMinute < slotEnd && minute < interval.endMinute,
+          (interval) =>
+            interval.startMinute < slotEnd && minute < interval.endMinute,
         );
         if (!overlaps) {
           openSlotsNext7Days += 1;
@@ -905,33 +1035,40 @@ async function computeOpenSlotsAndUtilization(viewer: AnalyticsViewer) {
 }
 
 async function getSummarySystemHealth(orgId: string) {
-  const [twilioConfig, googleCount, connectedIntegrationCount] = await Promise.all([
-    prisma.organizationTwilioConfig.findUnique({
-      where: { organizationId: orgId },
-      select: {
-        phoneNumber: true,
-        status: true,
-      },
-    }),
-    prisma.googleAccount.count({
-      where: {
-        orgId,
-        isEnabled: true,
-      },
-    }),
-    prisma.integrationAccount.count({
-      where: {
-        orgId,
-        status: "CONNECTED",
-      },
-    }),
-  ]);
+  const [twilioConfig, googleCount, connectedIntegrationCount] =
+    await Promise.all([
+      prisma.organizationTwilioConfig.findUnique({
+        where: { organizationId: orgId },
+        select: {
+          phoneNumber: true,
+          status: true,
+        },
+      }),
+      prisma.googleAccount.count({
+        where: {
+          orgId,
+          isEnabled: true,
+        },
+      }),
+      prisma.integrationAccount.count({
+        where: {
+          orgId,
+          status: "CONNECTED",
+        },
+      }),
+    ]);
+  const twilioReadiness = resolveTwilioMessagingReadiness({ twilioConfig });
 
   return {
-    messaging:
-      twilioConfig?.phoneNumber && twilioConfig.status === "ACTIVE" ? ("ACTIVE" as const) : ("NEEDS_SETUP" as const),
-    calendar: googleCount > 0 ? ("CONNECTED" as const) : ("NEEDS_SETUP" as const),
-    integrations: connectedIntegrationCount > 0 ? ("CONFIGURED" as const) : ("NOT_CONFIGURED" as const),
+    messaging: twilioReadiness.canSend
+      ? ("ACTIVE" as const)
+      : ("NEEDS_SETUP" as const),
+    calendar:
+      googleCount > 0 ? ("CONNECTED" as const) : ("NEEDS_SETUP" as const),
+    integrations:
+      connectedIntegrationCount > 0
+        ? ("CONFIGURED" as const)
+        : ("NOT_CONFIGURED" as const),
     integrationsHref: "/app/settings/integrations#integrations-health",
   };
 }
@@ -941,15 +1078,23 @@ export async function getPortalSummaryMetrics(input: {
   range?: AnalyticsRange;
 }): Promise<PortalSummaryMetrics> {
   const range = normalizeRange(input.range);
-  const visibility = canViewFinancialAnalytics(input.viewer) ? "full" : "limited";
+  const visibility = canViewFinancialAnalytics(input.viewer)
+    ? "full"
+    : "limited";
   const rangeWindow = getRangeWindow(range);
   const leadScope = buildLeadScope(input.viewer);
   const eventScope = buildEventScope(input.viewer);
   const now = new Date();
   const todayStart = startOfTimeZoneDay(now, DEFAULT_CALENDAR_TIMEZONE);
   const todayKey = localDateFromUtc(todayStart, DEFAULT_CALENDAR_TIMEZONE);
-  const currentMonthStart = startOfTimeZoneMonth(now, DEFAULT_CALENDAR_TIMEZONE);
-  const currentMonthStartKey = localDateFromUtc(currentMonthStart, DEFAULT_CALENDAR_TIMEZONE);
+  const currentMonthStart = startOfTimeZoneMonth(
+    now,
+    DEFAULT_CALENDAR_TIMEZONE,
+  );
+  const currentMonthStartKey = localDateFromUtc(
+    currentMonthStart,
+    DEFAULT_CALENDAR_TIMEZONE,
+  );
   const nextMonthStart = getUtcRangeForDate({
     date: addMonthsToDateKey(currentMonthStartKey, 1),
     timeZone: DEFAULT_CALENDAR_TIMEZONE,
@@ -1113,8 +1258,12 @@ export async function getPortalSummaryMetrics(input: {
 
   const revenueThisMonthCents = grossRevenueThisMonthCents;
   const revenueLastMonthCents = grossRevenueLastMonthCents;
-  const collectedRevenueThisMonthByChannel = sumChannelAccumulator(revenueThisMonthByChannel);
-  const collectedRevenueLastMonthByChannel = sumChannelAccumulator(revenueLastMonthByChannel);
+  const collectedRevenueThisMonthByChannel = sumChannelAccumulator(
+    revenueThisMonthByChannel,
+  );
+  const collectedRevenueLastMonthByChannel = sumChannelAccumulator(
+    revenueLastMonthByChannel,
+  );
 
   return {
     visibility,
@@ -1122,13 +1271,22 @@ export async function getPortalSummaryMetrics(input: {
     generatedAt: new Date().toISOString(),
     orgId: input.viewer.orgId,
     grossRevenueThisMonthCents,
-    collectedRevenueThisMonthCents: collectedRevenueThisMonthCents ?? (collectedRevenueThisMonthByChannel > 0 ? collectedRevenueThisMonthByChannel : null),
+    collectedRevenueThisMonthCents:
+      collectedRevenueThisMonthCents ??
+      (collectedRevenueThisMonthByChannel > 0
+        ? collectedRevenueThisMonthByChannel
+        : null),
     revenueLastMonthGrossCents: grossRevenueLastMonthCents,
     revenueLastMonthCollectedCents:
-      collectedRevenueLastMonthCents ?? (collectedRevenueLastMonthByChannel > 0 ? collectedRevenueLastMonthByChannel : null),
+      collectedRevenueLastMonthCents ??
+      (collectedRevenueLastMonthByChannel > 0
+        ? collectedRevenueLastMonthByChannel
+        : null),
     revenueThisMonthCents,
     revenueLastMonthCents,
-    avgJobValueCents: averageInvoiceValue._avg.total ? decimalToCents(averageInvoiceValue._avg.total) : null,
+    avgJobValueCents: averageInvoiceValue._avg.total
+      ? decimalToCents(averageInvoiceValue._avg.total)
+      : null,
     outstandingInvoicesCount,
     outstandingInvoicesTotalCents: outstandingInvoicesTotal._sum.balanceDue
       ? decimalToCents(outstandingInvoicesTotal._sum.balanceDue)
@@ -1162,7 +1320,14 @@ export async function getPortalAdsMetrics(input: {
     throw new Error("FORBIDDEN_FINANCIAL_ANALYTICS");
   }
 
-  const [spendRows, leadCounts, bookedCounts, revenueByChannel, leadRows, paymentRows] = await Promise.all([
+  const [
+    spendRows,
+    leadCounts,
+    bookedCounts,
+    revenueByChannel,
+    leadRows,
+    paymentRows,
+  ] = await Promise.all([
     prisma.marketingSpend.findMany({
       where: {
         orgId: input.viewer.orgId,
@@ -1248,10 +1413,22 @@ export async function getPortalAdsMetrics(input: {
     bookedCountByChannel[channel] += 1;
   }
 
-  const weekly = new Map<AnalyticsChannel, Map<string, { weekStart: string; label: string; leads: number; revenueCents: number }>>();
+  const weekly = new Map<
+    AnalyticsChannel,
+    Map<
+      string,
+      { weekStart: string; label: string; leads: number; revenueCents: number }
+    >
+  >();
   for (const row of leadRows) {
     const weekStart = getPortalWeekStart(new Date(row.createdAt));
-    addWeeklyValue(weekly, toAnalyticsChannel(row.sourceChannel), weekStart, "leads", 1);
+    addWeeklyValue(
+      weekly,
+      toAnalyticsChannel(row.sourceChannel),
+      weekStart,
+      "leads",
+      1,
+    );
   }
   for (const row of paymentRows) {
     const weekStart = getPortalWeekStart(new Date(row.date));
@@ -1270,8 +1447,8 @@ export async function getPortalAdsMetrics(input: {
     const bookedJobs = bookedCountByChannel[channel.key] || 0;
     const revenueCents = revenueByChannel[channel.key] || 0;
     const cplCents = leads > 0 ? Math.round(spendCents / leads) : null;
-    const weeklyRows = [...(weekly.get(channel.key)?.values() || [])].sort((a, b) =>
-      a.weekStart.localeCompare(b.weekStart),
+    const weeklyRows = [...(weekly.get(channel.key)?.values() || [])].sort(
+      (a, b) => a.weekStart.localeCompare(b.weekStart),
     );
 
     return {
@@ -1312,7 +1489,8 @@ export async function getPortalAdsMetrics(input: {
     monthLabel: formatMonthLabel(monthStart),
     totals: {
       ...totals,
-      cplCents: totals.leads > 0 ? Math.round(totals.spendCents / totals.leads) : null,
+      cplCents:
+        totals.leads > 0 ? Math.round(totals.spendCents / totals.leads) : null,
       roas: ratio(totals.revenueCents, totals.spendCents),
     },
     channels,

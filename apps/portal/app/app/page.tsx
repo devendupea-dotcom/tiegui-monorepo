@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { isNotFoundError } from "next/dist/client/components/not-found";
-import { isRedirectError } from "next/dist/client/components/redirect";
 import { getRequestTranslator } from "@/lib/i18n";
+import { isNextNavigationSignal } from "@/lib/next-navigation-signal";
 import OwnerCommandCenter from "./owner-command-center";
 import WorkerOpsDashboard from "./worker-ops-dashboard";
 import { getParam, resolveAppScope, withOrgQuery } from "./_lib/portal-scope";
@@ -10,11 +9,12 @@ import { requireAppPageViewer } from "./_lib/portal-viewer";
 
 export const dynamic = "force-dynamic";
 
-export default async function AppHomePage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function AppHomePage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const t = await getRequestTranslator();
 
   try {
@@ -36,7 +36,7 @@ export default async function AppHomePage({
 
     return <WorkerOpsDashboard scope={scope} viewer={viewer} />;
   } catch (error) {
-    if (isRedirectError(error) || isNotFoundError(error)) {
+    if (isNextNavigationSignal(error)) {
       throw error;
     }
     console.error("AppHomePage hard failure.", error);

@@ -9,10 +9,8 @@ import type {
 } from "@prisma/client";
 import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
 import { sanitizeConversationSnippet } from "@/lib/inbox-message-display";
-import {
-  derivePotentialSpamSignals,
-  type PotentialSpamSignal,
-} from "@/lib/lead-spam";
+import { type PotentialSpamSignal } from "@/lib/lead-spam";
+import { getLeadSpamReviewByLead } from "@/lib/lead-spam-review";
 import { prisma } from "@/lib/prisma";
 import {
   AppApiError,
@@ -68,31 +66,6 @@ function messageSnippet(input: {
     body: input.body,
     status: input.status,
   });
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function recordString(
-  record: Record<string, unknown> | null,
-  key: string,
-): string | undefined {
-  const value = record?.[key];
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function recordNumber(
-  record: Record<string, unknown> | null,
-  key: string,
-): number | undefined {
-  const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
 }
 
 function isAtRisk(input: {
@@ -208,82 +181,16 @@ export async function GET(req: Request) {
     });
 
     const leadIds = leads.map((lead) => lead.id);
-    const phoneNumbers = [
-      ...new Set(leads.map((lead) => lead.phoneE164).filter(Boolean)),
-    ];
-    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-    const [blockedCallers, failedOutboundGroups, voiceRiskEvents] =
-      await Promise.all([
-        phoneNumbers.length > 0
-          ? prisma.blockedCaller.findMany({
-              where: {
-                orgId,
-                phoneE164: { in: phoneNumbers },
-              },
-              select: {
-                phoneE164: true,
-              },
-            })
-          : Promise.resolve([]),
-        leadIds.length > 0
-          ? prisma.message.groupBy({
-              by: ["leadId"],
-              where: {
-                leadId: { in: leadIds },
-                direction: "OUTBOUND",
-                status: "FAILED",
-              },
-              _count: {
-                _all: true,
-              },
-            })
-          : Promise.resolve([]),
-        leadIds.length > 0
-          ? prisma.communicationEvent.findMany({
-              where: {
-                orgId,
-                leadId: { in: leadIds },
-                channel: "VOICE",
-                occurredAt: { gte: since30d },
-              },
-              select: {
-                leadId: true,
-                occurredAt: true,
-                metadataJson: true,
-              },
-              orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
-              take: 2000,
-            })
-          : Promise.resolve([]),
-      ]);
-
-    const blockedCallerPhones = new Set(
-      blockedCallers.map((blockedCaller) => blockedCaller.phoneE164),
-    );
-    const failedOutboundByLead = new Map(
-      failedOutboundGroups.map((group) => [group.leadId, group._count._all]),
-    );
-    const latestVoiceRiskByLead = new Map<
-      string,
-      { disposition: string | null; score: number | null }
-    >();
-
-    for (const event of voiceRiskEvents) {
-      if (!event.leadId || latestVoiceRiskByLead.has(event.leadId)) {
-        continue;
-      }
-      const metadata = asRecord(event.metadataJson);
-      const disposition = recordString(metadata, "riskDisposition") || null;
-      const score = recordNumber(metadata, "riskScore") ?? null;
-      if (!disposition && score == null) {
-        continue;
-      }
-      latestVoiceRiskByLead.set(event.leadId, {
-        disposition,
-        score,
-      });
-    }
+    const spamReviewByLead =
+      leadIds.length > 0
+        ? await getLeadSpamReviewByLead({
+            orgId,
+            leads: leads.map((lead) => ({
+              leadId: lead.id,
+              phoneE164: lead.phoneE164,
+            })),
+          })
+        : new Map();
 
     const rows: ConversationRow[] = leads
       .map((lead) => {
@@ -331,14 +238,9 @@ export async function GET(req: Request) {
           leadStatus: lead.status,
           events: lead.events,
         });
-        const failedOutboundCount = failedOutboundByLead.get(lead.id) || 0;
-        const latestVoiceRisk = latestVoiceRiskByLead.get(lead.id);
-        const potentialSpamSignals = derivePotentialSpamSignals({
-          isBlockedCaller: blockedCallerPhones.has(lead.phoneE164),
-          latestVoiceRiskDisposition: latestVoiceRisk?.disposition || null,
-          latestVoiceRiskScore: latestVoiceRisk?.score ?? null,
-          failedOutboundCount,
-        });
+        const spamReview = spamReviewByLead.get(lead.id);
+        const failedOutboundCount = spamReview?.failedOutboundCount || 0;
+        const potentialSpamSignals = spamReview?.potentialSpamSignals || [];
 
         return {
           id: lead.id,
@@ -370,7 +272,7 @@ export async function GET(req: Request) {
                 lastOutboundAt: lead.lastOutboundAt,
                 now,
               }),
-          potentialSpam: potentialSpamSignals.length > 0,
+          potentialSpam: Boolean(spamReview?.potentialSpam),
           potentialSpamSignals,
           failedOutboundCount,
         };

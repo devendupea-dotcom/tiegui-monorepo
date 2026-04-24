@@ -5,11 +5,12 @@ import BusinessExpensesManager from "./business-expenses-manager";
 
 export const dynamic = "force-dynamic";
 
-export default async function BusinessExpensesPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function BusinessExpensesPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const requestedOrgId = getParam(searchParams?.orgId);
   const initialJobId = getParam(searchParams?.jobId);
   const scope = await resolveAppScope({

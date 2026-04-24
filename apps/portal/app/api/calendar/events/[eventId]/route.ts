@@ -25,7 +25,7 @@ import { resolveWorkspaceUserIds } from "@/lib/workspace-users";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { eventId: string };
+  params: Promise<{ eventId: string }>;
 };
 
 type UpdateEventPayload = {
@@ -169,7 +169,8 @@ async function buildConflictResponse(input: {
   );
 }
 
-export async function GET(_req: Request, { params }: RouteContext) {
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const event = await getEventOrThrow(params.eventId);
@@ -188,7 +189,8 @@ export async function GET(_req: Request, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const existing = await getEventOrThrow(params.eventId);
@@ -362,7 +364,8 @@ export async function PATCH(req: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(_req: Request, { params }: RouteContext) {
+export async function DELETE(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const existing = await getEventOrThrow(params.eventId);

@@ -10,11 +10,12 @@ import PremiumJobCalendar from "./premium-job-calendar";
 
 export const dynamic = "force-dynamic";
 
-export default async function ClientCalendarPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function ClientCalendarPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   try {
     const t = await getRequestTranslator();
     const requestedOrgId = getParam(searchParams?.orgId);

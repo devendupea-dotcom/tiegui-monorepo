@@ -19,6 +19,9 @@ import {
 } from "@/lib/customer-import";
 import type { CustomerImportHistoryItem } from "@/lib/customer-import-crm";
 
+const CUSTOMER_IMPORT_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const CUSTOMER_IMPORT_SUPPORTED_FILE_PATTERN = /\.(csv|xlsx)$/i;
+
 type SpreadsheetParseResult = {
   headers: string[];
   rows: CustomerImportRawRow[];
@@ -117,18 +120,20 @@ type Copy = {
   emptyFile: string;
   noHeaderRow: string;
   tooManyRows: (limit: number) => string;
+  fileTooLarge: (maxMegabytes: number) => string;
+  unsupportedFile: string;
 };
 
 function getCopy(locale: string): Copy {
   if (locale.startsWith("es")) {
     return {
       title: "Importar CSV o Excel al CRM",
-      body: "Sube un archivo CSV, XLSX o XLS para traer clientes al CRM. TieGui usa la primera hoja, detecta columnas comunes y te deja revisar antes de importar.",
+      body: "Sube un archivo CSV o XLSX para traer clientes al CRM. TieGui usa la primera hoja, detecta columnas comunes y te deja revisar antes de importar.",
       templateAction: "Descargar plantilla CSV",
       templateHelp: "Usa una plantilla limpia si necesitas acomodar tus columnas antes de importar.",
       reviewAction: "Descargar CSV de revisión",
       fileLabel: "Archivo",
-      fileHelp: "Tipos soportados: CSV, XLSX, XLS.",
+      fileHelp: "Tipos soportados: CSV, XLSX.",
       firstSheetNotice: "Para archivos de Excel usamos solo la primera hoja.",
       loadedLabel: "Archivo cargado",
       mappingTitle: "Mapeo de columnas",
@@ -211,17 +216,19 @@ function getCopy(locale: string): Copy {
       emptyFile: "El archivo no tiene filas con datos.",
       noHeaderRow: "El archivo necesita una fila de encabezados.",
       tooManyRows: (limit) => `Este importador soporta hasta ${limit} filas por corrida.`,
+      fileTooLarge: (maxMegabytes) => `El archivo debe pesar ${maxMegabytes} MB o menos.`,
+      unsupportedFile: "Sube un archivo CSV o XLSX.",
     };
   }
 
   return {
     title: "Import CSV or Excel Into CRM",
-    body: "Upload a CSV, XLSX, or XLS file to bring customer data into the CRM. TieGui uses the first sheet, detects common columns, and lets you review everything before import.",
+    body: "Upload a CSV or XLSX file to bring customer data into the CRM. TieGui uses the first sheet, detects common columns, and lets you review everything before import.",
     templateAction: "Download CSV Template",
     templateHelp: "Start from a clean template if you need to reshape your columns before import.",
     reviewAction: "Download Review CSV",
     fileLabel: "File",
-    fileHelp: "Supported types: CSV, XLSX, XLS.",
+    fileHelp: "Supported types: CSV, XLSX.",
     firstSheetNotice: "For Excel files, TieGui uses the first sheet only.",
     loadedLabel: "Loaded file",
     mappingTitle: "Column Mapping",
@@ -304,28 +311,42 @@ function getCopy(locale: string): Copy {
     emptyFile: "The file does not contain any data rows.",
     noHeaderRow: "The file needs a header row.",
     tooManyRows: (limit) => `This importer supports up to ${limit} rows per run.`,
+    fileTooLarge: (maxMegabytes) => `File must be ${maxMegabytes} MB or smaller.`,
+    unsupportedFile: "Upload a CSV or XLSX file.",
   };
 }
 
-async function parseSpreadsheetFile(file: File): Promise<SpreadsheetParseResult> {
-  const XLSX = await import("xlsx");
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array" });
-  const firstSheetName = workbook.SheetNames[0];
-  if (!firstSheetName) {
-    throw new Error("missing-sheet");
+function validateSpreadsheetFileBeforeParsing(file: File) {
+  if (!CUSTOMER_IMPORT_SUPPORTED_FILE_PATTERN.test(file.name)) {
+    throw new Error("unsupported-file");
   }
 
-  const sheet = workbook.Sheets[firstSheetName];
-  if (!sheet) {
-    throw new Error("missing-sheet");
+  if (file.size > CUSTOMER_IMPORT_MAX_FILE_BYTES) {
+    throw new Error(
+      `file-too-large:${Math.round(CUSTOMER_IMPORT_MAX_FILE_BYTES / 1024 / 1024)}`,
+    );
   }
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    raw: false,
-    defval: "",
+}
+
+async function readCsvMatrix(file: File): Promise<unknown[][]> {
+  const Papa = await import("papaparse");
+  const result = Papa.parse<unknown[]>(await file.text(), {
+    skipEmptyLines: false,
   });
 
+  if (result.errors.length > 0) {
+    throw new Error(result.errors[0]?.message || "invalid-csv");
+  }
+
+  return result.data;
+}
+
+async function readXlsxMatrix(file: File): Promise<unknown[][]> {
+  const { readSheet } = await import("read-excel-file/browser");
+  return readSheet(file, 1);
+}
+
+function normalizeSpreadsheetMatrix(matrix: unknown[][]): SpreadsheetParseResult {
   if (!Array.isArray(matrix) || matrix.length === 0) {
     throw new Error("missing-headers");
   }
@@ -361,6 +382,16 @@ async function parseSpreadsheetFile(file: File): Promise<SpreadsheetParseResult>
     headers,
     rows,
   };
+}
+
+async function parseSpreadsheetFile(file: File): Promise<SpreadsheetParseResult> {
+  validateSpreadsheetFileBeforeParsing(file);
+
+  const matrix = file.name.toLowerCase().endsWith(".csv")
+    ? await readCsvMatrix(file)
+    : await readXlsxMatrix(file);
+
+  return normalizeSpreadsheetMatrix(matrix);
 }
 
 function describeRowDetail(row: CustomerImportPreviewRow) {
@@ -412,7 +443,7 @@ export default function CustomerDataImportCard({ orgId, initialHistory }: Custom
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = fileName
-      ? fileName.replace(/\.(csv|xlsx|xls)$/i, "") + "-review.csv"
+      ? fileName.replace(/\.(csv|xlsx)$/i, "") + "-review.csv"
       : "tiegui-customer-import-review.csv";
     anchor.click();
     URL.revokeObjectURL(url);
@@ -489,9 +520,13 @@ export default function CustomerDataImportCard({ orgId, initialHistory }: Custom
             ? copy.emptyFile
             : parseError.message === "missing-headers"
               ? copy.noHeaderRow
-              : parseError.message.startsWith("too-many:")
-                ? copy.tooManyRows(Number(parseError.message.split(":")[1] || CUSTOMER_IMPORT_MAX_ROWS))
-                : parseError.message
+              : parseError.message === "unsupported-file"
+                ? copy.unsupportedFile
+                : parseError.message.startsWith("file-too-large:")
+                  ? copy.fileTooLarge(Number(parseError.message.split(":")[1] || 5))
+                  : parseError.message.startsWith("too-many:")
+                    ? copy.tooManyRows(Number(parseError.message.split(":")[1] || CUSTOMER_IMPORT_MAX_ROWS))
+                    : parseError.message
           : "parse-failed";
       setError(`${copy.parseErrorPrefix}${message}`);
       startTransition(() => {
@@ -574,7 +609,7 @@ export default function CustomerDataImportCard({ orgId, initialHistory }: Custom
           {copy.fileLabel}
           <input
             type="file"
-            accept=".csv,.xlsx,.xls"
+            accept=".csv,.xlsx"
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) {

@@ -14,7 +14,21 @@ export const billingInvoiceStatusOptions: BillingInvoiceStatus[] = [
   "OVERDUE",
 ];
 
-export const invoicePaymentMethodOptions = ["CASH", "CHECK", "CARD", "TRANSFER", "OTHER"] as const;
+export const invoicePaymentMethodOptions = [
+  "CASH",
+  "CHECK",
+  "CARD",
+  "STRIPE",
+  "TRANSFER",
+  "OTHER",
+] as const;
+export const manualInvoicePaymentMethodOptions = [
+  "CASH",
+  "CHECK",
+  "CARD",
+  "TRANSFER",
+  "OTHER",
+] as const;
 export const invoiceTermsOptions: InvoiceTerms[] = [DEFAULT_INVOICE_TERMS, "NET_7", "NET_15", "NET_30"];
 
 type InvoiceLegacyLeadRef = {

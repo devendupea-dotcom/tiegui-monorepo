@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { LeadSourceChannel } from "@prisma/client";
+import type { BillingInvoiceStatus, LeadSourceChannel } from "@prisma/client";
 import {
   DEFAULT_CALENDAR_TIMEZONE,
   addDaysToDateKey,
@@ -11,6 +11,8 @@ import {
 import type { AnalyticsViewer } from "@/lib/portal-analytics";
 import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
 import { translateStatusLabel } from "@/lib/i18n-labels";
+import { summarizeInvoiceCollectionsOwnerReport } from "@/lib/invoice-collections";
+import { formatCurrency, formatInvoiceNumber } from "@/lib/invoices";
 import { getPortalSummaryMetrics } from "@/lib/portal-analytics";
 import { prisma } from "@/lib/prisma";
 import type { AppScope } from "./_lib/portal-scope";
@@ -22,6 +24,13 @@ type OwnerCommandCenterProps = {
   scope: AppScope;
   viewer: AnalyticsViewer;
 };
+
+const COLLECTION_REPORT_STATUSES: BillingInvoiceStatus[] = [
+  "SENT",
+  "PARTIAL",
+  "OVERDUE",
+  "PAID",
+];
 
 type DashboardTranslator = Awaited<ReturnType<typeof getRequestTranslator>>;
 
@@ -103,7 +112,7 @@ function statusTone(status: "ACTIVE" | "NEEDS_SETUP" | "CONNECTED" | "CONFIGURED
 
 export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommandCenterProps) {
   const t = await getRequestTranslator();
-  const locale = getRequestLocale();
+  const locale = await getRequestLocale();
   const now = new Date();
   const nextWeek = getUtcRangeForDate({
     date: addDaysToDateKey(localDateFromUtc(now, DEFAULT_CALENDAR_TIMEZONE), 7),
@@ -112,7 +121,15 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
   const summaryMonthPromise = getPortalSummaryMetrics({ viewer, range: "month" });
   const summaryWeekPromise = getPortalSummaryMetrics({ viewer, range: "7d" });
 
-  const [summaryMonth, summaryWeek, newestLeads, upcomingJobs] = await Promise.all([
+  const [
+    summaryMonth,
+    summaryWeek,
+    newestLeads,
+    upcomingJobs,
+    organization,
+    collectionReportRows,
+    recentFailedCollectionAttempts,
+  ] = await Promise.all([
     summaryMonthPromise,
     summaryWeekPromise,
     prisma.lead.findMany({
@@ -159,13 +176,87 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
         },
       },
     }),
+    prisma.organization.findUnique({
+      where: { id: scope.orgId },
+      select: {
+        invoiceCollectionsUrgentAfterDays: true,
+        invoiceCollectionsFinalAfterDays: true,
+      },
+    }),
+    prisma.invoice.findMany({
+      where: {
+        orgId: scope.orgId,
+        status: { in: COLLECTION_REPORT_STATUSES },
+      },
+      select: {
+        status: true,
+        amountPaid: true,
+        balanceDue: true,
+        dueDate: true,
+        payments: {
+          select: {
+            amount: true,
+            date: true,
+          },
+        },
+        collectionAttempts: {
+          select: {
+            source: true,
+            outcome: true,
+            createdAt: true,
+          },
+        },
+      },
+      orderBy: [{ dueDate: "asc" }, { updatedAt: "desc" }],
+      take: 500,
+    }),
+    prisma.invoiceCollectionAttempt.findMany({
+      where: {
+        orgId: scope.orgId,
+        outcome: "FAILED",
+        createdAt: {
+          gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        },
+      },
+      select: {
+        id: true,
+        source: true,
+        reason: true,
+        createdAt: true,
+        invoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            balanceDue: true,
+            customer: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 4,
+    }),
   ]);
 
   const inboxHref = withOrgQuery("/app/inbox", scope.orgId, scope.internalUser);
   const quickLeadHref = withOrgQuery("/app?quickAdd=1", scope.orgId, scope.internalUser);
   const addJobHref = withOrgQuery("/app/calendar?quickAction=schedule", scope.orgId, scope.internalUser);
   const calendarHref = withOrgQuery("/app/calendar", scope.orgId, scope.internalUser);
+  const invoicesHref = withOrgQuery("/app/invoices", scope.orgId, scope.internalUser);
   const settingsHref = withOrgQuery("/app/settings", scope.orgId, scope.internalUser);
+  const collectionsReport = summarizeInvoiceCollectionsOwnerReport(
+    collectionReportRows,
+    {
+      urgentAfterDays: organization?.invoiceCollectionsUrgentAfterDays ?? 7,
+      finalAfterDays: organization?.invoiceCollectionsFinalAfterDays ?? 21,
+    },
+    now,
+  );
   const allSystemsReady =
     summaryMonth.systemHealth.messaging === "ACTIVE" &&
     summaryMonth.systemHealth.calendar === "CONNECTED" &&
@@ -361,6 +452,72 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
               </div>
             </PanelCard>
           ) : null}
+
+          <PanelCard
+            eyebrow={t("dashboard.owner.collections.eyebrow")}
+            title={t("dashboard.owner.collections.title")}
+            subtitle={t("dashboard.owner.collections.subtitle")}
+            actionHref={invoicesHref}
+            actionLabel={t("dashboard.owner.collections.action")}
+          >
+            <section className="dashboard-kpi-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+              <KpiCard
+                label={t("dashboard.owner.collections.atRiskLabel")}
+                value={formatCurrency(collectionsReport.stillAtRiskTotal)}
+                hint={t("dashboard.owner.collections.atRiskHint")}
+                href={withOrgQuery("/app/invoices?status=OVERDUE", scope.orgId, scope.internalUser)}
+              />
+              <KpiCard
+                label={t("dashboard.owner.collections.recoveredLabel")}
+                value={formatCurrency(collectionsReport.recoveredAfterCollectionTotal)}
+                hint={t("dashboard.owner.collections.recoveredHint")}
+                href={invoicesHref}
+              />
+              <KpiCard
+                label={t("dashboard.owner.collections.finalNoticeLabel")}
+                value={formatCurrency(collectionsReport.escalation.final.balanceDue)}
+                hint={t("dashboard.owner.collections.invoiceCountHint", {
+                  count: collectionsReport.escalation.final.count,
+                })}
+                href={withOrgQuery("/app/invoices?aging=61_plus", scope.orgId, scope.internalUser)}
+              />
+              <KpiCard
+                label={t("dashboard.owner.collections.failedLabel")}
+                value={formatNumber(recentFailedCollectionAttempts.length, locale)}
+                hint={t("dashboard.owner.collections.failedHint")}
+                href={invoicesHref}
+              />
+            </section>
+
+            {recentFailedCollectionAttempts.length === 0 ? (
+              <div className="dashboard-empty-state">
+                <strong>{t("dashboard.owner.collections.emptyTitle")}</strong>
+                <p className="muted">{t("dashboard.owner.collections.emptyBody")}</p>
+              </div>
+            ) : (
+              <ul className="dashboard-list">
+                {recentFailedCollectionAttempts.map((attempt) => (
+                  <li key={attempt.id} className="dashboard-list-row">
+                    <div className="dashboard-list-primary">
+                      <Link
+                        className="dashboard-list-link"
+                        href={withOrgQuery(`/app/invoices/${attempt.invoice.id}`, scope.orgId, scope.internalUser)}
+                      >
+                        {formatInvoiceNumber(attempt.invoice.invoiceNumber)}
+                      </Link>
+                      <div className="dashboard-list-meta">
+                        <StatusPill tone="warn">{attempt.source}</StatusPill>
+                        <span>{attempt.invoice.customer.name}</span>
+                        <span>{formatCurrency(attempt.invoice.balanceDue)}</span>
+                        {attempt.reason ? <span>{attempt.reason}</span> : null}
+                      </div>
+                    </div>
+                    <span className="dashboard-list-time">{formatDateLabel(attempt.createdAt, locale)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </PanelCard>
         </div>
       </section>
     </div>

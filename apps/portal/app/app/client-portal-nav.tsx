@@ -5,19 +5,22 @@ import { usePathname, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import type { CalendarAccessRole } from "@prisma/client";
 import { useTranslations } from "next-intl";
+import type enMessages from "@/messages/en.json";
+
+type AppNavMessageKey = keyof typeof enMessages.appNav;
 
 type NavLink = {
   href: string;
-  labelKey: string;
+  labelKey: AppNavMessageKey;
   icon: ReactNode;
 };
 
 type NavSection = {
-  labelKey: string;
+  labelKey: AppNavMessageKey;
   links: NavLink[];
 };
 
-const navSections: NavSection[] = [
+const navSections = [
   {
     labelKey: "commandSection",
     links: [
@@ -45,6 +48,15 @@ const navSections: NavSection[] = [
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9 6V4h6v2M4 8h16v11H4zM4 12h16" />
+          </svg>
+        ),
+      },
+      {
+        href: "/app/jobs/records",
+        labelKey: "jobRecords",
+        icon: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />
           </svg>
         ),
       },
@@ -146,9 +158,13 @@ const navSections: NavSection[] = [
       },
     ],
   },
-];
+] satisfies NavSection[];
 
-function withPortalQuery(path: string, orgId: string | null, mobileMode: boolean): string {
+function withPortalQuery(
+  path: string,
+  orgId: string | null,
+  mobileMode: boolean,
+): string {
   if (!orgId && !mobileMode) {
     return path;
   }
@@ -167,27 +183,39 @@ type ClientPortalNavProps = {
   calendarAccessRole: CalendarAccessRole;
 };
 
-export default function ClientPortalNav({ calendarAccessRole }: ClientPortalNavProps) {
+export default function ClientPortalNav({
+  calendarAccessRole,
+}: ClientPortalNavProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const t = useTranslations("appNav");
   const orgId = searchParams.get("orgId");
   const mobileMode = searchParams.get("mobile") === "1";
-  const workerScoped = calendarAccessRole === "WORKER" || calendarAccessRole === "READ_ONLY";
+  const workerScoped =
+    calendarAccessRole === "WORKER" || calendarAccessRole === "READ_ONLY";
 
   return (
-    <nav className="app-nav" aria-label="Client portal navigation">
+    <nav className="app-nav" aria-label={t("navigationLabel")}>
       {navSections.map((section) => (
         <div key={section.labelKey} className="app-nav-section">
           <p className="app-nav-section-label">
-            {t(section.labelKey === "revenueSection" && workerScoped ? "recordsSection" : section.labelKey)}
+            {t(
+              section.labelKey === "revenueSection" && workerScoped
+                ? "recordsSection"
+                : section.labelKey,
+            )}
           </p>
           <div className="app-nav-section-links">
             {section.links.map((link) => {
               const active =
                 link.href === "/app"
                   ? pathname === "/app"
-                  : pathname === link.href || pathname.startsWith(`${link.href}/`);
+                  : link.href === "/app/jobs"
+                    ? pathname === "/app/jobs" ||
+                      (pathname.startsWith("/app/jobs/") &&
+                        !pathname.startsWith("/app/jobs/records"))
+                    : pathname === link.href ||
+                      pathname.startsWith(`${link.href}/`);
 
               return (
                 <Link
@@ -197,7 +225,11 @@ export default function ClientPortalNav({ calendarAccessRole }: ClientPortalNavP
                   className={`app-nav-link ${active ? "active" : ""}`}
                   aria-label={t(link.labelKey)}
                 >
-                  <span className="app-nav-icon" role="img" aria-label={`${t(link.labelKey)} icon`}>
+                  <span
+                    className="app-nav-icon"
+                    role="img"
+                    aria-label={`${t(link.labelKey)} icon`}
+                  >
                     {link.icon}
                   </span>
                   <span className="app-nav-label">{t(link.labelKey)}</span>

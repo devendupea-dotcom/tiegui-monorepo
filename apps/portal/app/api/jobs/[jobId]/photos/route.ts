@@ -8,10 +8,11 @@ import {
 import { createLeadPhoto } from "@/lib/lead-photos";
 
 type RouteContext = {
-  params: { jobId: string };
+  params: Promise<{ jobId: string }>;
 };
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
 

@@ -28,9 +28,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     invoiceId: string;
-  };
+  }>;
 };
 
 function decodeInlineInvoicePdfLogo(input: string): Buffer | null {
@@ -205,7 +205,8 @@ async function assertWorkerCanViewInvoice(input: {
   }
 }
 
-export async function GET(req: Request, { params }: RouteContext) {
+export async function GET(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const url = new URL(req.url);
     const inline = url.searchParams.get("inline") === "1";

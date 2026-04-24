@@ -4,11 +4,12 @@ import DispatchManager from "./dispatch-manager";
 
 export const dynamic = "force-dynamic";
 
-export default async function DispatchPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function DispatchPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const requestedOrgId = getParam(searchParams?.orgId);
   const requestedDate = getParam(searchParams?.date) || "";
   const requestedJobId = getParam(searchParams?.jobId) || null;

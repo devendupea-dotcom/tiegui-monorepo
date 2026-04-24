@@ -155,11 +155,12 @@ function sortQueueItems(left: TodayQueueItem, right: TodayQueueItem) {
   return right.updatedAt.getTime() - left.updatedAt.getTime();
 }
 
-export default async function AppTodayMobilePage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function AppTodayMobilePage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const requestedOrgId = getParam(searchParams?.orgId);
   const scope = await resolveAppScope({ nextPath: "/app/today", requestedOrgId });
   const mobileMode = getParam(searchParams?.mobile) === "1";

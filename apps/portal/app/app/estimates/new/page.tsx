@@ -4,11 +4,12 @@ function getParam(value: string | string[] | undefined): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-export default function LegacyEstimateRedirectPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function LegacyEstimateRedirectPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const params = new URLSearchParams();
   const orgId = getParam(searchParams?.orgId);
   const mobile = getParam(searchParams?.mobile);

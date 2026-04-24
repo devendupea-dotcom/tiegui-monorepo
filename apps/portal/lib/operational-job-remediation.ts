@@ -85,9 +85,9 @@ export function shouldShowOperationalJobAfterCallOutcomePrompt(input: {
   manualContactOutcome: OperationalJobManualContactOutcome | null;
 }): boolean {
   return (
-    input.manualFollowThroughState === "started"
-    && input.manualFollowThroughActionId === "call-customer"
-    && !input.manualContactOutcome
+    input.manualFollowThroughState === "started" &&
+    input.manualFollowThroughActionId === "call-customer" &&
+    !input.manualContactOutcome
   );
 }
 
@@ -125,12 +125,14 @@ function appendAction(
   target.push(action);
 }
 
-function getManualFollowThroughActionLabel(actionId: string | null | undefined): string | null {
+function getManualFollowThroughActionLabel(
+  actionId: string | null | undefined,
+): string | null {
   switch (actionId || "") {
     case "open-inbox":
       return "Open Inbox Thread";
     case "open-crm":
-      return "Open CRM Folder";
+      return "Open Lead";
     case "edit-phone":
       return "Edit Phone";
     case "call-customer":
@@ -146,7 +148,9 @@ function getManualFollowThroughActionLabel(actionId: string | null | undefined):
   }
 }
 
-function getManualContactOutcomeLabel(outcome: OperationalJobManualContactOutcome): string {
+function getManualContactOutcomeLabel(
+  outcome: OperationalJobManualContactOutcome,
+): string {
   switch (outcome) {
     case "confirmed_schedule":
       return "Confirmed schedule";
@@ -242,30 +246,138 @@ export function buildOperationalJobRemediationActions(input: {
 
   switch (input.remediation.kind) {
     case "check_phone":
-      appendAction(actions, seen, input.editPhoneHref ? { id: "edit-phone", label: "Edit Phone", href: input.editPhoneHref } : null);
-      appendAction(actions, seen, input.callHref ? { id: "call-customer", label: "Call Customer", href: input.callHref, native: true } : null);
-      appendAction(actions, seen, input.crmHref ? { id: "open-crm", label: "Open CRM Folder", href: input.crmHref } : null);
-      break;
-    case "opted_out":
-      appendAction(actions, seen, input.inboxThreadHref ? { id: "open-inbox", label: "Open Inbox Thread", href: input.inboxThreadHref } : null);
-      appendAction(actions, seen, input.crmHref ? { id: "open-crm", label: "Open CRM Folder", href: input.crmHref } : null);
-      appendAction(actions, seen, input.callHref ? { id: "call-customer", label: "Call Customer", href: input.callHref, native: true } : null);
-      break;
-    case "check_twilio":
-      appendAction(actions, seen, input.settingsHref ? { id: "open-settings", label: "Open Settings", href: input.settingsHref } : null);
       appendAction(
         actions,
         seen,
-        input.integrationsHref ? { id: "open-integrations", label: "Open Integrations", href: input.integrationsHref } : null,
+        input.editPhoneHref
+          ? { id: "edit-phone", label: "Edit Phone", href: input.editPhoneHref }
+          : null,
+      );
+      appendAction(
+        actions,
+        seen,
+        input.callHref
+          ? {
+              id: "call-customer",
+              label: "Call Customer",
+              href: input.callHref,
+              native: true,
+            }
+          : null,
+      );
+      appendAction(
+        actions,
+        seen,
+        input.crmHref
+          ? { id: "open-crm", label: "Open Lead", href: input.crmHref }
+          : null,
+      );
+      break;
+    case "opted_out":
+      appendAction(
+        actions,
+        seen,
+        input.inboxThreadHref
+          ? {
+              id: "open-inbox",
+              label: "Open Inbox Thread",
+              href: input.inboxThreadHref,
+            }
+          : null,
+      );
+      appendAction(
+        actions,
+        seen,
+        input.crmHref
+          ? { id: "open-crm", label: "Open Lead", href: input.crmHref }
+          : null,
+      );
+      appendAction(
+        actions,
+        seen,
+        input.callHref
+          ? {
+              id: "call-customer",
+              label: "Call Customer",
+              href: input.callHref,
+              native: true,
+            }
+          : null,
+      );
+      break;
+    case "check_twilio":
+      appendAction(
+        actions,
+        seen,
+        input.settingsHref
+          ? {
+              id: "open-settings",
+              label: "Open Settings",
+              href: input.settingsHref,
+            }
+          : null,
+      );
+      appendAction(
+        actions,
+        seen,
+        input.integrationsHref
+          ? {
+              id: "open-integrations",
+              label: "Open Integrations",
+              href: input.integrationsHref,
+            }
+          : null,
       );
       break;
     case "call_customer":
-      appendAction(actions, seen, input.callHref ? { id: "call-customer", label: "Call Customer", href: input.callHref, native: true } : null);
-      appendAction(actions, seen, input.inboxThreadHref ? { id: "open-inbox", label: "Open Inbox Thread", href: input.inboxThreadHref } : null);
+      appendAction(
+        actions,
+        seen,
+        input.callHref
+          ? {
+              id: "call-customer",
+              label: "Call Customer",
+              href: input.callHref,
+              native: true,
+            }
+          : null,
+      );
+      appendAction(
+        actions,
+        seen,
+        input.inboxThreadHref
+          ? {
+              id: "open-inbox",
+              label: "Open Inbox Thread",
+              href: input.inboxThreadHref,
+            }
+          : null,
+      );
       break;
     case "retry_later":
-      appendAction(actions, seen, input.inboxThreadHref ? { id: "open-inbox", label: "Open Inbox Thread", href: input.inboxThreadHref } : null);
-      appendAction(actions, seen, input.callHref ? { id: "call-customer", label: "Call Customer", href: input.callHref, native: true } : null);
+      appendAction(
+        actions,
+        seen,
+        input.inboxThreadHref
+          ? {
+              id: "open-inbox",
+              label: "Open Inbox Thread",
+              href: input.inboxThreadHref,
+            }
+          : null,
+      );
+      appendAction(
+        actions,
+        seen,
+        input.callHref
+          ? {
+              id: "call-customer",
+              label: "Call Customer",
+              href: input.callHref,
+              native: true,
+            }
+          : null,
+      );
       break;
     default:
       break;
@@ -274,7 +386,9 @@ export function buildOperationalJobRemediationActions(input: {
   return actions;
 }
 
-export function getOperationalJobRemediationIssueKey(input: OperationalJobRemediationStateSnapshot): string | null {
+export function getOperationalJobRemediationIssueKey(
+  input: OperationalJobRemediationStateSnapshot,
+): string | null {
   const remediationKind = input.lastCustomerUpdate?.remediation?.kind;
   if (remediationKind) {
     return `remediation:${remediationKind}`;
@@ -286,7 +400,8 @@ export function getOperationalJobRemediationIssueKey(input: OperationalJobRemedi
 
   if (
     input.lastCustomerUpdate?.operatorFailureReason &&
-    (input.lastCustomerUpdate.deliveryState === "failed" || input.lastCustomerUpdate.deliveryState === "suppressed")
+    (input.lastCustomerUpdate.deliveryState === "failed" ||
+      input.lastCustomerUpdate.deliveryState === "suppressed")
   ) {
     return `delivery:${input.lastCustomerUpdate.operatorFailureReason}`;
   }
@@ -294,7 +409,9 @@ export function getOperationalJobRemediationIssueKey(input: OperationalJobRemedi
   return null;
 }
 
-export function shouldAutoRefreshOperationalJobRemediation(input: OperationalJobRemediationStateSnapshot): boolean {
+export function shouldAutoRefreshOperationalJobRemediation(
+  input: OperationalJobRemediationStateSnapshot,
+): boolean {
   return Boolean(getOperationalJobRemediationIssueKey(input));
 }
 
@@ -311,7 +428,11 @@ export function shouldShowOperationalJobRecoveryCta(input: {
     return false;
   }
 
-  return input.current.customerUpdate.pending && input.current.customerUpdate.canSend && !input.current.customerUpdate.blockedReason;
+  return (
+    input.current.customerUpdate.pending &&
+    input.current.customerUpdate.canSend &&
+    !input.current.customerUpdate.blockedReason
+  );
 }
 
 export function describeOperationalJobRecoveryCompletion(input: {
@@ -332,7 +453,10 @@ export function describeOperationalJobRecoveryCompletion(input: {
     };
   }
 
-  if (input.deliveryState === "failed" || input.deliveryState === "suppressed") {
+  if (
+    input.deliveryState === "failed" ||
+    input.deliveryState === "suppressed"
+  ) {
     return {
       title: "Customer update resumed",
       detail: "Customer update sent, but delivery still needs attention.",
@@ -371,7 +495,10 @@ export function describeOperationalJobManualOutcomeCompletion(input: {
     };
   }
 
-  if (input.deliveryState === "failed" || input.deliveryState === "suppressed") {
+  if (
+    input.deliveryState === "failed" ||
+    input.deliveryState === "suppressed"
+  ) {
     return {
       title,
       detail: "Customer update sent, but delivery still needs attention.",
@@ -405,8 +532,8 @@ export function getOperationalJobNoResponseStaleCue(input: {
     hasCustomerResponseAfterFollowUp({
       customerUpdateAlreadySentAt: input.customerUpdateAlreadySentAt,
       customerResponseOccurredAt: input.customerResponseOccurredAt,
-    })
-    || hasOperatorFollowUpAfterResponse({
+    }) ||
+    hasOperatorFollowUpAfterResponse({
       customerResponseOccurredAt: input.customerResponseOccurredAt,
       operatorFollowUpOccurredAt: input.operatorFollowUpOccurredAt,
     })
@@ -414,13 +541,12 @@ export function getOperationalJobNoResponseStaleCue(input: {
     return null;
   }
 
-  const referenceTime =
-    hasCustomerUpdateAfterOutcome({
-      outcomeOccurredAt: input.outcomeOccurredAt,
-      customerUpdateOccurredAt: input.customerUpdateOccurredAt,
-    })
-      ? getTimeOrNull(input.customerUpdateOccurredAt)
-      : getTimeOrNull(input.outcomeOccurredAt);
+  const referenceTime = hasCustomerUpdateAfterOutcome({
+    outcomeOccurredAt: input.outcomeOccurredAt,
+    customerUpdateOccurredAt: input.customerUpdateOccurredAt,
+  })
+    ? getTimeOrNull(input.customerUpdateOccurredAt)
+    : getTimeOrNull(input.outcomeOccurredAt);
   const nowTime = getTimeOrNull(input.now);
 
   if (referenceTime === null || nowTime === null) {
@@ -435,7 +561,11 @@ export function getOperationalJobNoResponseStaleCue(input: {
 
   const ageLabel = getElapsedAgeLabel(elapsedMs);
 
-  if (input.customerUpdatePending && input.customerUpdateCanSend && !input.customerUpdateBlockedReason) {
+  if (
+    input.customerUpdatePending &&
+    input.customerUpdateCanSend &&
+    !input.customerUpdateBlockedReason
+  ) {
     return {
       badge: "No follow-up yet",
       detail: `A schedule-change update has been ready to send for ${ageLabel}.`,
@@ -492,7 +622,8 @@ export function getOperationalJobPassiveWaitingContext(input: {
 
   return {
     label: "Last touch",
-    lastTouchOccurredAt: input.lastCustomerUpdateOccurredAt || input.customerUpdateAlreadySentAt,
+    lastTouchOccurredAt:
+      input.lastCustomerUpdateOccurredAt || input.customerUpdateAlreadySentAt,
     waitingSinceAt: input.customerUpdateAlreadySentAt as string | Date,
     manualOutcomeOccurredAt: input.outcomeOccurredAt,
     deliveryState: input.deliveryState,
@@ -510,8 +641,8 @@ export function getOperationalJobInboundResponseContext(input: {
     !hasCustomerResponseAfterFollowUp({
       customerUpdateAlreadySentAt: input.customerUpdateAlreadySentAt,
       customerResponseOccurredAt: input.customerResponseOccurredAt,
-    })
-    || hasOperatorFollowUpAfterResponse({
+    }) ||
+    hasOperatorFollowUpAfterResponse({
       customerResponseOccurredAt: input.customerResponseOccurredAt,
       operatorFollowUpOccurredAt: input.operatorFollowUpOccurredAt,
     })
@@ -550,7 +681,10 @@ export function getOperationalJobInboundResponseHandoff(input: {
       : null;
   }
 
-  if (input.customerResponseType === "call" || input.customerResponseType === "voicemail") {
+  if (
+    input.customerResponseType === "call" ||
+    input.customerResponseType === "voicemail"
+  ) {
     if (input.callHref) {
       return {
         id: "call-customer",
@@ -563,7 +697,7 @@ export function getOperationalJobInboundResponseHandoff(input: {
     return input.crmHref
       ? {
           id: "open-crm",
-          label: "Open CRM Folder",
+          label: "Open Lead",
           href: input.crmHref,
         }
       : null;
@@ -581,7 +715,10 @@ export function shouldReEmphasizeNoResponseAction(input: {
     return false;
   }
 
-  return input.nextActionKind === "send_customer_update" || input.nextActionKind === "handoff";
+  return (
+    input.nextActionKind === "send_customer_update" ||
+    input.nextActionKind === "handoff"
+  );
 }
 
 export function describeOperationalJobRecoveryEscalation(input: {
@@ -594,29 +731,40 @@ export function describeOperationalJobRecoveryEscalation(input: {
     return null;
   }
 
-  if (input.deliveryState !== "failed" && input.deliveryState !== "suppressed") {
+  if (
+    input.deliveryState !== "failed" &&
+    input.deliveryState !== "suppressed"
+  ) {
     return null;
   }
 
-  const normalizedProviderStatus = (input.providerStatus || "").trim().toLowerCase();
+  const normalizedProviderStatus = (input.providerStatus || "")
+    .trim()
+    .toLowerCase();
 
   if (normalizedProviderStatus === "undelivered") {
     return {
       title: "Customer update was not delivered after resume",
-      detail: input.operatorFailureReason || "The carrier could not deliver the resumed customer update.",
+      detail:
+        input.operatorFailureReason ||
+        "The carrier could not deliver the resumed customer update.",
     };
   }
 
   if (input.deliveryState === "suppressed") {
     return {
       title: "Customer update was blocked after resume",
-      detail: input.operatorFailureReason || "The resumed customer update was blocked before delivery.",
+      detail:
+        input.operatorFailureReason ||
+        "The resumed customer update was blocked before delivery.",
     };
   }
 
   return {
     title: "Customer update failed after resume",
-    detail: input.operatorFailureReason || "The resumed customer update still needs follow-up.",
+    detail:
+      input.operatorFailureReason ||
+      "The resumed customer update still needs follow-up.",
   };
 }
 
@@ -629,15 +777,18 @@ export function describeOperationalJobManualFollowThrough(input: {
   if (input.state === "handled") {
     return {
       title: "Handled manually",
-      detail: actionLabel && actionLabel !== "Mark Handled Manually"
-        ? `Marked handled manually after ${actionLabel}.`
-        : "This resumed update was handled manually.",
+      detail:
+        actionLabel && actionLabel !== "Mark Handled Manually"
+          ? `Marked handled manually after ${actionLabel}.`
+          : "This resumed update was handled manually.",
     };
   }
 
   return {
     title: "Manual follow-up in progress",
-    detail: actionLabel ? `Follow-through started from ${actionLabel}.` : "A manual follow-up is already in progress.",
+    detail: actionLabel
+      ? `Follow-through started from ${actionLabel}.`
+      : "A manual follow-up is already in progress.",
   };
 }
 
@@ -670,7 +821,11 @@ export function describeOperationalJobManualClosure(input: {
       : false;
 
   if (input.outcome === "no_response") {
-    if (input.customerUpdatePending && input.customerUpdateCanSend && !input.customerUpdateBlockedReason) {
+    if (
+      input.customerUpdatePending &&
+      input.customerUpdateCanSend &&
+      !input.customerUpdateBlockedReason
+    ) {
       return {
         state: "update_pending",
         badge: "New update pending",
@@ -751,7 +906,11 @@ export function describeOperationalJobManualClosure(input: {
       };
     }
 
-    if (input.customerUpdatePending && input.customerUpdateCanSend && !input.customerUpdateBlockedReason) {
+    if (
+      input.customerUpdatePending &&
+      input.customerUpdateCanSend &&
+      !input.customerUpdateBlockedReason
+    ) {
       return {
         state: "update_pending",
         badge: "Update still pending",
@@ -793,9 +952,10 @@ export function describeOperationalJobManualClosure(input: {
       return {
         state: "update_pending",
         badge: "Update still pending",
-        title: input.outcome === "confirmed_schedule"
-          ? "Schedule confirmed; customer update still pending"
-          : "Customer contacted; schedule-change update still pending",
+        title:
+          input.outcome === "confirmed_schedule"
+            ? "Schedule confirmed; customer update still pending"
+            : "Customer contacted; schedule-change update still pending",
         detail:
           input.outcome === "confirmed_schedule"
             ? `${actionPrefix} The schedule was confirmed manually, but the matching customer update is still ready to send from this job.`
@@ -806,9 +966,10 @@ export function describeOperationalJobManualClosure(input: {
     return {
       state: "needs_action",
       badge: "Still needs action",
-      title: input.outcome === "confirmed_schedule"
-        ? "Schedule confirmed, but the job still needs action"
-        : "Manual handling recorded, but the job still needs action",
+      title:
+        input.outcome === "confirmed_schedule"
+          ? "Schedule confirmed, but the job still needs action"
+          : "Manual handling recorded, but the job still needs action",
       detail: input.customerUpdateBlockedReason
         ? `${actionPrefix} A schedule-change update is still blocked: ${input.customerUpdateBlockedReason}`
         : `${actionPrefix} A schedule-change update is still waiting on another action.`,
@@ -819,9 +980,10 @@ export function describeOperationalJobManualClosure(input: {
     return {
       state: "clear",
       badge: "Operationally clear",
-      title: input.outcome === "confirmed_schedule"
-        ? "Schedule confirmed; latest update already sent"
-        : "Customer contacted; latest update already sent",
+      title:
+        input.outcome === "confirmed_schedule"
+          ? "Schedule confirmed; latest update already sent"
+          : "Customer contacted; latest update already sent",
       detail:
         input.outcome === "confirmed_schedule"
           ? `${actionPrefix} The schedule was confirmed and the latest update is already recorded as sent.`
@@ -832,9 +994,10 @@ export function describeOperationalJobManualClosure(input: {
   return {
     state: "clear",
     badge: "Operationally clear",
-    title: input.outcome === "confirmed_schedule"
-      ? "Schedule confirmed; no further dispatch update pending"
-      : "Customer contacted; no further dispatch update pending",
+    title:
+      input.outcome === "confirmed_schedule"
+        ? "Schedule confirmed; no further dispatch update pending"
+        : "Customer contacted; no further dispatch update pending",
     detail:
       input.outcome === "confirmed_schedule"
         ? `${actionPrefix} The schedule was confirmed and no dispatch update is currently waiting to send.`
@@ -850,7 +1013,8 @@ export function describeOperationalJobManualContactOutcome(input: {
       return {
         badge: getManualContactOutcomeLabel(input.outcome),
         title: "Confirmed schedule",
-        detail: "The customer confirmed the current timing during manual follow-up.",
+        detail:
+          "The customer confirmed the current timing during manual follow-up.",
       };
     case "reschedule_needed":
       return {
@@ -862,7 +1026,8 @@ export function describeOperationalJobManualContactOutcome(input: {
       return {
         badge: getManualContactOutcomeLabel(input.outcome),
         title: "No response",
-        detail: "Manual contact was attempted, but the customer did not respond.",
+        detail:
+          "Manual contact was attempted, but the customer did not respond.",
       };
     default:
       return {
@@ -903,7 +1068,8 @@ export function getOperationalJobOutcomeNextAction(input: {
     return {
       kind: "send_customer_update",
       label: "Send Update Now",
-      detail: "The schedule was confirmed manually. Send the customer update from this job now.",
+      detail:
+        "The schedule was confirmed manually. Send the customer update from this job now.",
     };
   }
 
@@ -912,7 +1078,8 @@ export function getOperationalJobOutcomeNextAction(input: {
       return {
         kind: "send_customer_update",
         label: "Send Update Now",
-        detail: "The new schedule is saved and the matching customer update is ready to send.",
+        detail:
+          "The new schedule is saved and the matching customer update is ready to send.",
       };
     }
 
@@ -923,7 +1090,8 @@ export function getOperationalJobOutcomeNextAction(input: {
     return {
       kind: "edit_schedule",
       label: "Edit Schedule Now",
-      detail: "The customer needs a new time. Update the schedule before closing this out.",
+      detail:
+        "The customer needs a new time. Update the schedule before closing this out.",
     };
   }
 
@@ -932,7 +1100,8 @@ export function getOperationalJobOutcomeNextAction(input: {
       return {
         kind: "send_customer_update",
         label: "Send Update Now",
-        detail: "The customer did not respond manually, but a new schedule-change update is ready to send from this job.",
+        detail:
+          "The customer did not respond manually, but a new schedule-change update is ready to send from this job.",
       };
     }
 
@@ -940,8 +1109,9 @@ export function getOperationalJobOutcomeNextAction(input: {
       return null;
     }
 
-    const handoff = input.remediationActions.find((action) => action.id === "open-inbox")
-      || input.remediationActions.find((action) => action.id === "call-customer");
+    const handoff =
+      input.remediationActions.find((action) => action.id === "open-inbox") ||
+      input.remediationActions.find((action) => action.id === "call-customer");
 
     if (!handoff) {
       return null;

@@ -16,7 +16,14 @@ const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END"
 const START_KEYWORDS = new Set(["START", "UNSTOP"]);
 
 export const TAKEOVER_PATTERN =
-  /\b(call me|can you call|talk to someone|i have questions|phone call|call back|ll[aá]mame|pueden llamar|quiero hablar)\b/i;
+  /\b(call me|can you call|talk to someone|talk to a person|speak to someone|speak to a person|i have questions|phone call|call back|human|representative|office|ll[aá]mame|pueden llamar|quiero hablar)\b/i;
+
+const PRICE_OR_POLICY_QUESTION_PATTERN =
+  /\b(how much|price|pricing|cost|costs|estimate price|ballpark|licensed|insured|insurance|warranty|guarantee|financing|payment plan|deposit|permit|hoa|emergency|same day)\b/i;
+const CAPABILITY_QUESTION_PATTERN =
+  /\b(can you|could you|do you|are you able|would you|available|availability)\b/i;
+const ADDRESS_PRIVACY_PATTERN =
+  /\b(rather not|do not want|don't want|won't|cant|can't|cannot|prefer not)\b.{0,48}\b(address|text|sms|message)\b/i;
 
 const ADDRESS_PATTERN =
   /\b\d{1,6}\s+[a-z0-9.\-'\s]{2,}\b(st|street|ave|avenue|rd|road|dr|drive|ln|lane|way|blvd|boulevard|ct|court|pl|place|pkwy|parkway)\b/i;
@@ -201,6 +208,30 @@ export function sanitizeMessageBody(body: string): string {
   return body.replace(/\s+/g, " ").trim();
 }
 
+export function shouldRouteInboundSmsToHuman(body: string): boolean {
+  const normalized = sanitizeMessageBody(body);
+  if (!normalized) return false;
+
+  if (TAKEOVER_PATTERN.test(normalized) || ADDRESS_PRIVACY_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  const asksQuestion = /[?¿]/.test(normalized);
+  if (!asksQuestion) {
+    return false;
+  }
+
+  if (PRICE_OR_POLICY_QUESTION_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  if (CAPABILITY_QUESTION_PATTERN.test(normalized) && !parseWorkAndLocation(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function withSignature(input: { body: string; websiteSignature: string | null }): string {
   const body = sanitizeMessageBody(input.body);
   if (!input.websiteSignature) return body;
@@ -219,7 +250,7 @@ export function parseTimeframe(value: string): ConversationTimeframe | null {
 }
 
 export function parseAddress(value: string): { kind: "ADDRESS" | "CITY" | "UNKNOWN"; addressText?: string; city?: string } {
-  const trimmed = sanitizeMessageBody(value);
+  const trimmed = sanitizeMessageBody(value).replace(/[?.!,;:]+$/g, "").trim();
   if (!trimmed) return { kind: "UNKNOWN" };
   const lower = trimmed.toLowerCase();
 

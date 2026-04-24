@@ -27,6 +27,7 @@ type LeadMessageThreadProps = {
   templates?: ThreadTemplate[];
   senderNumber?: string | null;
   canSend?: boolean;
+  composerNotice?: string | null;
 };
 
 function formatMessageTimestamp(value: string): string {
@@ -44,6 +45,7 @@ export default function LeadMessageThread({
   templates = [],
   senderNumber = null,
   canSend = true,
+  composerNotice = null,
 }: LeadMessageThreadProps) {
   const [messages, setMessages] = useState<ThreadMessage[]>(initialMessages);
   const [draft, setDraft] = useState("");
@@ -69,7 +71,7 @@ export default function LeadMessageThread({
     event.preventDefault();
 
     const body = draft.trim();
-    if (!body || submitting) {
+    if (!body || submitting || !senderNumber || !canSend) {
       return;
     }
 
@@ -103,12 +105,22 @@ export default function LeadMessageThread({
         ok?: boolean;
         error?: string;
         notice?: string;
+        deliveryState?: "SENT" | "QUEUED" | "FAILED" | "SUPPRESSED" | "NOT_LIVE";
+        liveSend?: boolean;
         message?: Omit<ThreadMessage, "createdAt"> & { createdAt: string | Date };
       };
 
       if (!response.ok || !payload.ok || !payload.message) {
         setMessages((current) => current.filter((message) => message.id !== tempId));
-        setStatus(payload.error || "Could not send message.");
+        setStatus(
+          payload.notice ||
+            payload.error ||
+            (payload.deliveryState === "SUPPRESSED"
+              ? "Message blocked because the contact is opted out."
+              : payload.deliveryState === "NOT_LIVE"
+                ? "Messaging is not live for this workspace yet."
+                : "Could not send message."),
+        );
         setSubmitting(false);
         return;
       }
@@ -124,7 +136,12 @@ export default function LeadMessageThread({
       if (confirmedMessage.status === "FAILED") {
         setStatus(payload.notice || "Message failed to send.");
       } else if (confirmedMessage.status === "QUEUED") {
-        setStatus(payload.notice || "Message queued.");
+        setStatus(
+          payload.notice ||
+            (payload.liveSend
+              ? "Message queued."
+              : "Messaging is not live yet. Message saved as queued."),
+        );
       } else {
         setStatus(payload.notice || "Message sent.");
       }
@@ -159,50 +176,49 @@ export default function LeadMessageThread({
         )}
       </div>
 
-      {canSend ? (
-        <form className="message-compose" onSubmit={handleSend}>
-          {senderNumber ? (
-            <p className="muted">
-              Sending from <code>{senderNumber}</code>
-            </p>
-          ) : (
-            <p className="muted">No org SMS sender configured yet.</p>
-          )}
-          {templates.length > 0 ? (
-            <div className="template-pills">
-              {templates.map((template) => (
+      <form className="message-compose" onSubmit={handleSend}>
+        {senderNumber ? (
+          <p className="muted">
+            Sending from <code>{senderNumber}</code>
+          </p>
+        ) : (
+          <p className="muted">No org SMS sender configured yet.</p>
+        )}
+        {composerNotice ? <p className="muted">{composerNotice}</p> : null}
+        {templates.length > 0 ? (
+          <div className="template-pills">
+            {templates.map((template) => (
                 <button
                   key={template.id}
                   type="button"
                   className="template-chip"
                   onClick={() => setDraft(template.body)}
-                  disabled={submitting}
+                  disabled={submitting || !senderNumber || !canSend}
                 >
                   {template.name}
                 </button>
               ))}
-            </div>
-          ) : null}
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Type a message"
-            rows={3}
-            maxLength={1600}
-            disabled={submitting || !senderNumber}
-          />
-          <div className="message-compose-actions">
-            <span className="muted">{draft.length}/1600</span>
-            <button
-              className="btn primary"
-              type="submit"
-              disabled={submitting || !draft.trim() || !senderNumber}
-            >
-              Send
-            </button>
           </div>
-        </form>
-      ) : null}
+        ) : null}
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="Type a message"
+          rows={3}
+          maxLength={1600}
+          disabled={submitting || !senderNumber || !canSend}
+        />
+        <div className="message-compose-actions">
+          <span className="muted">{draft.length}/1600</span>
+          <button
+            className="btn primary"
+            type="submit"
+            disabled={submitting || !draft.trim() || !senderNumber || !canSend}
+          >
+            Send
+          </button>
+        </div>
+      </form>
 
       {status ? <p className="form-status">{status}</p> : null}
     </div>

@@ -3,7 +3,6 @@ import type { Adapter, AdapterUser } from "next-auth/adapters";
 import type { JWT } from "next-auth/jwt";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import type { Role } from "@prisma/client";
-import EmailProvider from "next-auth/providers/email";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { ensureCredentialLoginAllowed, getClientIpFromHeaders } from "./auth-rate-limit";
 import { prisma } from "./prisma";
@@ -11,10 +10,6 @@ import { normalizeEnvValue } from "./env";
 import { verifyPassword } from "./passwords";
 import { checkSlidingWindowLimit } from "./rate-limit";
 
-// Prefer SMTP_URL (our canonical name) but allow EMAIL_SERVER for compatibility.
-// Also strip accidental wrapping quotes from Vercel env vars.
-const emailServer = normalizeEnvValue(process.env.SMTP_URL) || normalizeEnvValue(process.env.EMAIL_SERVER);
-const emailFrom = normalizeEnvValue(process.env.EMAIL_FROM);
 const nextAuthSecret = normalizeEnvValue(process.env.NEXTAUTH_SECRET);
 const adminEmails = parseAdminEmails(process.env.ADMIN_EMAILS);
 
@@ -176,7 +171,6 @@ export const authOptions: NextAuthOptions = {
   pages: {
     signIn: "/login",
     error: "/login",
-    verifyRequest: "/login?verify=1",
   },
   providers: [
     CredentialsProvider({
@@ -232,14 +226,6 @@ export const authOptions: NextAuthOptions = {
         return authUser;
       },
     }),
-    ...(emailServer && emailFrom
-      ? [
-          EmailProvider({
-            server: emailServer,
-            from: emailFrom,
-          }),
-        ]
-      : []),
   ],
   callbacks: {
     async jwt({ token, user }) {

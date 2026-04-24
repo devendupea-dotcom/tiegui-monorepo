@@ -29,6 +29,11 @@ import {
   operationalJobCandidateSelect,
   selectReusableOperationalJobCandidate,
 } from "@/lib/operational-jobs";
+import {
+  canComposeManualSms,
+  getTwilioMessagingComposeNotice,
+  resolveTwilioMessagingReadiness,
+} from "@/lib/twilio-readiness";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
 import {
   resolveContractorWorkflow,
@@ -436,7 +441,7 @@ async function createInvoiceAction(formData: FormData) {
         issueDate: now,
         dueDate: dueAt,
         taxRate: config.defaultTaxRate,
-        notes: `Created from CRM folder: ${leadLabel}`,
+        notes: `Created from lead workspace: ${leadLabel}`,
         createdByUserId: scoped.actor.id ?? null,
       },
       select: { id: true },
@@ -502,7 +507,7 @@ async function quickMarkInvoicePaidAction(formData: FormData) {
         amount: invoice.balanceDue,
         date: new Date(),
         method: "OTHER",
-        note: "Quick mark paid from CRM folder.",
+        note: "Quick mark paid manually from lead workspace.",
       },
     });
 
@@ -521,13 +526,14 @@ async function quickMarkInvoicePaidAction(formData: FormData) {
 
 export const dynamic = "force-dynamic";
 
-export default async function ClientJobDetailPage({
-  params,
-  searchParams,
-}: {
-  params: { jobId: string };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function ClientJobDetailPage(
+  props: {
+    params: Promise<{ jobId: string }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const requestedOrgId = getParam(searchParams?.orgId);
   const currentTab = getTab(searchParams?.tab);
   const saved = getParam(searchParams?.saved);
@@ -582,6 +588,7 @@ export default async function ClientJobDetailPage({
           twilioConfig: {
             select: {
               phoneNumber: true,
+              status: true,
             },
           },
           voiceNotesEnabled: true,
@@ -758,6 +765,9 @@ export default async function ClientJobDetailPage({
 
   const resolvedLeadPhotos =
     currentTab === "photos" ? await resolveLeadPhotoUrls(lead.leadPhotos) : [];
+  const twilioReadiness = resolveTwilioMessagingReadiness({
+    twilioConfig: lead.org.twilioConfig,
+  });
 
   const timeline: TimelineItem[] = [
     ...lead.calls.map((call) => ({
@@ -1435,6 +1445,8 @@ export default async function ClientJobDetailPage({
               lead.org.smsFromNumberE164 ||
               null
             }
+            canSend={canComposeManualSms(twilioReadiness.code)}
+            composerNotice={getTwilioMessagingComposeNotice(twilioReadiness.code)}
             templates={lead.org.smsTemplates}
             initialMessages={lead.messages.map((message) => ({
               ...message,

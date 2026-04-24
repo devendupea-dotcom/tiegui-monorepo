@@ -126,13 +126,14 @@ async function updateLeadAction(formData: FormData) {
 
 export const dynamic = "force-dynamic";
 
-export default async function LeadDetailPage({
-  params,
-  searchParams,
-}: {
-  params: { leadId: string };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function LeadDetailPage(
+  props: {
+    params: Promise<{ leadId: string }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   await requireInternalUser(`/hq/leads/${params.leadId}`);
 
   const currentTab = getTab(searchParams?.tab);

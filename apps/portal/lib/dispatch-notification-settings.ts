@@ -2,6 +2,7 @@ import type { DispatchNotificationSettings } from "@/lib/dispatch";
 import { serializeDispatchNotificationSettings } from "@/lib/dispatch";
 import { AppApiError } from "@/lib/app-api-permissions";
 import { prisma } from "@/lib/prisma";
+import { resolveTwilioMessagingReadiness } from "@/lib/twilio-readiness";
 
 export type NotificationSettingsPayload = {
   smsEnabled?: unknown;
@@ -21,7 +22,9 @@ function parseBoolean(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
-export async function getDispatchNotificationSettings(orgId: string): Promise<DispatchNotificationSettings> {
+export async function getDispatchNotificationSettings(
+  orgId: string,
+): Promise<DispatchNotificationSettings> {
   const organization = await prisma.organization.findUnique({
     where: { id: orgId },
     select: {
@@ -47,8 +50,13 @@ export async function getDispatchNotificationSettings(orgId: string): Promise<Di
     throw new AppApiError("Workspace not found.", 404);
   }
 
-  const canSend = Boolean(organization.twilioConfig?.phoneNumber && organization.twilioConfig?.status !== "PAUSED");
-  return serializeDispatchNotificationSettings(organization.messagingSettings, canSend);
+  const readiness = resolveTwilioMessagingReadiness({
+    twilioConfig: organization.twilioConfig,
+  });
+  return serializeDispatchNotificationSettings(organization.messagingSettings, {
+    canSend: readiness.canSend,
+    readinessCode: readiness.code,
+  });
 }
 
 export async function updateDispatchNotificationSettings(input: {
@@ -56,6 +64,9 @@ export async function updateDispatchNotificationSettings(input: {
   payload: NotificationSettingsPayload | null;
 }): Promise<DispatchNotificationSettings> {
   const current = await getDispatchNotificationSettings(input.orgId);
+  if (!current.canSend) {
+    return current;
+  }
   const payload = input.payload || {};
 
   await prisma.organizationMessagingSettings.upsert({
@@ -64,18 +75,42 @@ export async function updateDispatchNotificationSettings(input: {
     },
     update: {
       dispatchSmsEnabled: parseBoolean(payload.smsEnabled, current.smsEnabled),
-      dispatchSmsScheduled: parseBoolean(payload.notifyScheduled, current.notifyScheduled),
-      dispatchSmsOnTheWay: parseBoolean(payload.notifyOnTheWay, current.notifyOnTheWay),
-      dispatchSmsRescheduled: parseBoolean(payload.notifyRescheduled, current.notifyRescheduled),
-      dispatchSmsCompleted: parseBoolean(payload.notifyCompleted, current.notifyCompleted),
+      dispatchSmsScheduled: parseBoolean(
+        payload.notifyScheduled,
+        current.notifyScheduled,
+      ),
+      dispatchSmsOnTheWay: parseBoolean(
+        payload.notifyOnTheWay,
+        current.notifyOnTheWay,
+      ),
+      dispatchSmsRescheduled: parseBoolean(
+        payload.notifyRescheduled,
+        current.notifyRescheduled,
+      ),
+      dispatchSmsCompleted: parseBoolean(
+        payload.notifyCompleted,
+        current.notifyCompleted,
+      ),
     },
     create: {
       orgId: input.orgId,
       dispatchSmsEnabled: parseBoolean(payload.smsEnabled, current.smsEnabled),
-      dispatchSmsScheduled: parseBoolean(payload.notifyScheduled, current.notifyScheduled),
-      dispatchSmsOnTheWay: parseBoolean(payload.notifyOnTheWay, current.notifyOnTheWay),
-      dispatchSmsRescheduled: parseBoolean(payload.notifyRescheduled, current.notifyRescheduled),
-      dispatchSmsCompleted: parseBoolean(payload.notifyCompleted, current.notifyCompleted),
+      dispatchSmsScheduled: parseBoolean(
+        payload.notifyScheduled,
+        current.notifyScheduled,
+      ),
+      dispatchSmsOnTheWay: parseBoolean(
+        payload.notifyOnTheWay,
+        current.notifyOnTheWay,
+      ),
+      dispatchSmsRescheduled: parseBoolean(
+        payload.notifyRescheduled,
+        current.notifyRescheduled,
+      ),
+      dispatchSmsCompleted: parseBoolean(
+        payload.notifyCompleted,
+        current.notifyCompleted,
+      ),
     },
   });
 

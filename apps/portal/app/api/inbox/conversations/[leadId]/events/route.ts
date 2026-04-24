@@ -30,7 +30,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { leadId: string };
+  params: Promise<{ leadId: string }>;
 };
 
 export type TimelineEvent = {
@@ -246,7 +246,8 @@ async function assertWorkerCanViewLead(input: {
   }
 }
 
-export async function GET(req: Request, { params }: RouteContext) {
+export async function GET(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const leadId = params.leadId;
@@ -539,7 +540,8 @@ export async function GET(req: Request, { params }: RouteContext) {
   }
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   // Convenience endpoint to mark worker access via shared guard patterns (no-op for v1).
   // Real read-state tracking is handled client-side for now.
   try {

@@ -1,7 +1,12 @@
 import { addDays, addMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
+import { Prisma } from "@prisma/client";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "./calendar/availability";
 import { recordOutboundSmsCommunicationEvent } from "./communication-events";
+import {
+  resolveIntakeCallbackSelection,
+  type IntakeCallbackHoldSelection,
+} from "./intake-automation-core";
 import { formatCallbackTime } from "./intake-time";
 import { prisma } from "./prisma";
 import { pickLocalizedTemplate, resolveMessageLocale } from "./message-language";
@@ -48,6 +53,8 @@ const INTAKE_SLOT_OPTION_COUNT = 3;
 const INTAKE_SLOT_LOOKAHEAD_DAYS = 10;
 const INTAKE_SLOT_HOLD_MINUTES = 10;
 
+type Tx = Prisma.TransactionClient;
+
 export const intakeAutomationDefaults = {
   intro: DEFAULT_INTRO,
   askLocation: DEFAULT_ASK_LOCATION,
@@ -58,6 +65,22 @@ export const intakeAutomationDefaults = {
 
 export const intakeCallbackEventTitle = CALLBACK_EVENT_TITLE;
 export { parsePreferredCallbackAt } from "./intake-time";
+
+function buildIntakeCallbackLockKey(leadId: string): string {
+  return `intake-callback:${leadId}`;
+}
+
+async function lockIntakeCallbackMutation(
+  tx: Tx,
+  input: {
+    orgId: string;
+    leadId: string;
+  },
+) {
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${input.orgId}), hashtext(${buildIntakeCallbackLockKey(input.leadId)}))
+  `;
+}
 
 function renderCompletionTemplate(
   template: string,
@@ -146,6 +169,7 @@ async function sendAutomationMessage({
       toNumberE164,
       providerMessageSid: smsResult.providerMessageSid,
       status: smsResult.status,
+      deliveryNotice: smsResult.notice || null,
       occurredAt: message.createdAt,
     });
 
@@ -159,6 +183,49 @@ async function sendAutomationMessage({
   });
 }
 
+async function ensureIntakeCallbackEventTx(
+  tx: Tx,
+  input: {
+    orgId: string;
+    leadId: string;
+    callbackAt: Date;
+    assignedToUserId?: string | null;
+  },
+): Promise<boolean> {
+  const existing = await tx.event.findFirst({
+    where: {
+      orgId: input.orgId,
+      leadId: input.leadId,
+      type: "FOLLOW_UP",
+      title: CALLBACK_EVENT_TITLE,
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    return false;
+  }
+
+  await tx.event.create({
+    data: {
+      orgId: input.orgId,
+      leadId: input.leadId,
+      type: "FOLLOW_UP",
+      title: CALLBACK_EVENT_TITLE,
+      description: CALLBACK_EVENT_DESCRIPTION,
+      startAt: input.callbackAt,
+      assignedToUserId: input.assignedToUserId || null,
+      workerAssignments: input.assignedToUserId
+        ? {
+            create: [{ orgId: input.orgId, workerUserId: input.assignedToUserId }],
+          }
+        : undefined,
+    },
+  });
+
+  return true;
+}
+
 export async function ensureIntakeCallbackEvent({
   orgId,
   leadId,
@@ -170,38 +237,19 @@ export async function ensureIntakeCallbackEvent({
   callbackAt: Date;
   assignedToUserId?: string | null;
 }): Promise<boolean> {
-  const existing = await prisma.event.findFirst({
-    where: {
+  return prisma.$transaction(async (tx) => {
+    await lockIntakeCallbackMutation(tx, {
       orgId,
       leadId,
-      type: "FOLLOW_UP",
-      title: CALLBACK_EVENT_TITLE,
-    },
-    select: { id: true },
-  });
+    });
 
-  if (existing) {
-    return false;
-  }
-
-  await prisma.event.create({
-    data: {
+    return ensureIntakeCallbackEventTx(tx, {
       orgId,
       leadId,
-      type: "FOLLOW_UP",
-      title: CALLBACK_EVENT_TITLE,
-      description: CALLBACK_EVENT_DESCRIPTION,
-      startAt: callbackAt,
-      assignedToUserId: assignedToUserId || null,
-      workerAssignments: assignedToUserId
-        ? {
-            create: [{ orgId, workerUserId: assignedToUserId }],
-          }
-        : undefined,
-    },
+      callbackAt,
+      assignedToUserId,
+    });
   });
-
-  return true;
 }
 
 function parseCallbackOptionSelection(text: string): number | null {
@@ -663,26 +711,100 @@ export async function advanceLeadIntakeFromInbound({
       return;
     }
 
-    const now = new Date();
-    const activeHolds = await prisma.calendarHold.findMany({
-      where: {
+    const confirmation = await prisma.$transaction(async (tx) => {
+      await lockIntakeCallbackMutation(tx, {
         orgId: lead.orgId,
         leadId: lead.id,
-        source: "SMS_AGENT",
-        status: "ACTIVE",
-        expiresAt: { gt: now },
-      },
-      orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
-      select: {
-        id: true,
-        startAt: true,
-        workerUserId: true,
-      },
-      take: INTAKE_SLOT_OPTION_COUNT,
+      });
+
+      const liveLead = await tx.lead.findUnique({
+        where: { id: lead.id },
+        select: {
+          id: true,
+          orgId: true,
+          intakeStage: true,
+        },
+      });
+
+      if (!liveLead) {
+        return {
+          status: "noop" as const,
+        };
+      }
+
+      const now = new Date();
+      const activeHolds = await tx.calendarHold.findMany({
+        where: {
+          orgId: liveLead.orgId,
+          leadId: liveLead.id,
+          source: "SMS_AGENT",
+          status: "ACTIVE",
+          expiresAt: { gt: now },
+        },
+        orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          startAt: true,
+          workerUserId: true,
+        },
+        take: INTAKE_SLOT_OPTION_COUNT,
+      });
+
+      const resolvedSelection = resolveIntakeCallbackSelection({
+        intakeStage: liveLead.intakeStage,
+        selection,
+        holds: activeHolds,
+      });
+
+      if (resolvedSelection.status !== "confirmed") {
+        return resolvedSelection;
+      }
+
+      const callbackAt = resolvedSelection.hold.startAt;
+
+      await tx.lead.update({
+        where: { id: liveLead.id },
+        data: {
+          nextFollowUpAt: callbackAt,
+          intakePreferredCallbackAt: callbackAt,
+          intakeStage: "COMPLETED",
+        },
+      });
+
+      await ensureIntakeCallbackEventTx(tx, {
+        orgId: liveLead.orgId,
+        leadId: liveLead.id,
+        callbackAt,
+        assignedToUserId: resolvedSelection.hold.workerUserId,
+      });
+
+      await tx.calendarHold.updateMany({
+        where: {
+          orgId: liveLead.orgId,
+          leadId: liveLead.id,
+          source: "SMS_AGENT",
+          status: "ACTIVE",
+        },
+        data: {
+          status: "CANCELLED",
+        },
+      });
+      await tx.calendarHold.update({
+        where: { id: resolvedSelection.hold.id },
+        data: { status: "CONFIRMED" },
+      });
+
+      return {
+        status: "confirmed" as const,
+        callbackAt,
+      };
     });
 
-    const selectedHold = activeHolds[selection - 1] || null;
-    if (!selectedHold) {
+    if (confirmation.status === "noop") {
+      return;
+    }
+
+    if (confirmation.status !== "confirmed") {
       await sendCallbackOptionsMessage({
         organization,
         leadId: lead.id,
@@ -692,40 +814,6 @@ export async function advanceLeadIntakeFromInbound({
       });
       return;
     }
-
-    const callbackAt = selectedHold.startAt;
-
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: {
-        nextFollowUpAt: callbackAt,
-        intakePreferredCallbackAt: callbackAt,
-        intakeStage: "COMPLETED",
-      },
-    });
-
-    await ensureIntakeCallbackEvent({
-      orgId: lead.orgId,
-      leadId: lead.id,
-      callbackAt,
-      assignedToUserId: selectedHold.workerUserId,
-    });
-
-    await prisma.calendarHold.updateMany({
-      where: {
-        orgId: lead.orgId,
-        leadId: lead.id,
-        source: "SMS_AGENT",
-        status: "ACTIVE",
-      },
-      data: {
-        status: "CANCELLED",
-      },
-    });
-    await prisma.calendarHold.update({
-      where: { id: selectedHold.id },
-      data: { status: "CONFIRMED" },
-    });
 
     const completionTemplate = pickLocalizedTemplate({
       locale,
@@ -737,7 +825,7 @@ export async function advanceLeadIntakeFromInbound({
     const settings = await getOrgCalendarSettings(lead.orgId);
     const completionBody = renderCompletionTemplate(
       completionTemplate,
-      callbackAt,
+      confirmation.callbackAt,
       locale,
       settings.calendarTimezone,
     );

@@ -33,9 +33,18 @@ test("phone remediation shows edit, call, and CRM handoffs when available", () =
       crmHref: "/app/jobs/lead_123",
     }),
     [
-      { id: "edit-phone", label: "Edit Phone", href: "/app/inbox?leadId=lead_123&context=edit" },
-      { id: "call-customer", label: "Call Customer", href: "tel:+15551234567", native: true },
-      { id: "open-crm", label: "Open CRM Folder", href: "/app/jobs/lead_123" },
+      {
+        id: "edit-phone",
+        label: "Edit Phone",
+        href: "/app/inbox?leadId=lead_123&context=edit",
+      },
+      {
+        id: "call-customer",
+        label: "Call Customer",
+        href: "tel:+15551234567",
+        native: true,
+      },
+      { id: "open-crm", label: "Open Lead", href: "/app/jobs/lead_123" },
     ],
   );
 });
@@ -50,7 +59,13 @@ test("twilio remediation only shows real settings destinations", () => {
       },
       settingsHref: "/app/settings#settings-messaging",
     }),
-    [{ id: "open-settings", label: "Open Settings", href: "/app/settings#settings-messaging" }],
+    [
+      {
+        id: "open-settings",
+        label: "Open Settings",
+        href: "/app/settings#settings-messaging",
+      },
+    ],
   );
 });
 
@@ -66,8 +81,17 @@ test("retry remediation prefers inbox and call handoffs without inventing extras
       callHref: "tel:+15551234567",
     }),
     [
-      { id: "open-inbox", label: "Open Inbox Thread", href: "/app/inbox?leadId=lead_123" },
-      { id: "call-customer", label: "Call Customer", href: "tel:+15551234567", native: true },
+      {
+        id: "open-inbox",
+        label: "Open Inbox Thread",
+        href: "/app/inbox?leadId=lead_123",
+      },
+      {
+        id: "call-customer",
+        label: "Call Customer",
+        href: "tel:+15551234567",
+        native: true,
+      },
     ],
   );
 });
@@ -76,7 +100,11 @@ test("issue key prefers remediation kind, then blocked state, then delivery issu
   assert.equal(
     getOperationalJobRemediationIssueKey({
       lastCustomerUpdate: {
-        remediation: { kind: "check_phone", title: "Check phone", detail: "Fix the number." },
+        remediation: {
+          kind: "check_phone",
+          title: "Check phone",
+          detail: "Fix the number.",
+        },
         operatorFailureReason: "Customer phone number needs attention.",
         deliveryState: "failed",
       },
@@ -122,7 +150,11 @@ test("auto-refresh only runs while there is a real remediation issue to re-check
   assert.equal(
     shouldAutoRefreshOperationalJobRemediation({
       lastCustomerUpdate: {
-        remediation: { kind: "retry_later", title: "Retry later", detail: "Wait and retry." },
+        remediation: {
+          kind: "retry_later",
+          title: "Retry later",
+          detail: "Wait and retry.",
+        },
         operatorFailureReason: "Outside SMS send hours.",
         deliveryState: "suppressed",
       },
@@ -383,7 +415,8 @@ test("manual closure stays grounded in current pending-update truth", () => {
       state: "clear",
       badge: "Operationally clear",
       title: "Customer contacted; no further dispatch update pending",
-      detail: "Customer contact was completed after Call Customer. No dispatch update is currently waiting to send.",
+      detail:
+        "Customer contact was completed after Call Customer. No dispatch update is currently waiting to send.",
     },
   );
 
@@ -402,7 +435,8 @@ test("manual closure stays grounded in current pending-update truth", () => {
       state: "update_pending",
       badge: "Update still pending",
       title: "Customer contacted; schedule-change update still pending",
-      detail: "Customer contact was completed after Open Inbox Thread. A schedule-change update is still ready to send from this job.",
+      detail:
+        "Customer contact was completed after Open Inbox Thread. A schedule-change update is still ready to send from this job.",
     },
   );
 
@@ -421,7 +455,8 @@ test("manual closure stays grounded in current pending-update truth", () => {
       state: "needs_action",
       badge: "Still needs action",
       title: "Manual handling recorded, but the job still needs action",
-      detail: "Manual handling was recorded. A schedule-change update is still blocked: Outside SMS send hours.",
+      detail:
+        "Manual handling was recorded. A schedule-change update is still blocked: Outside SMS send hours.",
     },
   );
 });
@@ -434,7 +469,8 @@ test("manual contact outcomes stay lightweight and operator-readable", () => {
     {
       badge: "Confirmed schedule",
       title: "Confirmed schedule",
-      detail: "The customer confirmed the current timing during manual follow-up.",
+      detail:
+        "The customer confirmed the current timing during manual follow-up.",
     },
   );
 
@@ -477,7 +513,8 @@ test("manual closure uses recorded contact outcomes conservatively", () => {
       state: "clear",
       badge: "Operationally clear",
       title: "Schedule confirmed; no further dispatch update pending",
-      detail: "Customer contact was completed after Call Customer. The schedule was confirmed and no dispatch update is currently waiting to send.",
+      detail:
+        "Customer contact was completed after Call Customer. The schedule was confirmed and no dispatch update is currently waiting to send.",
     },
   );
 
@@ -496,7 +533,8 @@ test("manual closure uses recorded contact outcomes conservatively", () => {
       state: "needs_action",
       badge: "Still needs action",
       title: "Reschedule needed; the job still needs action",
-      detail: "Customer contact was completed after Open Inbox Thread. The customer asked to reschedule, so this job is not operationally clear yet.",
+      detail:
+        "Customer contact was completed after Open Inbox Thread. The customer asked to reschedule, so this job is not operationally clear yet.",
     },
   );
 
@@ -515,7 +553,8 @@ test("manual closure uses recorded contact outcomes conservatively", () => {
       state: "needs_action",
       badge: "Still needs manual contact",
       title: "No response recorded; still needs manual contact",
-      detail: "Manual handling was recorded. The customer did not respond during manual contact, and no new customer update is currently pending from this job.",
+      detail:
+        "Manual handling was recorded. The customer did not respond during manual contact, and no new customer update is currently pending from this job.",
     },
   );
 });
@@ -587,7 +626,8 @@ test("outcome-driven next action sends the update when the schedule was confirme
     {
       kind: "send_customer_update",
       label: "Send Update Now",
-      detail: "The schedule was confirmed manually. Send the customer update from this job now.",
+      detail:
+        "The schedule was confirmed manually. Send the customer update from this job now.",
     },
   );
 });
@@ -607,7 +647,8 @@ test("outcome-driven next action keeps reschedule outcomes on the schedule step 
     {
       kind: "edit_schedule",
       label: "Edit Schedule Now",
-      detail: "The customer needs a new time. Update the schedule before closing this out.",
+      detail:
+        "The customer needs a new time. Update the schedule before closing this out.",
     },
   );
 });
@@ -627,7 +668,8 @@ test("outcome-driven next action flips to send after the new reschedule update i
     {
       kind: "send_customer_update",
       label: "Send Update Now",
-      detail: "The new schedule is saved and the matching customer update is ready to send.",
+      detail:
+        "The new schedule is saved and the matching customer update is ready to send.",
     },
   );
 });
@@ -643,8 +685,17 @@ test("outcome-driven next action reuses existing no-response handoffs without in
       customerUpdateBlockedReason: null,
       customerUpdateAlreadySent: false,
       remediationActions: [
-        { id: "open-inbox", label: "Open Inbox Thread", href: "/app/inbox?leadId=lead_123" },
-        { id: "call-customer", label: "Call Customer", href: "tel:+15551234567", native: true },
+        {
+          id: "open-inbox",
+          label: "Open Inbox Thread",
+          href: "/app/inbox?leadId=lead_123",
+        },
+        {
+          id: "call-customer",
+          label: "Call Customer",
+          href: "tel:+15551234567",
+          native: true,
+        },
       ],
     }),
     {
@@ -652,7 +703,8 @@ test("outcome-driven next action reuses existing no-response handoffs without in
       id: "open-inbox",
       label: "Open Inbox Thread",
       href: "/app/inbox?leadId=lead_123",
-      detail: "The customer did not respond. Open the thread if you want to continue follow-up there.",
+      detail:
+        "The customer did not respond. Open the thread if you want to continue follow-up there.",
     },
   );
 });
@@ -703,7 +755,8 @@ test("manual closure reflects when a reschedule outcome has already produced the
       state: "update_pending",
       badge: "Update still pending",
       title: "Reschedule saved; customer update still pending",
-      detail: "Customer contact was completed after Call Customer. The new schedule is saved, and the customer update is ready to send from this job.",
+      detail:
+        "Customer contact was completed after Call Customer. The new schedule is saved, and the customer update is ready to send from this job.",
     },
   );
 });
@@ -724,7 +777,8 @@ test("no-response branch becomes clearer when new update, blocked update, or sen
       state: "update_pending",
       badge: "New update pending",
       title: "No response recorded; customer update still pending",
-      detail: "Customer contact was completed after Call Customer. The customer did not respond during manual contact, but a schedule-change update is now ready to send from this job.",
+      detail:
+        "Customer contact was completed after Call Customer. The customer did not respond during manual contact, but a schedule-change update is now ready to send from this job.",
     },
   );
 
@@ -743,7 +797,8 @@ test("no-response branch becomes clearer when new update, blocked update, or sen
       state: "needs_action",
       badge: "Still needs action",
       title: "No response recorded; update still blocked",
-      detail: "Customer contact was completed after Open Inbox Thread. The customer did not respond, and the next customer update is still blocked: Outside SMS send hours.",
+      detail:
+        "Customer contact was completed after Open Inbox Thread. The customer did not respond, and the next customer update is still blocked: Outside SMS send hours.",
     },
   );
 
@@ -762,7 +817,8 @@ test("no-response branch becomes clearer when new update, blocked update, or sen
       state: "needs_action",
       badge: "Waiting on follow-up",
       title: "No response recorded; waiting on follow-up",
-      detail: "Customer contact was completed after Call Customer. The latest schedule change is already recorded as sent, so this job is now waiting on customer follow-up.",
+      detail:
+        "Customer contact was completed after Call Customer. The latest schedule change is already recorded as sent, so this job is now waiting on customer follow-up.",
     },
   );
 });
@@ -778,13 +834,18 @@ test("no-response next action prefers send when a real update is now ready and s
       customerUpdateBlockedReason: null,
       customerUpdateAlreadySent: false,
       remediationActions: [
-        { id: "open-inbox", label: "Open Inbox Thread", href: "/app/inbox?leadId=lead_123" },
+        {
+          id: "open-inbox",
+          label: "Open Inbox Thread",
+          href: "/app/inbox?leadId=lead_123",
+        },
       ],
     }),
     {
       kind: "send_customer_update",
       label: "Send Update Now",
-      detail: "The customer did not respond manually, but a new schedule-change update is ready to send from this job.",
+      detail:
+        "The customer did not respond manually, but a new schedule-change update is ready to send from this job.",
     },
   );
 
@@ -798,7 +859,11 @@ test("no-response next action prefers send when a real update is now ready and s
       customerUpdateBlockedReason: null,
       customerUpdateAlreadySent: true,
       remediationActions: [
-        { id: "open-inbox", label: "Open Inbox Thread", href: "/app/inbox?leadId=lead_123" },
+        {
+          id: "open-inbox",
+          label: "Open Inbox Thread",
+          href: "/app/inbox?leadId=lead_123",
+        },
       ],
     }),
     null,
@@ -871,7 +936,8 @@ test("no-response stale cue stays quiet for fresh cases and appears once the cas
     }),
     {
       badge: "No follow-up yet",
-      detail: "No new follow-up has been recorded for over a day since the customer did not respond.",
+      detail:
+        "No new follow-up has been recorded for over a day since the customer did not respond.",
     },
   );
 });
@@ -891,7 +957,8 @@ test("no-response stale cue differentiates waiting, blocked, and update-ready st
     }),
     {
       badge: "Still waiting on customer",
-      detail: "The last follow-up was already sent 2 days ago and the job is still waiting on customer response.",
+      detail:
+        "The last follow-up was already sent 2 days ago and the job is still waiting on customer response.",
     },
   );
 
@@ -908,7 +975,8 @@ test("no-response stale cue differentiates waiting, blocked, and update-ready st
     }),
     {
       badge: "Still blocked",
-      detail: "The next customer update has still been blocked for 2 days: Outside SMS send hours.",
+      detail:
+        "The next customer update has still been blocked for 2 days: Outside SMS send hours.",
     },
   );
 
@@ -976,7 +1044,8 @@ test("stale no-response action re-emphasis only turns on for actionable stale br
       outcome: "no_response",
       staleCue: {
         badge: "Still waiting on customer",
-        detail: "The last follow-up was already sent 2 days ago and the job is still waiting on customer response.",
+        detail:
+          "The last follow-up was already sent 2 days ago and the job is still waiting on customer response.",
       },
       nextActionKind: null,
     }),
@@ -1143,7 +1212,7 @@ test("inbound response handoff prefers the right existing destination for each a
     }),
     {
       id: "open-crm",
-      label: "Open CRM Folder",
+      label: "Open Lead",
       href: "/app/jobs/lead_123",
     },
   );

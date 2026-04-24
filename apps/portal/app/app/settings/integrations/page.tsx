@@ -14,6 +14,10 @@ import {
   syncGoogleBusyBlocksForOrgUser,
 } from "@/lib/integrations/google-sync";
 import { getIntegrationProviderConfiguration } from "@/lib/integrations/provider-config";
+import {
+  disconnectOrganizationStripeConnection,
+  refreshOrganizationStripeConnection,
+} from "@/lib/integrations/stripe-connect";
 import { getRequestLocale } from "@/lib/i18n";
 import { formatDateTime } from "@/lib/hq";
 import { listCustomerImportRuns } from "@/lib/customer-import-crm";
@@ -37,7 +41,7 @@ function getIntegrationsCopy(locale: string) {
       page: {
         title: "Integraciones",
         subtitle: (organizationName: string) =>
-          `Conecta Google Calendar y Outlook para ${organizationName}.`,
+          `Conecta Google Calendar, Outlook y Stripe para ${organizationName}.`,
         backToSettings: "Volver a ajustes",
         exportMyData: "Exportar mis datos",
       },
@@ -64,10 +68,13 @@ function getIntegrationsCopy(locale: string) {
         emptyValue: "-",
       },
       statusValues: {
+        ACTIVE: "Activo",
         CONNECTED: "Conectado",
         DISCONNECTED: "Desconectado",
         ERROR: "Error",
         NOT_CONNECTED: "No conectado",
+        PENDING: "Pendiente",
+        RESTRICTED: "Requiere atención",
         IDLE: "Inactivo",
         RUNNING: "En ejecución",
         OK: "Correcto",
@@ -86,6 +93,9 @@ function getIntegrationsCopy(locale: string) {
           "disconnected-jobber": "Jobber desconectado.",
           "disconnected-qbo": "QuickBooks desconectado.",
           "disconnected-outlook": "Outlook desconectado.",
+          "stripe-connected": "Stripe conectado.",
+          "stripe-disconnected": "Stripe desconectado.",
+          "stripe-refreshed": "Estado de Stripe actualizado.",
           "google-disconnected": "Google Calendar desconectado.",
           "sync-updated": "Ajuste de sincronización guardado.",
           "google-settings": "Ajustes de Google guardados.",
@@ -110,6 +120,12 @@ function getIntegrationsCopy(locale: string) {
           "session-user-missing-id": "Falta el ID del usuario de la sesión.",
           jobber_not_configured: "Jobber no está configurado en este entorno.",
           qbo_not_configured: "QuickBooks Online no está configurado en este entorno.",
+          stripe_not_configured: "Stripe no está configurado en este entorno.",
+          "stripe-missing-code": "Stripe no devolvió el código de autorización.",
+          "stripe-invalid-state": "El estado de Stripe ya no es válido. Intenta conectar de nuevo.",
+          "stripe-callback-failed": "No se pudo completar la conexión con Stripe.",
+          "stripe-refresh-failed": "No se pudo actualizar el estado de Stripe.",
+          "stripe-disconnect-failed": "No se pudo desconectar Stripe.",
           google_not_configured: "Google Calendar no está configurado en este entorno.",
           outlook_not_configured: "Microsoft Outlook no está configurado en este entorno.",
         } as Record<string, string>,
@@ -122,6 +138,31 @@ function getIntegrationsCopy(locale: string) {
         error: "Error",
         connect: "Conectar Outlook",
         reconnect: "Reconectar Outlook",
+      },
+      stripe: {
+        title: "Stripe Payments",
+        subtitle:
+          "Conecta la cuenta de Stripe del negocio para preparar cobros en línea y planes recurrentes. Esta base deja a cada organización cobrar directo en su propia cuenta.",
+        accountEmail: "Email de Stripe",
+        accountName: "Nombre del negocio",
+        accountId: "ID de cuenta",
+        country: "País",
+        currency: "Moneda",
+        liveMode: "Modo",
+        error: "Error",
+        capabilities: "Capacidades",
+        detailsSubmitted: "Perfil enviado",
+        chargesEnabled: "Cobros listos",
+        chargesPending: "Cobros pendientes",
+        payoutsEnabled: "Depósitos listos",
+        payoutsPending: "Depósitos pendientes",
+        refresh: "Actualizar estado",
+        connect: "Conectar Stripe",
+        reconnect: "Reconectar Stripe",
+        ready: "Listo para cobros",
+        notReady: "Todavía no listo",
+        live: "Producción",
+        test: "Pruebas",
       },
       google: {
         title: "Google Calendar (por usuario)",
@@ -176,7 +217,7 @@ function getIntegrationsCopy(locale: string) {
     page: {
       title: "Integrations",
       subtitle: (organizationName: string) =>
-        `Connect Google Calendar and Outlook for ${organizationName}.`,
+        `Connect Google Calendar, Outlook, and Stripe for ${organizationName}.`,
       backToSettings: "Back to Settings",
       exportMyData: "Export My Data",
     },
@@ -203,10 +244,13 @@ function getIntegrationsCopy(locale: string) {
       emptyValue: "-",
     },
     statusValues: {
+      ACTIVE: "Active",
       CONNECTED: "Connected",
       DISCONNECTED: "Disconnected",
       ERROR: "Error",
       NOT_CONNECTED: "Not connected",
+      PENDING: "Pending",
+      RESTRICTED: "Needs attention",
       IDLE: "Idle",
       RUNNING: "Running",
       OK: "OK",
@@ -225,6 +269,9 @@ function getIntegrationsCopy(locale: string) {
         "disconnected-jobber": "Jobber disconnected.",
         "disconnected-qbo": "QuickBooks disconnected.",
         "disconnected-outlook": "Outlook disconnected.",
+        "stripe-connected": "Stripe connected.",
+        "stripe-disconnected": "Stripe disconnected.",
+        "stripe-refreshed": "Stripe status refreshed.",
         "google-disconnected": "Google Calendar disconnected.",
         "sync-updated": "Sync setting saved.",
         "google-settings": "Google settings saved.",
@@ -249,6 +296,12 @@ function getIntegrationsCopy(locale: string) {
         "session-user-missing-id": "Session user is missing id.",
         jobber_not_configured: "Jobber isn't configured in this environment.",
         qbo_not_configured: "QuickBooks Online isn't configured in this environment.",
+        stripe_not_configured: "Stripe isn't configured in this environment.",
+        "stripe-missing-code": "Stripe didn't return an authorization code.",
+        "stripe-invalid-state": "Stripe state is no longer valid. Try connecting again.",
+        "stripe-callback-failed": "Failed to complete the Stripe connection.",
+        "stripe-refresh-failed": "Failed to refresh Stripe status.",
+        "stripe-disconnect-failed": "Failed to disconnect Stripe.",
         google_not_configured: "Google Calendar isn't configured in this environment.",
         outlook_not_configured: "Microsoft Outlook isn't configured in this environment.",
       } as Record<string, string>,
@@ -261,6 +314,31 @@ function getIntegrationsCopy(locale: string) {
       error: "Error",
       connect: "Connect Outlook",
       reconnect: "Reconnect Outlook",
+    },
+    stripe: {
+      title: "Stripe Payments",
+      subtitle:
+        "Connect the business Stripe account to prepare online collections and recurring billing. Each organization gets paid directly into its own Stripe account.",
+      accountEmail: "Stripe email",
+      accountName: "Business name",
+      accountId: "Account id",
+      country: "Country",
+      currency: "Currency",
+      liveMode: "Mode",
+      error: "Error",
+      capabilities: "Capabilities",
+      detailsSubmitted: "Profile submitted",
+      chargesEnabled: "charges enabled",
+      chargesPending: "charges pending",
+      payoutsEnabled: "payouts enabled",
+      payoutsPending: "payouts pending",
+      refresh: "Refresh Status",
+      connect: "Connect Stripe",
+      reconnect: "Reconnect Stripe",
+      ready: "Ready to collect",
+      notReady: "Not ready yet",
+      live: "Live",
+      test: "Test",
     },
     google: {
       title: "Google Calendar (Per User)",
@@ -336,7 +414,7 @@ function formatIntegrationErrorMessage(error: string, copy: IntegrationsCopy): s
 }
 
 function isProviderConfigurationError(error: string): boolean {
-  return error === "google_not_configured" || error === "outlook_not_configured";
+  return error === "google_not_configured" || error === "outlook_not_configured" || error === "stripe_not_configured";
 }
 
 function IntegrationConnectAction({
@@ -453,6 +531,54 @@ async function disconnectAction(formData: FormData) {
   }
 }
 
+async function refreshStripeAction(formData: FormData) {
+  "use server";
+
+  const orgId = String(formData.get("orgId") || "").trim();
+  if (!orgId) {
+    redirect("/app/settings/integrations?error=missing-org");
+  }
+
+  const { internalUser } = await requireAppOrgAccess("/app/settings/integrations", orgId);
+  const { stripeConfigured } = getIntegrationProviderConfiguration();
+  if (!stripeConfigured) {
+    redirect(withOrgQuery("/app/settings/integrations?error=stripe_not_configured", orgId, internalUser));
+  }
+
+  try {
+    await refreshOrganizationStripeConnection({ orgId });
+    revalidatePath("/app/settings/integrations");
+    redirect(withOrgQuery("/app/settings/integrations?saved=stripe-refreshed", orgId, internalUser));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "stripe-refresh-failed";
+    redirect(withOrgQuery(`/app/settings/integrations?error=${encodeURIComponent(message)}`, orgId, internalUser));
+  }
+}
+
+async function disconnectStripeAction(formData: FormData) {
+  "use server";
+
+  const orgId = String(formData.get("orgId") || "").trim();
+  if (!orgId) {
+    redirect("/app/settings/integrations?error=missing-org");
+  }
+
+  const { internalUser } = await requireAppOrgAccess("/app/settings/integrations", orgId);
+  const { stripeConfigured } = getIntegrationProviderConfiguration();
+  if (!stripeConfigured) {
+    redirect(withOrgQuery("/app/settings/integrations?error=stripe_not_configured", orgId, internalUser));
+  }
+
+  try {
+    await disconnectOrganizationStripeConnection({ orgId });
+    revalidatePath("/app/settings/integrations");
+    redirect(withOrgQuery("/app/settings/integrations?saved=stripe-disconnected", orgId, internalUser));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "stripe-disconnect-failed";
+    redirect(withOrgQuery(`/app/settings/integrations?error=${encodeURIComponent(message)}`, orgId, internalUser));
+  }
+}
+
 async function updateGoogleSettingsAction(formData: FormData) {
   "use server";
 
@@ -563,7 +689,7 @@ async function createGoogleCalendarAction(formData: FormData) {
     redirect(withOrgQuery("/app/settings/integrations?error=unauthorized", orgId, internalUser));
   }
 
-  const locale = getRequestLocale();
+  const locale = await getRequestLocale();
   const copy = getIntegrationsCopy(locale);
   const calendarName = String(formData.get("calendarName") || "").trim() || copy.google.defaultCalendarName;
 
@@ -587,12 +713,13 @@ async function createGoogleCalendarAction(formData: FormData) {
   }
 }
 
-export default async function IntegrationsSettingsPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
-  const locale = getRequestLocale();
+export default async function IntegrationsSettingsPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const locale = await getRequestLocale();
   const copy = getIntegrationsCopy(locale);
   const requestedOrgId = getParam(searchParams?.orgId);
   const scope = await resolveAppScope({ nextPath: "/app/settings/integrations", requestedOrgId });
@@ -606,8 +733,10 @@ export default async function IntegrationsSettingsPage({
   const {
     googleConfigured,
     outlookConfigured,
+    stripeConfigured,
     googleMissingKeys,
     outlookMissingKeys,
+    stripeMissingKeys,
   } = getIntegrationProviderConfiguration();
 
   const googleResult = sessionUser.id
@@ -629,7 +758,7 @@ export default async function IntegrationsSettingsPage({
         error: "session-user-missing-id",
       };
 
-  const [organization, accounts, customerImportHistory] = await Promise.all([
+  const [organization, accounts, stripeConnection, customerImportHistory] = await Promise.all([
     prisma.organization.findUnique({
       where: { id: scope.orgId },
       select: { id: true, name: true },
@@ -637,6 +766,9 @@ export default async function IntegrationsSettingsPage({
     prisma.integrationAccount.findMany({
       where: { orgId: scope.orgId },
       orderBy: { provider: "asc" },
+    }),
+    prisma.organizationStripeConnection.findUnique({
+      where: { orgId: scope.orgId },
     }),
     listCustomerImportRuns({ orgId: scope.orgId }),
   ]);
@@ -646,18 +778,30 @@ export default async function IntegrationsSettingsPage({
   }
 
   const outlook = accounts.find((account) => account.provider === "OUTLOOK");
+  const stripeConnected = Boolean(stripeConnection && stripeConnection.status !== "DISCONNECTED");
   const googleAccount = googleResult.connected ? googleResult.account : null;
   const googleCalendars = googleResult.calendars || [];
   const googleReadCalendarIds = googleAccount ? normalizeReadCalendarIds(googleAccount.readCalendarIdsJson) : [];
   const googleBlockRules = googleAccount ? getGoogleAccountBlockRules(googleAccount) : {};
   const googleHasWriteScope = googleAccount ? hasWritePermissionFromScopes(googleAccount.scopes) : false;
   const googleLoadError = "error" in googleResult ? formatIntegrationErrorMessage(String(googleResult.error || ""), copy) : "";
+  const stripeCapabilities = stripeConnection
+    ? [
+        stripeConnection.chargesEnabled ? copy.stripe.chargesEnabled : copy.stripe.chargesPending,
+        stripeConnection.payoutsEnabled ? copy.stripe.payoutsEnabled : copy.stripe.payoutsPending,
+      ].join(", ")
+    : copy.common.emptyValue;
   const savedMessage = resolveSavedMessage(saved, copy);
   const providerConfigurationError =
     error && isProviderConfigurationError(error) ? formatIntegrationErrorMessage(error, copy) : null;
   const pageError = error ? formatIntegrationErrorMessage(error, copy) : null;
   const canViewMissingKeyDetails = viewer.internalUser || viewer.calendarAccessRole === "OWNER";
   const healthItems: IntegrationHealthItem[] = [
+    {
+      label: "Stripe Payments",
+      configured: stripeConfigured,
+      missingKeys: stripeMissingKeys,
+    },
     {
       label: "Google Calendar",
       configured: googleConfigured,
@@ -701,6 +845,63 @@ export default async function IntegrationsSettingsPage({
       <IntegrationHealthPanel items={healthItems} showMissingKeys={canViewMissingKeyDetails} copy={copy} />
 
       <section className="grid">
+        <article className="card">
+          <h2>{copy.stripe.title}</h2>
+          <p className="muted">{copy.stripe.subtitle}</p>
+          <p style={{ marginTop: 10 }}>
+            {copy.common.status}: <strong>{formatStatusValue(stripeConnection?.status || "NOT_CONNECTED", copy)}</strong>
+          </p>
+          <p className="muted">{copy.stripe.accountEmail}: {stripeConnection?.stripeAccountEmail || copy.common.emptyValue}</p>
+          <p className="muted">{copy.stripe.accountName}: {stripeConnection?.stripeDisplayName || copy.common.emptyValue}</p>
+          <p className="muted">{copy.stripe.accountId}: {stripeConnection?.stripeAccountId || copy.common.emptyValue}</p>
+          <p className="muted">{copy.stripe.country}: {stripeConnection?.stripeCountry || copy.common.emptyValue}</p>
+          <p className="muted">{copy.stripe.currency}: {stripeConnection?.defaultCurrency || copy.common.emptyValue}</p>
+          <p className="muted">
+            {copy.stripe.liveMode}: {stripeConnection ? (stripeConnection.livemode ? copy.stripe.live : copy.stripe.test) : copy.common.emptyValue}
+          </p>
+          <p className="muted">{copy.stripe.capabilities}: {stripeCapabilities}</p>
+          <p className="muted">
+            {copy.stripe.detailsSubmitted}:{" "}
+            {stripeConnection
+              ? stripeConnection.detailsSubmitted
+                ? copy.health.configured
+                : copy.health.notConfigured
+              : copy.common.emptyValue}
+          </p>
+          <p className="muted">
+            {copy.common.connectedAt}: {stripeConnection ? formatDateTime(stripeConnection.connectedAt) : copy.common.emptyValue}
+          </p>
+          <p className="muted">
+            {copy.common.lastSync}: {stripeConnection?.lastSyncedAt ? formatDateTime(stripeConnection.lastSyncedAt) : copy.common.emptyValue}
+          </p>
+          <p className="muted">{copy.stripe.error}: {stripeConnection?.lastError || copy.common.emptyValue}</p>
+          {!stripeConfigured ? <p className="form-status">{copy.feedback.notConfiguredNotice}</p> : null}
+          <div className="quick-links" style={{ marginTop: 10 }}>
+            <IntegrationConnectAction
+              configured={stripeConfigured}
+              className="btn primary"
+              href={withOrgQuery("/api/integrations/stripe/connect", scope.orgId, scope.internalUser)}
+              label={stripeConnection ? copy.stripe.reconnect : copy.stripe.connect}
+            />
+            {stripeConnected ? (
+              <form action={refreshStripeAction}>
+                <input type="hidden" name="orgId" value={scope.orgId} />
+                <button className="btn secondary" type="submit" disabled={!stripeConfigured}>
+                  {copy.stripe.refresh}
+                </button>
+              </form>
+            ) : null}
+            {stripeConnected ? (
+              <form action={disconnectStripeAction}>
+                <input type="hidden" name="orgId" value={scope.orgId} />
+                <button className="btn secondary" type="submit" disabled={!stripeConfigured}>
+                  {copy.common.disconnect}
+                </button>
+              </form>
+            ) : null}
+          </div>
+        </article>
+
         <article className="card">
           <h2>{copy.outlook.title}</h2>
           <p className="muted">{copy.outlook.subtitle}</p>

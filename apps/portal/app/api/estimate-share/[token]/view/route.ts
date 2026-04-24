@@ -7,12 +7,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     token: string;
-  };
+  }>;
 };
 
-export async function POST(_: Request, { params }: RouteContext) {
+export async function POST(_: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const estimate = await recordEstimateShareView(params.token);
     return NextResponse.json({

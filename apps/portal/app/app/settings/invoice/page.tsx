@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getRequestTranslator } from "@/lib/i18n";
 import { resolveOrganizationLogoUrl } from "@/lib/organization-logo";
 import { normalizeInvoiceTemplate } from "@/lib/invoice-template";
@@ -13,6 +14,37 @@ import {
 import InvoiceTemplateSettings from "./invoice-template-settings";
 
 export const dynamic = "force-dynamic";
+
+function withStatusQuery(
+  path: string,
+  key: string,
+  value: string,
+  orgId: string,
+  internalUser: boolean,
+) {
+  return withOrgQuery(
+    `${path}${path.includes("?") ? "&" : "?"}${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
+    orgId,
+    internalUser,
+  );
+}
+
+function parseBoundedInt(
+  value: string,
+  {
+    min,
+    max,
+  }: {
+    min: number;
+    max: number;
+  },
+) {
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    return null;
+  }
+  return parsed;
+}
 
 function buildAddressLines(input: {
   addressLine1: string | null;
@@ -30,13 +62,16 @@ function buildAddressLines(input: {
     .filter(Boolean);
 }
 
-export default async function InvoiceTemplateSettingsPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function InvoiceTemplateSettingsPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const t = await getRequestTranslator();
   const requestedOrgId = getParam(searchParams?.orgId);
+  const saved = getParam(searchParams?.saved);
+  const error = getParam(searchParams?.error);
   const scope = await resolveAppScope({
     nextPath: "/app/settings/invoice",
     requestedOrgId,
@@ -61,6 +96,13 @@ export default async function InvoiceTemplateSettingsPage({
       phone: true,
       invoiceTemplate: true,
       invoicePaymentInstructions: true,
+      invoiceCollectionsEnabled: true,
+      invoiceCollectionsAutoSendEnabled: true,
+      invoiceFirstReminderLeadDays: true,
+      invoiceOverdueReminderCadenceDays: true,
+      invoiceCollectionsMaxReminders: true,
+      invoiceCollectionsUrgentAfterDays: true,
+      invoiceCollectionsFinalAfterDays: true,
       logoPhotoId: true,
     },
   });
@@ -87,6 +129,99 @@ export default async function InvoiceTemplateSettingsPage({
     scope.orgId,
     scope.internalUser,
   );
+  const invoiceSettingsPath = withOrgQuery(
+    "/app/settings/invoice",
+    scope.orgId,
+    scope.internalUser,
+  );
+
+  async function updateCollectionsSettingsAction(formData: FormData) {
+    "use server";
+
+    const actor = await requireAppOrgActor("/app/settings/invoice", scope.orgId);
+    const canManageCollections =
+      actor.internalUser ||
+      actor.calendarAccessRole === "OWNER" ||
+      actor.calendarAccessRole === "ADMIN";
+
+    if (!canManageCollections) {
+      redirect(
+        withStatusQuery(
+          "/app/settings/invoice",
+          "error",
+          "readonly",
+          scope.orgId,
+          scope.internalUser,
+        ),
+      );
+    }
+
+    const enabled = String(formData.get("invoiceCollectionsEnabled") || "") === "on";
+    const autoSendEnabled =
+      String(formData.get("invoiceCollectionsAutoSendEnabled") || "") === "on";
+    const firstReminderLeadDays = parseBoundedInt(
+      String(formData.get("invoiceFirstReminderLeadDays") || ""),
+      { min: 0, max: 30 },
+    );
+    const overdueReminderCadenceDays = parseBoundedInt(
+      String(formData.get("invoiceOverdueReminderCadenceDays") || ""),
+      { min: 1, max: 60 },
+    );
+    const maxReminders = parseBoundedInt(
+      String(formData.get("invoiceCollectionsMaxReminders") || ""),
+      { min: 1, max: 6 },
+    );
+    const urgentAfterDays = parseBoundedInt(
+      String(formData.get("invoiceCollectionsUrgentAfterDays") || ""),
+      { min: 1, max: 120 },
+    );
+    const finalAfterDays = parseBoundedInt(
+      String(formData.get("invoiceCollectionsFinalAfterDays") || ""),
+      { min: 2, max: 180 },
+    );
+
+    if (
+      firstReminderLeadDays === null ||
+      overdueReminderCadenceDays === null ||
+      maxReminders === null ||
+      urgentAfterDays === null ||
+      finalAfterDays === null ||
+      finalAfterDays <= urgentAfterDays
+    ) {
+      redirect(
+        withStatusQuery(
+          "/app/settings/invoice",
+          "error",
+          "collections",
+          scope.orgId,
+          scope.internalUser,
+        ),
+      );
+    }
+
+    await prisma.organization.update({
+      where: { id: scope.orgId },
+      data: {
+        invoiceCollectionsEnabled: enabled,
+        invoiceCollectionsAutoSendEnabled: autoSendEnabled,
+        invoiceFirstReminderLeadDays: firstReminderLeadDays,
+        invoiceOverdueReminderCadenceDays: overdueReminderCadenceDays,
+        invoiceCollectionsMaxReminders: maxReminders,
+        invoiceCollectionsUrgentAfterDays: urgentAfterDays,
+        invoiceCollectionsFinalAfterDays: finalAfterDays,
+      },
+    });
+
+    redirect(
+      withStatusQuery(
+        "/app/settings/invoice",
+        "saved",
+        "collections",
+        scope.orgId,
+        scope.internalUser,
+      ),
+    );
+  }
 
   const previewInvoice: InvoicePreviewData = {
     invoiceNumber: "INV-2026-1042",
@@ -154,6 +289,162 @@ export default async function InvoiceTemplateSettingsPage({
         initialTemplate={normalizeInvoiceTemplate(organization.invoiceTemplate)}
         previewInvoice={previewInvoice}
       />
+
+      <section className="card">
+        <div className="invoice-header-row">
+          <div className="stack-cell">
+            <h2>{t("invoiceTemplateSettings.collections.title")}</h2>
+            <p className="muted">
+              {t("invoiceTemplateSettings.collections.description")}
+            </p>
+          </div>
+        </div>
+
+        {!canManage ? (
+          <p className="form-status" style={{ marginTop: 12 }}>
+            {t("invoiceTemplateSettings.collections.readOnly")}
+          </p>
+        ) : null}
+        {saved === "collections" ? (
+          <p className="form-status" style={{ marginTop: 12 }}>
+            {t("invoiceTemplateSettings.collections.saved")}
+          </p>
+        ) : null}
+        {error === "collections" ? (
+          <p className="form-status" style={{ marginTop: 12 }}>
+            {t("invoiceTemplateSettings.collections.error")}
+          </p>
+        ) : null}
+        {error === "readonly" ? (
+          <p className="form-status" style={{ marginTop: 12 }}>
+            {t("invoiceTemplateSettings.collections.readOnly")}
+          </p>
+        ) : null}
+
+        <form
+          action={updateCollectionsSettingsAction}
+          className="auth-form"
+          style={{ marginTop: 16 }}
+        >
+          <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              name="invoiceCollectionsEnabled"
+              defaultChecked={organization.invoiceCollectionsEnabled}
+              disabled={!canManage}
+              style={{ marginTop: 4 }}
+            />
+            <span>
+              <strong>{t("invoiceTemplateSettings.collections.enabledLabel")}</strong>
+              <br />
+              <span className="muted">
+                {t("invoiceTemplateSettings.collections.enabledNote")}
+              </span>
+            </span>
+          </label>
+
+          <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              name="invoiceCollectionsAutoSendEnabled"
+              defaultChecked={organization.invoiceCollectionsAutoSendEnabled}
+              disabled={!canManage}
+              style={{ marginTop: 4 }}
+            />
+            <span>
+              <strong>{t("invoiceTemplateSettings.collections.autoSendEnabledLabel")}</strong>
+              <br />
+              <span className="muted">
+                {t("invoiceTemplateSettings.collections.autoSendEnabledNote")}
+              </span>
+            </span>
+          </label>
+
+          <label>
+            {t("invoiceTemplateSettings.collections.firstReminderLeadDaysLabel")}
+            <input
+              type="number"
+              min={0}
+              max={30}
+              name="invoiceFirstReminderLeadDays"
+              defaultValue={organization.invoiceFirstReminderLeadDays}
+              disabled={!canManage}
+            />
+            <span className="muted">
+              {t("invoiceTemplateSettings.collections.firstReminderLeadDaysHelp")}
+            </span>
+          </label>
+
+          <label>
+            {t("invoiceTemplateSettings.collections.overdueReminderCadenceDaysLabel")}
+            <input
+              type="number"
+              min={1}
+              max={60}
+              name="invoiceOverdueReminderCadenceDays"
+              defaultValue={organization.invoiceOverdueReminderCadenceDays}
+              disabled={!canManage}
+            />
+            <span className="muted">
+              {t("invoiceTemplateSettings.collections.overdueReminderCadenceDaysHelp")}
+            </span>
+          </label>
+
+          <label>
+            {t("invoiceTemplateSettings.collections.maxRemindersLabel")}
+            <input
+              type="number"
+              min={1}
+              max={6}
+              name="invoiceCollectionsMaxReminders"
+              defaultValue={organization.invoiceCollectionsMaxReminders}
+              disabled={!canManage}
+            />
+            <span className="muted">
+              {t("invoiceTemplateSettings.collections.maxRemindersHelp")}
+            </span>
+          </label>
+
+          <label>
+            {t("invoiceTemplateSettings.collections.urgentAfterDaysLabel")}
+            <input
+              type="number"
+              min={1}
+              max={120}
+              name="invoiceCollectionsUrgentAfterDays"
+              defaultValue={organization.invoiceCollectionsUrgentAfterDays}
+              disabled={!canManage}
+            />
+            <span className="muted">
+              {t("invoiceTemplateSettings.collections.urgentAfterDaysHelp")}
+            </span>
+          </label>
+
+          <label>
+            {t("invoiceTemplateSettings.collections.finalAfterDaysLabel")}
+            <input
+              type="number"
+              min={2}
+              max={180}
+              name="invoiceCollectionsFinalAfterDays"
+              defaultValue={organization.invoiceCollectionsFinalAfterDays}
+              disabled={!canManage}
+            />
+            <span className="muted">
+              {t("invoiceTemplateSettings.collections.finalAfterDaysHelp")}
+            </span>
+          </label>
+
+          <div className="quick-links">
+            <button className="btn primary" type="submit" disabled={!canManage}>
+              {t("invoiceTemplateSettings.collections.save")}
+            </button>
+            <Link className="btn secondary" href={invoiceSettingsPath}>
+              {t("invoiceTemplateSettings.collections.reset")}
+            </Link>
+          </div>
+        </form>
+      </section>
     </section>
   );
 }

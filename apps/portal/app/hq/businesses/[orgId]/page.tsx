@@ -157,13 +157,14 @@ async function archiveSmsTemplateAction(formData: FormData) {
   redirect(`/hq/businesses/${orgId}?tab=messages&saved=template-removed`);
 }
 
-export default async function HqBusinessFolderPage({
-  params,
-  searchParams,
-}: {
-  params: { orgId: string };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function HqBusinessFolderPage(
+  props: {
+    params: Promise<{ orgId: string }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const tab = getTab(searchParams?.tab);
   const saved = getParam(searchParams?.saved);
   const error = getParam(searchParams?.error);

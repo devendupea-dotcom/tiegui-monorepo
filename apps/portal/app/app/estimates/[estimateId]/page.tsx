@@ -7,15 +7,16 @@ import EstimateManager from "../estimate-manager";
 
 export const dynamic = "force-dynamic";
 
-export default async function EstimateDetailPage({
-  params,
-  searchParams,
-}: {
-  params: {
-    estimateId: string;
-  };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function EstimateDetailPage(
+  props: {
+    params: Promise<{
+      estimateId: string;
+    }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   if (!params.estimateId) {
     notFound();
   }

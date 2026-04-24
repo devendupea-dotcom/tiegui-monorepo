@@ -8,6 +8,7 @@ import {
   hasStopKeyword,
   parseBookingSelection,
   parseWorkAndLocation,
+  shouldRouteInboundSmsToHuman,
 } from "../lib/conversational-sms-core.ts";
 
 test("stop and start keywords are recognized from the first token only", () => {
@@ -49,7 +50,15 @@ test("buildSlotTemplateContext keeps compact named slots for templates", () => {
 });
 
 test("follow-up cadence and missing-field labels stay stage-aware", () => {
-  assert.deepEqual(getFollowUpCadenceMinutes("ASKED_WORK", ["ASKED_WORK", "ASKED_ADDRESS"]), [1440, 4320]);
+  assert.deepEqual(getFollowUpCadenceMinutes("ASKED_WORK", ["ASKED_WORK", "ASKED_ADDRESS"]), [2880]);
   assert.equal(formatMissingField("ASKED_ADDRESS", "EN"), "the property address");
   assert.equal(formatMissingField("OFFERED_BOOKING", "ES"), "la opción (A/B/C)");
+});
+
+test("human routing catches pricing and custom questions without blocking normal intake", () => {
+  assert.equal(shouldRouteInboundSmsToHuman("Can someone call me?"), true);
+  assert.equal(shouldRouteInboundSmsToHuman("How much would this cost?"), true);
+  assert.equal(shouldRouteInboundSmsToHuman("Are you licensed and insured?"), true);
+  assert.equal(shouldRouteInboundSmsToHuman("Fence repair in Pasadena"), false);
+  assert.equal(shouldRouteInboundSmsToHuman("Can you do fence repair in Pasadena?"), false);
 });

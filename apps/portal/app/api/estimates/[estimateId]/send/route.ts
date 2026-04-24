@@ -18,9 +18,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     estimateId: string;
-  };
+  }>;
 };
 
 type SendEstimatePayload = {
@@ -83,7 +83,8 @@ async function getScopedEstimateOrThrow(estimateId: string) {
   return estimate;
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const scoped = await getScopedEstimateOrThrow(params.estimateId);

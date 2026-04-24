@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
-  const vaultToken = cookies().get("tg_admin_vault")?.value;
+  const vaultToken = (await cookies()).get("tg_admin_vault")?.value;
   const decoded = await decode({ token: vaultToken, secret: vaultKey, salt: "admin-vault" });
   if (!decoded || decoded.sub !== requester.id || decoded.unlocked !== true) {
     return NextResponse.json({ ok: false, error: "Admin vault is locked. Unlock it first." }, { status: 403 });
