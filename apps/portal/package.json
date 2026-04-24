@@ -22,6 +22,7 @@
     "diagnose:financial-integrity": "node --import tsx scripts/diagnose-financial-integrity.ts",
     "diagnose:lead-conversation-integrity": "node --import tsx scripts/diagnose-lead-conversation-integrity.ts",
     "diagnose:operational-integrity": "node --import tsx scripts/diagnose-operational-integrity.ts",
+    "check:release-env": "tsx scripts/check-release-env.ts",
     "check:collections-cron": "tsx scripts/check-invoice-collections-cron.ts",
     "repair:communication-integrity": "APPLY=1 node --import tsx scripts/repair-communication-integrity.ts",
     "repair:zero-paid-invoices": "node --import tsx scripts/repair-zero-paid-invoices.ts",

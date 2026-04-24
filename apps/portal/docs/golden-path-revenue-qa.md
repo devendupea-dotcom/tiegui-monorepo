@@ -56,6 +56,19 @@ VERCEL_AUTOMATION_BYPASS_SECRET=... \
 npm run check:collections-cron --workspace=portal
 ```
 
+Before running smoke, verify the local env file or exported shell env has the required release
+settings:
+
+```bash
+npm run check:release-env --workspace=portal
+```
+
+To check a specific env export file:
+
+```bash
+npm run check:release-env --workspace=portal -- --env-file .env.preview
+```
+
 The script mutates data while it runs. It is designed to clean up after itself, but it should not be pointed at production without an explicit release decision.
 
 ## Manual Demo Pass
