@@ -2,7 +2,7 @@ import type { LeadIntakeStage, MessageStatus } from "@prisma/client";
 import { addMinutes } from "date-fns";
 import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
 import { prisma } from "@/lib/prisma";
-import { getQueuedSmsSkipReason } from "@/lib/sms-automation-guards";
+import { getQueuedSmsSkipReason, getRecentHardSmsFailureForAutomation } from "@/lib/sms-automation-guards";
 import { sendOutboundSms } from "@/lib/sms";
 import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 
@@ -33,6 +33,7 @@ async function createOutboundMessageFromDispatch(input: {
   body: string;
   providerMessageSid: string | null;
   status: MessageStatus;
+  deliveryNotice?: string | null;
 }) {
   const now = new Date();
   await prisma.$transaction(async (tx) => {
@@ -79,6 +80,7 @@ async function createOutboundMessageFromDispatch(input: {
       toNumberE164: input.toNumberE164,
       providerMessageSid: input.providerMessageSid,
       status: input.status,
+      deliveryNotice: input.deliveryNotice || null,
       occurredAt: message.createdAt,
     });
 
@@ -258,6 +260,19 @@ export async function processDueSmsDispatchQueue(input?: {
                 stoppedAt: true,
               },
             },
+            communicationEvents: {
+              where: {
+                type: "OUTBOUND_SMS_SENT",
+                channel: "SMS",
+              },
+              orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+              take: 10,
+              select: {
+                occurredAt: true,
+                metadataJson: true,
+                providerStatus: true,
+              },
+            },
           },
         },
       },
@@ -272,6 +287,7 @@ export async function processDueSmsDispatchQueue(input?: {
       leadStatus: liveJob.lead.status,
       leadLastInboundAt: liveJob.lead.lastInboundAt,
       messageType: liveJob.messageType,
+      recentHardSmsFailure: getRecentHardSmsFailureForAutomation(liveJob.lead.communicationEvents),
       conversationState: liveJob.lead.conversationState,
       now,
     });
@@ -362,6 +378,7 @@ export async function processDueSmsDispatchQueue(input?: {
       body: liveJob.body,
       providerMessageSid: providerResult.providerMessageSid,
       status: providerResult.status,
+      deliveryNotice: providerResult.notice || null,
     });
 
     if (liveJob.kind === "MISSED_CALL_INTRO" && providerResult.status !== "FAILED") {

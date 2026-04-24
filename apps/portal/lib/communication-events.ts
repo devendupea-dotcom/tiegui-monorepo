@@ -289,9 +289,23 @@ export async function recordOutboundSmsCommunicationEvent(
     toNumberE164: string;
     providerMessageSid?: string | null;
     status?: MessageStatus | null;
+    deliveryNotice?: string | null;
     occurredAt: Date;
   },
 ) {
+  const metadataJson: Record<string, string | null> = {
+    body: input.body,
+    fromNumberE164: input.fromNumberE164,
+    toNumberE164: input.toNumberE164,
+    status: input.status || null,
+  };
+  if (input.deliveryNotice) {
+    metadataJson.deliveryNotice = input.deliveryNotice;
+    if (input.status === "FAILED") {
+      metadataJson.failureReason = input.deliveryNotice;
+    }
+  }
+
   return upsertCommunicationEvent(tx, {
     orgId: input.orgId,
     leadId: input.leadId,
@@ -303,12 +317,7 @@ export async function recordOutboundSmsCommunicationEvent(
     channel: "SMS",
     occurredAt: input.occurredAt,
     summary: "Outbound SMS sent",
-    metadataJson: {
-      body: input.body,
-      fromNumberE164: input.fromNumberE164,
-      toNumberE164: input.toNumberE164,
-      status: input.status || null,
-    },
+    metadataJson,
     provider: "TWILIO",
     providerMessageSid: input.providerMessageSid || null,
     providerStatus: input.status || null,
