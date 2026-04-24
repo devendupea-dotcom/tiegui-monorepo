@@ -44,6 +44,11 @@ function clampInt(
   return Math.min(max, Math.max(min, parsed));
 }
 
+function parseBooleanQuery(value: string | null): boolean {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 function validateCronAuth(req: Request): NextResponse | null {
   const expected = normalizeEnvValue(process.env.CRON_SECRET);
   if (!expected) {
@@ -86,6 +91,7 @@ async function handleInvoiceCollectionsCron(req: Request) {
     min: 1,
     max: MAX_SCAN_LIMIT,
   });
+  const dryRun = parseBooleanQuery(url.searchParams.get("dryRun"));
   const now = new Date();
   const baseUrl = getBaseUrlFromRequest(req);
   const dueCutoff = new Date(now.getTime() + MAX_PRE_DUE_WINDOW_DAYS * DAY_MS);
@@ -98,6 +104,7 @@ async function handleInvoiceCollectionsCron(req: Request) {
       metricsJson: {
         limit,
         scanLimit,
+        dryRun,
         dueCutoff: dueCutoff.toISOString(),
       },
     },
@@ -196,6 +203,9 @@ async function handleInvoiceCollectionsCron(req: Request) {
       if (!invoice.customer.email?.trim()) {
         skippedMissingEmailCount += 1;
         attemptedCount += 1;
+        if (dryRun) {
+          continue;
+        }
         await recordInvoiceCollectionAttempt({
           orgId: invoice.orgId,
           invoiceId: invoice.id,
@@ -213,6 +223,10 @@ async function handleInvoiceCollectionsCron(req: Request) {
       }
 
       attemptedCount += 1;
+
+      if (dryRun) {
+        continue;
+      }
 
       try {
         await sendInvoiceDelivery({
@@ -254,6 +268,7 @@ async function handleInvoiceCollectionsCron(req: Request) {
         metricsJson: {
           limit,
           scanLimit,
+          dryRun,
           scanned: invoices.length,
           dueNowCount,
           upcomingCount,
@@ -272,6 +287,7 @@ async function handleInvoiceCollectionsCron(req: Request) {
       processedAt: now.toISOString(),
       limit,
       scanLimit,
+      dryRun,
       scanned: invoices.length,
       dueNowCount,
       upcomingCount,

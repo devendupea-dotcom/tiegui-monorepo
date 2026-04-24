@@ -45,6 +45,17 @@ VERCEL_AUTOMATION_BYPASS_SECRET=... \
 npm run smoke:portal --workspace=portal
 ```
 
+Verify the collections cron route with the same base URL before scheduling it. This command uses
+`dryRun=1` by default, so it validates auth, routing, and deployment wiring without sending invoice
+reminders:
+
+```bash
+BASE_URL=https://preview.example.vercel.app \
+CRON_SECRET=... \
+VERCEL_AUTOMATION_BYPASS_SECRET=... \
+npm run check:collections-cron --workspace=portal
+```
+
 The script mutates data while it runs. It is designed to clean up after itself, but it should not be pointed at production without an explicit release decision.
 
 ## Manual Demo Pass
