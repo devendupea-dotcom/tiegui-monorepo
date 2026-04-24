@@ -21,6 +21,10 @@ export function mapTwilioLifecycleStatus(value: string | null | undefined): Mess
   }
 }
 
+export function mapTwilioInitialSendStatus(value: string | null | undefined): MessageStatus {
+  return mapTwilioLifecycleStatus(value) || "QUEUED";
+}
+
 export function shouldAdvanceOutboundSmsLifecycle(
   current: MessageStatus | null | undefined,
   incoming: MessageStatus | null | undefined,
