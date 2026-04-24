@@ -49,6 +49,7 @@ type ClientSmokeOrgContext = {
 
 const BASE_URL = normalizeBaseUrl(process.env.BASE_URL || "http://127.0.0.1:3001");
 const REQUEST_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15_000);
+const VERCEL_AUTOMATION_BYPASS_SECRET = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() || "";
 const SMOKE_PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAukB9VE3FoAAAAAASUVORK5CYII=",
   "base64",
@@ -143,6 +144,14 @@ function createUrl(path: string): string {
   return path.startsWith("http://") || path.startsWith("https://") ? path : `${BASE_URL}${path}`;
 }
 
+function createSmokeHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  if (VERCEL_AUTOMATION_BYPASS_SECRET) {
+    headers.set("x-vercel-protection-bypass", VERCEL_AUTOMATION_BYPASS_SECRET);
+  }
+  return headers;
+}
+
 function createRunPhone(seed: number): string {
   const suffix = `${Date.now()}${seed}`.slice(-7);
   return `+1206${suffix}`;
@@ -195,7 +204,7 @@ function createTwilioHeaders(
     forwardedProto?: "http" | "https";
   },
 ): Headers {
-  const headers = new Headers();
+  const headers = createSmokeHeaders();
   headers.set("content-type", "application/x-www-form-urlencoded");
   if (options?.forwardedHost) {
     headers.set("x-forwarded-host", options.forwardedHost);
@@ -260,7 +269,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 async function fetchWithJar(jar: CookieJar, path: string, init: RequestInit = {}) {
-  const headers = new Headers(init.headers);
+  const headers = createSmokeHeaders(init.headers);
   const cookieHeader = jar.toHeader();
   if (cookieHeader) {
     headers.set("cookie", cookieHeader);
@@ -288,13 +297,13 @@ async function fetchJsonWithJar(jar: CookieJar, path: string, init: RequestInit 
 }
 
 async function fetchPageWithJar(jar: CookieJar, path: string, init: RequestInit = {}) {
+  const headers = createSmokeHeaders(init.headers);
+  headers.set("accept", "text/html");
+
   const response = await fetchWithJar(jar, path, {
     ...init,
     redirect: init.redirect || "follow",
-    headers: {
-      accept: "text/html",
-      ...(init.headers || {}),
-    },
+    headers,
   });
 
   const finalUrl = new URL(response.url);
@@ -1144,9 +1153,9 @@ async function main() {
       const shareToken = extractEstimateShareToken(sharePayload.share.url);
 
       const publicEstimatePage = await fetch(createUrl(`/estimate/${encodeURIComponent(shareToken)}`), {
-        headers: {
+        headers: createSmokeHeaders({
           accept: "text/html",
-        },
+        }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const publicEstimateHtml = await publicEstimatePage.text();
@@ -1157,10 +1166,10 @@ async function main() {
 
       const approveResponse = await fetch(createUrl(`/api/estimate-share/${encodeURIComponent(shareToken)}/approve`), {
         method: "POST",
-        headers: {
+        headers: createSmokeHeaders({
           "content-type": "application/json",
           accept: "application/json",
-        },
+        }),
         body: JSON.stringify({
           customerName,
           note: "Approved during portal smoke golden-path QA.",

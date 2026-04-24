@@ -36,6 +36,15 @@ Run it only against a staging or disposable environment:
 BASE_URL=https://staging-app.example.com npm run smoke:portal --workspace=portal
 ```
 
+For protected Vercel Preview deployments, generate a Protection Bypass for Automation secret in the
+portal Vercel project and pass it to the runner:
+
+```bash
+BASE_URL=https://preview.example.vercel.app \
+VERCEL_AUTOMATION_BYPASS_SECRET=... \
+npm run smoke:portal --workspace=portal
+```
+
 The script mutates data while it runs. It is designed to clean up after itself, but it should not be pointed at production without an explicit release decision.
 
 ## Manual Demo Pass
