@@ -268,7 +268,11 @@ Billing + collections readiness, if Stripe pay links or recurring billing should
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_REDIRECT_URI` optional
 
-Phase 2 only. Do not treat these as required for the Phase 1 go-live:
+Phase 1 core-only release did not require Twilio activation. For the current customer go-live path,
+run `npm run check:release-env --workspace=portal` and treat billing, collections cron, and Twilio
+live-mode failures as release blockers.
+
+Twilio and collections activation:
 
 - `TWILIO_TOKEN_ENCRYPTION_KEY`
 - `TWILIO_SEND_ENABLED`

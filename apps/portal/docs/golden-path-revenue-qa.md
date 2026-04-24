@@ -71,6 +71,11 @@ npm run check:release-env --workspace=portal -- --env-file .env.preview
 
 The script mutates data while it runs. It is designed to clean up after itself, but it should not be pointed at production without an explicit release decision.
 
+The release env preflight is intentionally stricter than a code-only build gate. For a customer go-live
+it fails when Stripe secrets are missing or malformed, when Twilio token encryption is malformed, when
+`TWILIO_SEND_ENABLED` is not `true`, or when `TWILIO_VALIDATE_SIGNATURE` is not `true`. Use this as the
+release blocker check before smoke, not as a lightweight local development check.
+
 ## Manual Demo Pass
 
 Use this as the human demo check after the automated smoke passes:

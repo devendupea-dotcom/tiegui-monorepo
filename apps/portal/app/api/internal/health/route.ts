@@ -5,7 +5,12 @@ import { getConversationalSmsLlmRuntimeSummary } from "@/lib/conversational-sms-
 import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
 import { isInternalRole } from "@/lib/session";
-import { boolEnv, checkRequiredTables, getSafeDbEnvInfo, pingDb } from "@/lib/internal-health";
+import {
+  boolEnv,
+  checkRequiredTables,
+  getSafeDbEnvInfo,
+  pingDb,
+} from "@/lib/internal-health";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,7 +32,10 @@ async function isAuthorized(req: Request): Promise<boolean> {
 export async function GET(req: Request) {
   const authorized = await isAuthorized(req);
   if (!authorized) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401 },
+    );
   }
 
   const generatedAt = new Date().toISOString();
@@ -44,16 +52,30 @@ export async function GET(req: Request) {
     dbError = error instanceof Error ? error.message : "unknown error";
   }
 
-  let requiredTables = { ok: false, missing: [] as string[], present: [] as string[] };
+  let requiredTables = {
+    ok: false,
+    missing: [] as string[],
+    present: [] as string[],
+  };
   let requiredTablesError: string | null = null;
   try {
     requiredTables = await checkRequiredTables({ ttlMs: 60_000 });
   } catch (error) {
-    requiredTablesError = error instanceof Error ? error.message : "unknown error";
+    requiredTablesError =
+      error instanceof Error ? error.message : "unknown error";
   }
 
-  const googleEnvPresent = boolEnv("GOOGLE_CLIENT_ID") && boolEnv("GOOGLE_CLIENT_SECRET");
+  const googleEnvPresent =
+    boolEnv("GOOGLE_CLIENT_ID") && boolEnv("GOOGLE_CLIENT_SECRET");
   const twilioEnvPresent = boolEnv("TWILIO_TOKEN_ENCRYPTION_KEY");
+  const stripeEnvPresent =
+    boolEnv("STRIPE_SECRET_KEY") &&
+    boolEnv("STRIPE_CONNECT_CLIENT_ID") &&
+    boolEnv("STRIPE_WEBHOOK_SECRET");
+  const twilioSendEnabled =
+    normalizeEnvValue(process.env.TWILIO_SEND_ENABLED) === "true";
+  const twilioValidateSignature =
+    normalizeEnvValue(process.env.TWILIO_VALIDATE_SIGNATURE) === "true";
   const conversationalSmsLlm = getConversationalSmsLlmRuntimeSummary();
 
   if (!dbInfo.directUrlPresent) {
@@ -67,13 +89,35 @@ export async function GET(req: Request) {
     );
   }
   if (!googleEnvPresent) {
-    warnings.push("Google env is incomplete (GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET).");
+    warnings.push(
+      "Google env is incomplete (GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET).",
+    );
   }
   if (!twilioEnvPresent) {
     warnings.push("Twilio env is incomplete (TWILIO_TOKEN_ENCRYPTION_KEY).");
   }
-  if (conversationalSmsLlm.mode === "explicit_on" && !conversationalSmsLlm.configured) {
-    warnings.push("Conversational SMS LLM is enabled but Azure OpenAI credentials are missing.");
+  if (!twilioSendEnabled) {
+    warnings.push(
+      "TWILIO_SEND_ENABLED is not true. Outbound SMS is queue-only or blocked.",
+    );
+  }
+  if (!twilioValidateSignature) {
+    warnings.push(
+      "TWILIO_VALIDATE_SIGNATURE is not true. Customer go-live should reject unsigned Twilio webhooks.",
+    );
+  }
+  if (!stripeEnvPresent) {
+    warnings.push(
+      "Stripe billing env is incomplete (STRIPE_SECRET_KEY/STRIPE_CONNECT_CLIENT_ID/STRIPE_WEBHOOK_SECRET).",
+    );
+  }
+  if (
+    conversationalSmsLlm.mode === "explicit_on" &&
+    !conversationalSmsLlm.configured
+  ) {
+    warnings.push(
+      "Conversational SMS LLM is enabled but Azure OpenAI credentials are missing.",
+    );
   }
 
   return NextResponse.json({
@@ -81,7 +125,8 @@ export async function GET(req: Request) {
     generatedAt,
     warnings,
     vercel: {
-      gitCommitSha: normalizeEnvValue(process.env.VERCEL_GIT_COMMIT_SHA) || null,
+      gitCommitSha:
+        normalizeEnvValue(process.env.VERCEL_GIT_COMMIT_SHA) || null,
       gitRef: normalizeEnvValue(process.env.VERCEL_GIT_COMMIT_REF) || null,
       deploymentId: normalizeEnvValue(process.env.VERCEL_DEPLOYMENT_ID) || null,
       environment: normalizeEnvValue(process.env.VERCEL_ENV) || null,
@@ -101,15 +146,20 @@ export async function GET(req: Request) {
     env: {
       googleEnvPresent,
       twilioEnvPresent,
+      stripeEnvPresent,
+      stripeSecretPresent: boolEnv("STRIPE_SECRET_KEY"),
+      stripeConnectClientIdPresent: boolEnv("STRIPE_CONNECT_CLIENT_ID"),
+      stripeWebhookSecretPresent: boolEnv("STRIPE_WEBHOOK_SECRET"),
       conversationalSmsLlmEnabled: conversationalSmsLlm.enabled,
       conversationalSmsLlmConfigured: conversationalSmsLlm.configured,
       conversationalSmsLlmMode: conversationalSmsLlm.mode,
       conversationalSmsModel: conversationalSmsLlm.model,
       azureOpenAiEndpointOrigin: conversationalSmsLlm.endpointOrigin,
       cronSecretPresent: boolEnv("CRON_SECRET"),
-      integrationsEncryptionKeyPresent: boolEnv("INTEGRATIONS_ENCRYPTION_KEY") || boolEnv("NEXTAUTH_SECRET"),
-      twilioSendEnabled: normalizeEnvValue(process.env.TWILIO_SEND_ENABLED) === "true",
-      twilioValidateSignature: normalizeEnvValue(process.env.TWILIO_VALIDATE_SIGNATURE) === "true",
+      integrationsEncryptionKeyPresent:
+        boolEnv("INTEGRATIONS_ENCRYPTION_KEY") || boolEnv("NEXTAUTH_SECRET"),
+      twilioSendEnabled,
+      twilioValidateSignature,
     },
   });
 }

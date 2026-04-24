@@ -19,7 +19,8 @@ function getArgValue(name: string): string | null {
 }
 
 function loadEnv() {
-  const envFile = getArgValue("--env-file") || process.env.PRISMA_ENV_FILE || null;
+  const envFile =
+    getArgValue("--env-file") || process.env.PRISMA_ENV_FILE || null;
   if (envFile) {
     config({ path: resolve(envFile), override: true });
     return;
@@ -43,7 +44,10 @@ function required(name: string, keys: string[], detail?: string): CheckResult {
     name,
     ok: missing.length === 0,
     severity: "required",
-    detail: missing.length === 0 ? detail || keys.join(", ") : `Missing: ${missing.join(", ")}`,
+    detail:
+      missing.length === 0
+        ? detail || keys.join(", ")
+        : `Missing: ${missing.join(", ")}`,
   };
 }
 
@@ -56,13 +60,33 @@ function warning(name: string, ok: boolean, detail: string): CheckResult {
   };
 }
 
-function requiredOneOf(name: string, keys: string[], detail?: string): CheckResult {
+function requiredCondition(
+  name: string,
+  ok: boolean,
+  detail: string,
+): CheckResult {
+  return {
+    name,
+    ok,
+    severity: "required",
+    detail,
+  };
+}
+
+function requiredOneOf(
+  name: string,
+  keys: string[],
+  detail?: string,
+): CheckResult {
   const present = keys.filter((key) => hasEnv(key));
   return {
     name,
     ok: present.length > 0,
     severity: "required",
-    detail: present.length > 0 ? `Using: ${present.join(", ")}` : detail || `Set one of: ${keys.join(", ")}`,
+    detail:
+      present.length > 0
+        ? `Using: ${present.join(", ")}`
+        : detail || `Set one of: ${keys.join(", ")}`,
   };
 }
 
@@ -78,13 +102,49 @@ function isBase64ThirtyTwoByteKey(value: string): boolean {
   }
 }
 
+function requiredShape(
+  name: string,
+  key: string,
+  isValid: (value: string) => boolean,
+  expectedDescription: string,
+): CheckResult {
+  const value = envValue(key);
+  if (!value) {
+    return requiredCondition(
+      name,
+      true,
+      `Skipped because ${key} is missing; missing key is reported by the required env check.`,
+    );
+  }
+
+  return requiredCondition(
+    name,
+    isValid(value),
+    isValid(value)
+      ? `${key} has expected format.`
+      : `${key} is malformed; expected ${expectedDescription}.`,
+  );
+}
+
 function buildChecks(): CheckResult[] {
   const checks: CheckResult[] = [
-    required("Core database/auth", ["DATABASE_URL", "NEXTAUTH_URL", "NEXTAUTH_SECRET"]),
-    requiredOneOf("Outbound email provider", ["SMTP_URL", "EMAIL_SERVER", "RESEND_API_KEY"]),
+    required("Core database/auth", [
+      "DATABASE_URL",
+      "NEXTAUTH_URL",
+      "NEXTAUTH_SECRET",
+    ]),
+    requiredOneOf("Outbound email provider", [
+      "SMTP_URL",
+      "EMAIL_SERVER",
+      "RESEND_API_KEY",
+    ]),
     required("Email sender", ["EMAIL_FROM"]),
     required("Cron auth", ["CRON_SECRET"]),
-    required("Stripe billing", ["STRIPE_SECRET_KEY", "STRIPE_CONNECT_CLIENT_ID", "STRIPE_WEBHOOK_SECRET"]),
+    required("Stripe billing", [
+      "STRIPE_SECRET_KEY",
+      "STRIPE_CONNECT_CLIENT_ID",
+      "STRIPE_WEBHOOK_SECRET",
+    ]),
     required("Twilio runtime flags", [
       "TWILIO_TOKEN_ENCRYPTION_KEY",
       "TWILIO_SEND_ENABLED",
@@ -102,77 +162,81 @@ function buildChecks(): CheckResult[] {
     ),
   );
 
-  const stripeSecret = envValue("STRIPE_SECRET_KEY");
   checks.push(
-    warning(
+    requiredShape(
       "Stripe secret shape",
-      !stripeSecret || stripeSecret.startsWith("sk_"),
-      stripeSecret
-        ? "STRIPE_SECRET_KEY should start with sk_."
-        : "Skipped because STRIPE_SECRET_KEY is missing.",
+      "STRIPE_SECRET_KEY",
+      (value) => value.startsWith("sk_"),
+      "a value that starts with sk_",
     ),
   );
 
-  const stripeWebhookSecret = envValue("STRIPE_WEBHOOK_SECRET");
   checks.push(
-    warning(
+    requiredShape(
       "Stripe webhook secret shape",
-      !stripeWebhookSecret || stripeWebhookSecret.startsWith("whsec_"),
-      stripeWebhookSecret
-        ? "STRIPE_WEBHOOK_SECRET should start with whsec_."
-        : "Skipped because STRIPE_WEBHOOK_SECRET is missing.",
+      "STRIPE_WEBHOOK_SECRET",
+      (value) => value.startsWith("whsec_"),
+      "a value that starts with whsec_",
     ),
   );
 
-  const stripeConnectClientId = envValue("STRIPE_CONNECT_CLIENT_ID");
   checks.push(
-    warning(
+    requiredShape(
       "Stripe Connect client id shape",
-      !stripeConnectClientId || stripeConnectClientId.startsWith("ca_"),
-      stripeConnectClientId
-        ? "STRIPE_CONNECT_CLIENT_ID should start with ca_."
-        : "Skipped because STRIPE_CONNECT_CLIENT_ID is missing.",
+      "STRIPE_CONNECT_CLIENT_ID",
+      (value) => value.startsWith("ca_"),
+      "a value that starts with ca_",
     ),
   );
 
-  const twilioEncryptionKey = envValue("TWILIO_TOKEN_ENCRYPTION_KEY");
   checks.push(
-    warning(
+    requiredShape(
       "Twilio token encryption key shape",
-      !twilioEncryptionKey || isBase64ThirtyTwoByteKey(twilioEncryptionKey),
-      twilioEncryptionKey
-        ? "TWILIO_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes."
-        : "Skipped because TWILIO_TOKEN_ENCRYPTION_KEY is missing.",
+      "TWILIO_TOKEN_ENCRYPTION_KEY",
+      isBase64ThirtyTwoByteKey,
+      "base64 that decodes to exactly 32 bytes",
     ),
   );
 
-  if (envEquals("TWILIO_SEND_ENABLED", "true")) {
-    checks.push(
-      warning(
-        "Twilio send mode",
-        true,
-        "TWILIO_SEND_ENABLED=true. Confirm org-level Twilio config is saved before live customer SMS.",
-      ),
-    );
-  } else {
-    checks.push(
-      warning(
-        "Twilio send mode",
-        false,
-        "TWILIO_SEND_ENABLED is not true; SMS compose may be queue-only or blocked.",
-      ),
-    );
-  }
+  checks.push(
+    requiredCondition(
+      "Twilio send mode",
+      envEquals("TWILIO_SEND_ENABLED", "true"),
+      envEquals("TWILIO_SEND_ENABLED", "true")
+        ? "TWILIO_SEND_ENABLED=true. Confirm org-level Twilio config is saved before live customer SMS."
+        : "TWILIO_SEND_ENABLED must be true for customer go-live; otherwise outbound SMS is queue-only or blocked.",
+    ),
+  );
+
+  checks.push(
+    requiredCondition(
+      "Twilio webhook signature validation",
+      envEquals("TWILIO_VALIDATE_SIGNATURE", "true"),
+      envEquals("TWILIO_VALIDATE_SIGNATURE", "true")
+        ? "TWILIO_VALIDATE_SIGNATURE=true."
+        : "TWILIO_VALIDATE_SIGNATURE must be true for customer go-live to reject unsigned webhook traffic.",
+    ),
+  );
 
   if (envEquals("TWILIO_VALIDATE_SIGNATURE", "true")) {
-    checks.push(required("Twilio webhook signature fallback", ["TWILIO_AUTH_TOKEN"]));
+    checks.push(
+      warning(
+        "Twilio webhook signature fallback",
+        hasEnv("TWILIO_AUTH_TOKEN"),
+        "TWILIO_AUTH_TOKEN is only needed as a fallback; per-org Twilio credentials can validate signed webhooks without it.",
+      ),
+    );
   }
 
   return checks;
 }
 
 function printResult(result: CheckResult) {
-  const prefix = result.ok ? "PASS" : result.severity === "required" ? "FAIL" : "WARN";
+  const prefix = result.ok
+    ? "PASS"
+    : result.severity === "required"
+      ? "FAIL"
+      : "WARN";
   console.log(`${prefix} ${result.name}: ${result.detail}`);
 }
 
@@ -183,11 +247,17 @@ for (const check of checks) {
   printResult(check);
 }
 
-const failedRequired = checks.filter((check) => check.severity === "required" && !check.ok);
-const warnings = checks.filter((check) => check.severity === "warning" && !check.ok);
+const failedRequired = checks.filter(
+  (check) => check.severity === "required" && !check.ok,
+);
+const warnings = checks.filter(
+  (check) => check.severity === "warning" && !check.ok,
+);
 
 console.log("");
-console.log(`Release env preflight: ${failedRequired.length === 0 ? "ready" : "blocked"}`);
+console.log(
+  `Release env preflight: ${failedRequired.length === 0 ? "ready" : "blocked"}`,
+);
 console.log(`Required failures: ${failedRequired.length}`);
 console.log(`Warnings: ${warnings.length}`);
 
