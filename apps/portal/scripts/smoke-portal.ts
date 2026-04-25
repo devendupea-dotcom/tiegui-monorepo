@@ -50,6 +50,7 @@ type ClientSmokeOrgContext = {
 const BASE_URL = normalizeBaseUrl(process.env.BASE_URL || "http://127.0.0.1:3001");
 const REQUEST_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15_000);
 const VERCEL_AUTOMATION_BYPASS_SECRET = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() || "";
+const TWILIO_PUBLIC_WEBHOOK_HOST = process.env.TWILIO_PUBLIC_WEBHOOK_HOST?.trim() || "";
 const SMOKE_PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAukB9VE3FoAAAAAASUVORK5CYII=",
   "base64",
@@ -222,6 +223,26 @@ function createTwilioHeaders(
   }
 
   return headers;
+}
+
+function createPublicTwilioHeaders(path: string, formBody: URLSearchParams, authToken: string): Headers {
+  if (!TWILIO_PUBLIC_WEBHOOK_HOST) {
+    return createTwilioHeaders(path, formBody, authToken);
+  }
+
+  return createTwilioHeaders(path, formBody, authToken, {
+    forwardedHost: TWILIO_PUBLIC_WEBHOOK_HOST.replace(/^https?:\/\//, "").replace(/\/+$/, ""),
+    forwardedProto: "https",
+  });
+}
+
+function getExpectedTwilioPublicUrl(path: string): string {
+  if (!TWILIO_PUBLIC_WEBHOOK_HOST) {
+    return createUrl(path);
+  }
+
+  const host = TWILIO_PUBLIC_WEBHOOK_HOST.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return `https://${host}${path}`;
 }
 
 function extractMetaRedirectUrl(html: string): string | null {
@@ -1397,10 +1418,7 @@ async function main() {
 
       const response = await fetch(createUrl("/api/webhooks/twilio/voice"), {
         method: "POST",
-        headers: createTwilioHeaders("/api/webhooks/twilio/voice", formBody, smokeTwilioAuthToken, {
-          forwardedHost: "app.tieguisolutions.com",
-          forwardedProto: "https",
-        }),
+        headers: createPublicTwilioHeaders("/api/webhooks/twilio/voice", formBody, smokeTwilioAuthToken),
         body: formBody,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -1410,9 +1428,10 @@ async function main() {
       assert(xml.includes("<Dial"), "Expected <Dial> in TwiML response");
       assert(xml.includes('timeout="20"'), "Expected a 20 second dial timeout so missed calls fall back quickly");
       assert(xml.includes(smokeTwilioForwardTarget), `Expected forward target ${smokeTwilioForwardTarget}`);
+      const expectedAfterCallUrl = getExpectedTwilioPublicUrl("/api/webhooks/twilio/after-call");
       assert(
-        xml.includes('action="https://app.tieguisolutions.com/api/webhooks/twilio/after-call"'),
-        "Expected absolute after-call callback URL on the public host",
+        xml.includes(`action="${expectedAfterCallUrl}"`),
+        `Expected absolute after-call callback URL ${expectedAfterCallUrl}`,
       );
       assert(!xml.includes("<Hangup"), "Voice forward TwiML should not append Hangup after Dial");
       return `200 dial-> ${smokeTwilioForwardTarget}`;

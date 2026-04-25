@@ -45,6 +45,17 @@ VERCEL_AUTOMATION_BYPASS_SECRET=... \
 npm run smoke:portal --workspace=portal
 ```
 
+When testing Twilio voice webhooks against a Preview URL, the smoke runner signs webhook
+requests for the Preview host by default. To verify production/public webhook URLs while still
+calling a Preview deployment, pass the public host explicitly:
+
+```bash
+BASE_URL=https://preview.example.vercel.app \
+VERCEL_AUTOMATION_BYPASS_SECRET=... \
+TWILIO_PUBLIC_WEBHOOK_HOST=app.tieguisolutions.com \
+npm run smoke:portal --workspace=portal
+```
+
 Verify the collections cron route with the same base URL before scheduling it. This command uses
 `dryRun=1` by default, so it validates auth, routing, and deployment wiring without sending invoice
 reminders:
