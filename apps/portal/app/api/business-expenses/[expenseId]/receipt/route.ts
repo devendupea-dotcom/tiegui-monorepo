@@ -29,7 +29,7 @@ function toUtcDatePrefix(date = new Date()): string {
 }
 
 type RouteContext = {
-  params: { expenseId: string };
+  params: Promise<{ expenseId: string }>;
 };
 
 async function resolveExpenseOrgId(expenseId: string): Promise<string> {
@@ -45,7 +45,8 @@ async function resolveExpenseOrgId(expenseId: string): Promise<string> {
   return scoped.orgId;
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const orgId = await resolveExpenseOrgId(params.expenseId);

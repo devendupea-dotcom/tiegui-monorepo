@@ -6,12 +6,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     jobId: string;
-  };
+  }>;
 };
 
-export async function PATCH(_req: Request, { params }: RouteContext) {
+export async function PATCH(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     await requireAppApiActor();
 

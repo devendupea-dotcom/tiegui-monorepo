@@ -4,6 +4,7 @@ type PortalEventName =
   | "Lead Created"
   | "Job Created"
   | "Invoice Sent"
+  | "Invoice Reminder Sent"
   | "Invoice Printed"
   | "SMS Connected";
 

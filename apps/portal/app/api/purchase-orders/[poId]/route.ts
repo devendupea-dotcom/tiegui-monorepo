@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { poId: string };
+  params: Promise<{ poId: string }>;
 };
 
 type PurchaseOrderUpdatePayload = {
@@ -42,7 +42,8 @@ async function resolvePurchaseOrderOrgId(purchaseOrderId: string): Promise<strin
   return scoped.orgId;
 }
 
-export async function GET(_req: Request, { params }: RouteContext) {
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const orgId = await resolvePurchaseOrderOrgId(params.poId);
@@ -69,7 +70,8 @@ export async function GET(_req: Request, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const orgId = await resolvePurchaseOrderOrgId(params.poId);
@@ -102,7 +104,8 @@ export async function PATCH(req: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(_req: Request, { params }: RouteContext) {
+export async function DELETE(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const orgId = await resolvePurchaseOrderOrgId(params.poId);

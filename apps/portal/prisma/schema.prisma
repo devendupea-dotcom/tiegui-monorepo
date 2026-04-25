@@ -45,6 +45,13 @@ model Organization {
   invoiceNextNumber           Int             @default(1)
   invoicePaymentInstructions  String?
   invoiceTemplate             String          @default("classic")
+  invoiceCollectionsEnabled   Boolean         @default(true)
+  invoiceCollectionsAutoSendEnabled Boolean   @default(false)
+  invoiceFirstReminderLeadDays Int            @default(2)
+  invoiceOverdueReminderCadenceDays Int       @default(7)
+  invoiceCollectionsMaxReminders Int          @default(2)
+  invoiceCollectionsUrgentAfterDays Int       @default(7)
+  invoiceCollectionsFinalAfterDays Int        @default(21)
   logoPhotoId                 String?         @unique
   invoiceSequence             Int             @default(0)
   ghostBustingEnabled         Boolean         @default(false)
@@ -121,6 +128,7 @@ model Organization {
   portableInvoiceLineItems PortableInvoiceLineItem[]
   portablePayments         PortablePayment[]
   portableNotes            PortableNote[]
+  stripeConnection         OrganizationStripeConnection?
   calendarWorkerHours      WorkingHours[]
   calendarTimeOff          TimeOff[]
   calendarHolds            CalendarHold[]
@@ -130,9 +138,11 @@ model Organization {
   googleSyncJobs           GoogleSyncJob[]
   googleSyncJobAttempts    GoogleSyncJobAttempt[]
   invoices                 Invoice[]
+  invoiceCollectionAttempts InvoiceCollectionAttempt[]
   purchaseOrders           PurchaseOrder[]
   businessExpenses         BusinessExpense[]
   estimates                Estimate[]
+  recurringServicePlans    RecurringServicePlan[]
   estimateShareLinks       EstimateShareLink[]
   jobTrackingLinks         JobTrackingLink[]
   estimateDrafts           EstimateDraft[]
@@ -211,6 +221,7 @@ model User {
   createdEstimateShareLinks EstimateShareLink[]    @relation("EstimateShareCreator")
   createdJobTrackingLinks   JobTrackingLink[]      @relation("JobTrackingLinkCreator")
   createdEstimateDrafts     EstimateDraft[]        @relation("EstimateDraftCreator")
+  createdRecurringServicePlans RecurringServicePlan[] @relation("RecurringServicePlanCreator")
   createdJobs               Job[]                  @relation("JobCreator")
   jobEvents                 JobEvent[]             @relation("JobEventActor")
   estimateActivities        EstimateActivity[]     @relation("EstimateActivityActor")
@@ -223,6 +234,7 @@ model User {
   twilioConfigAuditLogs     TwilioConfigAuditLog[] @relation("TwilioConfigAuditActor")
   createdBlockedCallers     BlockedCaller[]        @relation("BlockedCallerCreator")
   importRuns               ImportRun[]            @relation("ImportRunActor")
+  invoiceCollectionAttempts InvoiceCollectionAttempt[] @relation("InvoiceCollectionAttemptActor")
 
   @@index([orgId])
 }
@@ -409,6 +421,7 @@ model Customer {
   voicemailArtifacts  VoicemailArtifact[]  @relation("VoicemailArtifactContact")
   invoices            Invoice[]
   jobs                Job[]
+  recurringServicePlans RecurringServicePlan[]
 
   @@index([orgId, phoneE164])
   @@index([orgId, name])
@@ -627,6 +640,8 @@ model Invoice {
   dueDate          DateTime
   notes            String?
   sentAt           DateTime?
+  lastReminderSentAt DateTime?
+  reminderCount    Int                  @default(0)
   createdByUserId  String?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
@@ -639,6 +654,8 @@ model Invoice {
   createdBy      User?             @relation("InvoiceCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
   lineItems      InvoiceLineItem[]
   payments       InvoicePayment[]
+  checkoutSessions InvoiceCheckoutSession[]
+  collectionAttempts InvoiceCollectionAttempt[]
   metaCapiEvents MetaCapiEvent[]
 
   @@unique([orgId, invoiceNumber])
@@ -672,12 +689,139 @@ model InvoicePayment {
   date      DateTime
   method    InvoicePaymentMethod
   note      String?
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
   createdAt DateTime             @default(now())
   updatedAt DateTime             @updatedAt
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId, date])
+}
+
+model InvoiceCheckoutSession {
+  id                     String                       @id @default(uuid())
+  invoiceId              String
+  amount                 Decimal                      @db.Decimal(12, 2)
+  currency               String                       @default("usd")
+  status                 InvoiceCheckoutSessionStatus @default(OPEN)
+  stripeCheckoutSessionId String                      @unique
+  stripePaymentIntentId  String?                      @unique
+  checkoutUrl            String
+  expiresAt              DateTime?
+  completedAt            DateTime?
+  lastError              String?
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId, status, createdAt])
+}
+
+model InvoiceCollectionAttempt {
+  id          String                          @id @default(uuid())
+  orgId       String
+  invoiceId   String
+  actorUserId String?
+  source      InvoiceCollectionAttemptSource @default(MANUAL)
+  outcome     InvoiceCollectionAttemptOutcome
+  reason      String?
+  metadataJson Json?
+  createdAt   DateTime                        @default(now())
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invoice Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  actor   User?        @relation("InvoiceCollectionAttemptActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId, createdAt])
+  @@index([orgId, source, createdAt])
+  @@index([orgId, outcome, createdAt])
+}
+
+model OrganizationStripeConnection {
+  id                 String                 @id @default(uuid())
+  orgId              String                 @unique
+  stripeAccountId    String                 @unique
+  stripeAccountEmail String?
+  stripeDisplayName  String?
+  stripeCountry      String?
+  defaultCurrency    String?
+  livemode           Boolean                @default(false)
+  chargesEnabled     Boolean                @default(false)
+  payoutsEnabled     Boolean                @default(false)
+  detailsSubmitted   Boolean                @default(false)
+  status             StripeConnectionStatus @default(PENDING)
+  connectedAt        DateTime               @default(now())
+  lastSyncedAt       DateTime?
+  lastError          String?
+  disconnectedAt     DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([status, updatedAt])
+}
+
+model RecurringServicePlan {
+  id                      String                     @id @default(uuid())
+  orgId                   String
+  customerId              String
+  createdByUserId         String?
+  name                    String
+  description             String?
+  amount                  Decimal                    @db.Decimal(12, 2)
+  currency                String                     @default("usd")
+  interval                RecurringBillingInterval
+  intervalCount           Int                        @default(1)
+  status                  RecurringServicePlanStatus @default(DRAFT)
+  startsAt                DateTime?
+  nextBillingAt           DateTime?
+  canceledAt              DateTime?
+  stripeProductId         String?
+  stripePriceId           String?
+  stripeCustomerId        String?
+  stripeSubscriptionId    String?                    @unique
+  stripeCheckoutSessionId String?                    @unique
+  checkoutUrl             String?
+  checkoutExpiresAt       DateTime?
+  lastError               String?
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+
+  org       Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer  Customer                @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  createdBy User?                   @relation("RecurringServicePlanCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  charges   RecurringBillingCharge[]
+
+  @@index([orgId, status, updatedAt])
+  @@index([customerId, status])
+  @@index([stripeSubscriptionId])
+}
+
+model RecurringBillingCharge {
+  id                     String                       @id @default(uuid())
+  recurringServicePlanId String
+  amount                 Decimal                      @db.Decimal(12, 2)
+  currency               String                       @default("usd")
+  status                 RecurringBillingChargeStatus @default(PENDING)
+  periodStart            DateTime?
+  periodEnd              DateTime?
+  chargedAt              DateTime?
+  stripeInvoiceId        String?                      @unique
+  stripePaymentIntentId  String?
+  stripeChargeId         String?
+  receiptUrl             String?
+  failureCode            String?
+  failureMessage         String?
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+
+  recurringServicePlan RecurringServicePlan @relation(fields: [recurringServicePlanId], references: [id], onDelete: Cascade)
+
+  @@index([recurringServicePlanId, createdAt])
+  @@index([status, chargedAt])
 }
 
 model PurchaseOrder {
@@ -2276,8 +2420,27 @@ enum InvoicePaymentMethod {
   CASH
   CHECK
   CARD
+  STRIPE
   TRANSFER
   OTHER
+}
+
+enum InvoiceCheckoutSessionStatus {
+  OPEN
+  COMPLETED
+  EXPIRED
+  CANCELED
+}
+
+enum InvoiceCollectionAttemptSource {
+  MANUAL
+  AUTOMATION
+}
+
+enum InvoiceCollectionAttemptOutcome {
+  SENT
+  SKIPPED
+  FAILED
 }
 
 enum InvoiceTerms {
@@ -2373,8 +2536,38 @@ enum CronLogStatus {
 enum IntegrationProvider {
   JOBBER
   QBO
+  STRIPE
   OUTLOOK
   MANUAL_FILE
+}
+
+enum StripeConnectionStatus {
+  PENDING
+  ACTIVE
+  RESTRICTED
+  DISCONNECTED
+}
+
+enum RecurringBillingInterval {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
+enum RecurringServicePlanStatus {
+  DRAFT
+  PENDING_ACTIVATION
+  ACTIVE
+  PAUSED
+  CANCELED
+}
+
+enum RecurringBillingChargeStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  VOIDED
 }
 
 enum IntegrationAccountStatus {

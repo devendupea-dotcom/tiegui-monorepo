@@ -1,10 +1,11 @@
 import type { ConversationStage } from "@prisma/client";
 
 const FOLLOW_UP_CADENCE_MINUTES_BY_STAGE: Partial<Record<ConversationStage, readonly number[]>> = {
-  ASKED_WORK: [24 * 60, 72 * 60],
-  ASKED_ADDRESS: [24 * 60, 72 * 60],
-  ASKED_TIMEFRAME: [24 * 60, 72 * 60],
-  OFFERED_BOOKING: [24 * 60, 72 * 60],
+  // One reminder after 48 hours keeps the automation helpful without crowding leads.
+  ASKED_WORK: [48 * 60],
+  ASKED_ADDRESS: [48 * 60],
+  ASKED_TIMEFRAME: [48 * 60],
+  OFFERED_BOOKING: [48 * 60],
 };
 
 export function getConversationFollowUpCadenceMinutes(

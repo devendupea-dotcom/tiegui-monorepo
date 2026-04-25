@@ -16,10 +16,16 @@ const TIEGUI_GHOST_BUSTER_JOB = {
   name: "ghost_buster",
   path: "/api/cron/ghost-buster",
 };
-const TIEGUI_INVOICE_ASSIST_JOB = {
-  name: "invoice_assist",
-  path: "/api/cron/invoice-assist?windowDays=30&limit=200",
-};
+const TIEGUI_DAILY_CRON_JOBS = [
+  {
+    name: "invoice_assist",
+    path: "/api/cron/invoice-assist?windowDays=30&limit=200",
+  },
+  {
+    name: "invoice_collections",
+    path: "/api/cron/invoice-collections",
+  },
+];
 
 function runTieGuiFrequentCrons() {
   TIEGUI_FREQUENT_CRON_JOBS.forEach(runTieGuiCronJob_);
@@ -29,8 +35,8 @@ function runTieGuiGhostBusterCron() {
   runTieGuiCronJob_(TIEGUI_GHOST_BUSTER_JOB);
 }
 
-function runTieGuiInvoiceAssistCron() {
-  runTieGuiCronJob_(TIEGUI_INVOICE_ASSIST_JOB);
+function runTieGuiDailyCrons() {
+  TIEGUI_DAILY_CRON_JOBS.forEach(runTieGuiCronJob_);
 }
 
 function setupTieGuiProductionTriggers() {
@@ -46,7 +52,7 @@ function setupTieGuiProductionTriggers() {
     .everyMinutes(30)
     .create();
 
-  ScriptApp.newTrigger("runTieGuiInvoiceAssistCron")
+  ScriptApp.newTrigger("runTieGuiDailyCrons")
     .timeBased()
     .everyDays(1)
     .atHour(6)
@@ -57,7 +63,7 @@ function deleteTieGuiCronTriggers_() {
   const allowedHandlers = new Set([
     "runTieGuiFrequentCrons",
     "runTieGuiGhostBusterCron",
-    "runTieGuiInvoiceAssistCron",
+    "runTieGuiDailyCrons",
   ]);
 
   ScriptApp.getProjectTriggers().forEach((trigger) => {

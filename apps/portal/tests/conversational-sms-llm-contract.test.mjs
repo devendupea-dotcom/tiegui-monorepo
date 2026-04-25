@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getConversationalSmsLlmReplyBody,
+  getTrustedConversationalSmsLlmReplyBody,
   hasConversationalSmsLlmExtractionConfidence,
   hasConversationalSmsLlmHandoffConfidence,
   normalizeConversationalSmsLlmDecision,
@@ -54,4 +55,32 @@ test("confidence helpers distinguish extraction confidence from safer handoff co
   assert.equal(hasConversationalSmsLlmHandoffConfidence(low), true);
   assert.equal(hasConversationalSmsLlmExtractionConfidence(low), false);
   assert.equal(hasConversationalSmsLlmExtractionConfidence(high), true);
+});
+
+test("trusted reply helper blocks low-confidence, handoff, and automation-revealing copy", () => {
+  const good = normalizeConversationalSmsLlmDecision({
+    confidence: 0.91,
+    shouldHandoff: false,
+    replyBody: "Got it. What city is the property in?",
+  });
+  const low = normalizeConversationalSmsLlmDecision({
+    confidence: 0.5,
+    shouldHandoff: false,
+    replyBody: "What city is the property in?",
+  });
+  const handoff = normalizeConversationalSmsLlmDecision({
+    confidence: 0.91,
+    shouldHandoff: true,
+    replyBody: "I'll hand this to a human.",
+  });
+  const revealing = normalizeConversationalSmsLlmDecision({
+    confidence: 0.91,
+    shouldHandoff: false,
+    replyBody: "Our AI agent can help. What city is the property in?",
+  });
+
+  assert.equal(getTrustedConversationalSmsLlmReplyBody(good), "Got it. What city is the property in?");
+  assert.equal(getTrustedConversationalSmsLlmReplyBody(low), null);
+  assert.equal(getTrustedConversationalSmsLlmReplyBody(handoff), null);
+  assert.equal(getTrustedConversationalSmsLlmReplyBody(revealing), null);
 });

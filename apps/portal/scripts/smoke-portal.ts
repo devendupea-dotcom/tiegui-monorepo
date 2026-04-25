@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHmac } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
+import { recomputeInvoiceTotals } from "../lib/invoices";
 import { hashPassword } from "../lib/passwords";
 import { encryptTwilioAuthToken } from "../lib/twilio-config-crypto";
 
@@ -48,6 +49,8 @@ type ClientSmokeOrgContext = {
 
 const BASE_URL = normalizeBaseUrl(process.env.BASE_URL || "http://127.0.0.1:3001");
 const REQUEST_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15_000);
+const VERCEL_AUTOMATION_BYPASS_SECRET = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() || "";
+const TWILIO_PUBLIC_WEBHOOK_HOST = process.env.TWILIO_PUBLIC_WEBHOOK_HOST?.trim() || "";
 const SMOKE_PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAukB9VE3FoAAAAAASUVORK5CYII=",
   "base64",
@@ -142,6 +145,14 @@ function createUrl(path: string): string {
   return path.startsWith("http://") || path.startsWith("https://") ? path : `${BASE_URL}${path}`;
 }
 
+function createSmokeHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  if (VERCEL_AUTOMATION_BYPASS_SECRET) {
+    headers.set("x-vercel-protection-bypass", VERCEL_AUTOMATION_BYPASS_SECRET);
+  }
+  return headers;
+}
+
 function createRunPhone(seed: number): string {
   const suffix = `${Date.now()}${seed}`.slice(-7);
   return `+1206${suffix}`;
@@ -150,6 +161,20 @@ function createRunPhone(seed: number): string {
 function createSmokeSid(prefix: "AC" | "MG", seed: string): string {
   const body = `${Date.now()}${seed}`.replace(/\D/g, "").padEnd(32, "0").slice(0, 32);
   return `${prefix}${body}`;
+}
+
+function createFutureIso(daysFromNow: number, hourUtc: number): string {
+  const value = new Date();
+  value.setUTCDate(value.getUTCDate() + daysFromNow);
+  value.setUTCHours(hourUtc, 0, 0, 0);
+  return value.toISOString();
+}
+
+function extractEstimateShareToken(shareUrl: string): string {
+  const url = new URL(shareUrl);
+  const segments = url.pathname.split("/").filter(Boolean);
+  assert(segments[0] === "estimate" && Boolean(segments[1]), `Unexpected estimate share URL: ${shareUrl}`);
+  return decodeURIComponent(segments[1]!);
 }
 
 function createStoredTwilioAuthToken(value: string): string {
@@ -180,7 +205,7 @@ function createTwilioHeaders(
     forwardedProto?: "http" | "https";
   },
 ): Headers {
-  const headers = new Headers();
+  const headers = createSmokeHeaders();
   headers.set("content-type", "application/x-www-form-urlencoded");
   if (options?.forwardedHost) {
     headers.set("x-forwarded-host", options.forwardedHost);
@@ -198,6 +223,26 @@ function createTwilioHeaders(
   }
 
   return headers;
+}
+
+function createPublicTwilioHeaders(path: string, formBody: URLSearchParams, authToken: string): Headers {
+  if (!TWILIO_PUBLIC_WEBHOOK_HOST) {
+    return createTwilioHeaders(path, formBody, authToken);
+  }
+
+  return createTwilioHeaders(path, formBody, authToken, {
+    forwardedHost: TWILIO_PUBLIC_WEBHOOK_HOST.replace(/^https?:\/\//, "").replace(/\/+$/, ""),
+    forwardedProto: "https",
+  });
+}
+
+function getExpectedTwilioPublicUrl(path: string): string {
+  if (!TWILIO_PUBLIC_WEBHOOK_HOST) {
+    return createUrl(path);
+  }
+
+  const host = TWILIO_PUBLIC_WEBHOOK_HOST.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return `https://${host}${path}`;
 }
 
 function extractMetaRedirectUrl(html: string): string | null {
@@ -245,7 +290,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 async function fetchWithJar(jar: CookieJar, path: string, init: RequestInit = {}) {
-  const headers = new Headers(init.headers);
+  const headers = createSmokeHeaders(init.headers);
   const cookieHeader = jar.toHeader();
   if (cookieHeader) {
     headers.set("cookie", cookieHeader);
@@ -273,13 +318,13 @@ async function fetchJsonWithJar(jar: CookieJar, path: string, init: RequestInit 
 }
 
 async function fetchPageWithJar(jar: CookieJar, path: string, init: RequestInit = {}) {
+  const headers = createSmokeHeaders(init.headers);
+  headers.set("accept", "text/html");
+
   const response = await fetchWithJar(jar, path, {
     ...init,
     redirect: init.redirect || "follow",
-    headers: {
-      accept: "text/html",
-      ...(init.headers || {}),
-    },
+    headers,
   });
 
   const finalUrl = new URL(response.url);
@@ -566,6 +611,11 @@ async function main() {
   let createdLeadId: string | null = null;
   let createdLeadPhotoId: string | null = null;
   let createdLeadStoredPhotoId: string | null = null;
+  let createdEstimateId: string | null = null;
+  let createdCalendarEventId: string | null = null;
+  let createdOperationalJobId: string | null = null;
+  let createdInvoiceId: string | null = null;
+  let createdCustomerId: string | null = null;
   let clientOrgId: string | null = null;
   let originalLogoPhotoId: string | null = null;
   let originalSmsFromNumberE164: string | null = null;
@@ -1053,6 +1103,248 @@ async function main() {
   });
 
   await runCheck(results, {
+    name: "golden path lead to paid invoice and collections report",
+    category: "api",
+    run: async () => {
+      assert(createdLeadId, "Lead create must pass before golden path can run.");
+
+      const customerName = `Portal Smoke Customer ${uniqueSuffix}`;
+      const estimateTitle = `Portal Smoke Golden Path ${uniqueSuffix}`;
+      const createEstimateResult = await fetchJsonWithJar(clientSession.jar, "/api/estimates", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          leadId: createdLeadId,
+          title: estimateTitle,
+          customerName,
+          siteAddress: "123 Smoke QA Way, Seattle, WA 98101",
+          projectType: "Demo project",
+          description: "Golden-path smoke estimate for lead-to-payment release QA.",
+          terms: "Payment due after completion.",
+          taxRatePercent: "0",
+          status: "SENT",
+          lineItems: [
+            {
+              type: "LABOR",
+              name: "Demo service package",
+              description: "Labor, materials coordination, dispatch, and billing QA.",
+              quantity: "1",
+              unit: "job",
+              unitPrice: "425.00",
+            },
+          ],
+        }),
+      });
+      assert(createEstimateResult.response.status === 200, `POST /api/estimates returned ${createEstimateResult.response.status}`);
+      const createEstimatePayload = createEstimateResult.json as {
+        ok?: boolean;
+        estimate?: {
+          id?: string;
+          status?: string;
+          total?: unknown;
+        };
+        error?: string;
+      };
+      assert(createEstimatePayload?.ok === true, createEstimatePayload?.error || "Expected estimate create ok=true");
+      assert(typeof createEstimatePayload.estimate?.id === "string", "Expected created estimate id");
+      assert(createEstimatePayload.estimate.status === "SENT", `Expected estimate SENT, received ${createEstimatePayload.estimate.status}`);
+      createdEstimateId = createEstimatePayload.estimate.id;
+
+      const shareResult = await fetchJsonWithJar(clientSession.jar, `/api/estimates/${encodeURIComponent(createdEstimateId)}/share`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          recipientName: customerName,
+        }),
+      });
+      assert(shareResult.response.status === 200, `POST /api/estimates/[estimateId]/share returned ${shareResult.response.status}`);
+      const sharePayload = shareResult.json as {
+        ok?: boolean;
+        share?: {
+          url?: string;
+        };
+        error?: string;
+      };
+      assert(sharePayload?.ok === true, sharePayload?.error || "Expected share ok=true");
+      assert(typeof sharePayload.share?.url === "string", "Expected estimate share URL");
+      const shareToken = extractEstimateShareToken(sharePayload.share.url);
+
+      const publicEstimatePage = await fetch(createUrl(`/estimate/${encodeURIComponent(shareToken)}`), {
+        headers: createSmokeHeaders({
+          accept: "text/html",
+        }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      const publicEstimateHtml = await publicEstimatePage.text();
+      assert(publicEstimatePage.status === 200, `GET /estimate/[token] returned ${publicEstimatePage.status}`);
+      const publicEstimateText = extractVisibleText(publicEstimateHtml);
+      assert(publicEstimateText.includes(estimateTitle), "Customer estimate page should show the estimate title.");
+      assert(publicEstimateText.includes(customerName), "Customer estimate page should show the customer name.");
+
+      const approveResponse = await fetch(createUrl(`/api/estimate-share/${encodeURIComponent(shareToken)}/approve`), {
+        method: "POST",
+        headers: createSmokeHeaders({
+          "content-type": "application/json",
+          accept: "application/json",
+        }),
+        body: JSON.stringify({
+          customerName,
+          note: "Approved during portal smoke golden-path QA.",
+        }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      const approveJson = await readJson(approveResponse);
+      assert(approveResponse.status === 200, `POST /api/estimate-share/[token]/approve returned ${approveResponse.status}`);
+      assert((approveJson as { ok?: boolean })?.ok === true, "Expected public estimate approval ok=true");
+
+      const approvedEstimate = await prisma.estimate.findUnique({
+        where: { id: createdEstimateId },
+        select: {
+          status: true,
+          approvedAt: true,
+        },
+      });
+      assert(approvedEstimate?.status === "APPROVED", `Expected APPROVED estimate, received ${approvedEstimate?.status}`);
+      assert(approvedEstimate.approvedAt, "Expected approvedAt after customer approval.");
+
+      const scheduleStartAt = createFutureIso(3, 17);
+      const scheduleResult = await fetchJsonWithJar(clientSession.jar, "/api/calendar/events", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          leadId: createdLeadId,
+          type: "JOB",
+          status: "CONFIRMED",
+          busy: false,
+          title: `Golden Path Job ${uniqueSuffix}`,
+          customerName,
+          addressLine: "123 Smoke QA Way, Seattle, WA 98101",
+          startAt: scheduleStartAt,
+          durationMinutes: 120,
+        }),
+      });
+      assert(scheduleResult.response.status === 200, `POST /api/calendar/events returned ${scheduleResult.response.status}`);
+      const schedulePayload = scheduleResult.json as {
+        ok?: boolean;
+        event?: {
+          id?: string;
+          jobId?: string | null;
+        };
+        error?: string;
+      };
+      assert(schedulePayload?.ok === true, schedulePayload?.error || "Expected schedule ok=true");
+      assert(typeof schedulePayload.event?.id === "string", "Expected scheduled event id");
+      assert(typeof schedulePayload.event.jobId === "string", "Expected scheduled event to link an operational job");
+      createdCalendarEventId = schedulePayload.event.id;
+      createdOperationalJobId = schedulePayload.event.jobId;
+
+      const convertResult = await fetchJsonWithJar(
+        clientSession.jar,
+        `/api/estimates/${encodeURIComponent(createdEstimateId)}/convert`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            createInvoice: true,
+          }),
+        },
+      );
+      assert(convertResult.response.status === 200, `POST /api/estimates/[estimateId]/convert returned ${convertResult.response.status}`);
+      const convertPayload = convertResult.json as {
+        ok?: boolean;
+        jobId?: string | null;
+        invoiceId?: string | null;
+        estimate?: {
+          status?: string;
+        };
+        error?: string;
+      };
+      assert(convertPayload?.ok === true, convertPayload?.error || "Expected conversion ok=true");
+      assert(convertPayload.estimate?.status === "CONVERTED", `Expected CONVERTED estimate, received ${convertPayload.estimate?.status}`);
+      assert(typeof convertPayload.invoiceId === "string", "Expected created invoice id");
+      assert(convertPayload.jobId === createdOperationalJobId, "Expected invoice conversion to reuse the scheduled operational job.");
+      createdInvoiceId = convertPayload.invoiceId;
+
+      const invoiceBeforePayment = await prisma.invoice.findUnique({
+        where: { id: createdInvoiceId },
+        select: {
+          id: true,
+          customerId: true,
+          invoiceNumber: true,
+          total: true,
+        },
+      });
+      assert(invoiceBeforePayment, "Expected converted invoice to exist.");
+      createdCustomerId = invoiceBeforePayment.customerId;
+
+      const paidInvoice = await prisma.$transaction(async (tx) => {
+        await tx.invoice.update({
+          where: { id: invoiceBeforePayment.id },
+          data: {
+            status: "SENT",
+            sentAt: new Date(),
+            dueDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
+          },
+        });
+        await tx.invoiceCollectionAttempt.create({
+          data: {
+            orgId: clientOrgId!,
+            invoiceId: invoiceBeforePayment.id,
+            actorUserId: null,
+            source: "MANUAL",
+            outcome: "SENT",
+            reason: "Golden-path smoke reminder before payment.",
+            metadataJson: {
+              route: "scripts/smoke-portal.ts",
+              queueStage: "due_now",
+              reminderCount: 1,
+            },
+          },
+        });
+        await tx.invoicePayment.create({
+          data: {
+            invoiceId: invoiceBeforePayment.id,
+            amount: invoiceBeforePayment.total,
+            date: new Date(),
+            method: "OTHER",
+            note: "Portal smoke golden-path payment.",
+          },
+        });
+        return recomputeInvoiceTotals(tx, invoiceBeforePayment.id);
+      });
+      assert(paidInvoice.status === "PAID", `Expected invoice PAID, received ${paidInvoice.status}`);
+      assert(paidInvoice.balanceDue.lte(0), "Expected paid invoice to have no balance due.");
+
+      const leadPage = await fetchPageWithJar(clientSession.jar, `/app/jobs/${encodeURIComponent(createdLeadId)}`);
+      assert(leadPage.response.status === 200, `GET /app/jobs/[jobId] returned ${leadPage.response.status}`);
+      const leadPageText = extractVisibleText(leadPage.html);
+      assert(leadPageText.includes("Paid"), "Lead workspace should show paid workflow status after payment.");
+
+      const invoicePage = await fetchPageWithJar(clientSession.jar, `/app/invoices/${encodeURIComponent(createdInvoiceId)}`);
+      assert(invoicePage.response.status === 200, `GET /app/invoices/[invoiceId] returned ${invoicePage.response.status}`);
+      const invoicePageText = extractVisibleText(invoicePage.html);
+      assert(invoicePageText.includes("Paid"), "Invoice detail should show paid status.");
+      assert(invoicePageText.includes("Portal smoke golden-path payment"), "Invoice detail should show the recorded payment note.");
+
+      const invoicesPage = await fetchPageWithJar(clientSession.jar, "/app/invoices");
+      assert(invoicesPage.response.status === 200, `GET /app/invoices returned ${invoicesPage.response.status}`);
+      const invoicesPageText = extractVisibleText(invoicesPage.html);
+      assert(invoicesPageText.includes("Owner Collections Report"), "Invoices page should show owner collections reporting.");
+      assert(invoicesPageText.includes("Paid After Collection Activity"), "Collections report should include recovered-after-collection copy.");
+
+      return `paid invoice=${invoiceBeforePayment.invoiceNumber} job=${createdOperationalJobId}`;
+    },
+  });
+
+  await runCheck(results, {
     name: "api branding logo upload and readback",
     category: "api",
     run: async () => {
@@ -1126,10 +1418,7 @@ async function main() {
 
       const response = await fetch(createUrl("/api/webhooks/twilio/voice"), {
         method: "POST",
-        headers: createTwilioHeaders("/api/webhooks/twilio/voice", formBody, smokeTwilioAuthToken, {
-          forwardedHost: "app.tieguisolutions.com",
-          forwardedProto: "https",
-        }),
+        headers: createPublicTwilioHeaders("/api/webhooks/twilio/voice", formBody, smokeTwilioAuthToken),
         body: formBody,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -1139,9 +1428,10 @@ async function main() {
       assert(xml.includes("<Dial"), "Expected <Dial> in TwiML response");
       assert(xml.includes('timeout="20"'), "Expected a 20 second dial timeout so missed calls fall back quickly");
       assert(xml.includes(smokeTwilioForwardTarget), `Expected forward target ${smokeTwilioForwardTarget}`);
+      const expectedAfterCallUrl = getExpectedTwilioPublicUrl("/api/webhooks/twilio/after-call");
       assert(
-        xml.includes('action="https://app.tieguisolutions.com/api/webhooks/twilio/after-call"'),
-        "Expected absolute after-call callback URL on the public host",
+        xml.includes(`action="${expectedAfterCallUrl}"`),
+        `Expected absolute after-call callback URL ${expectedAfterCallUrl}`,
       );
       assert(!xml.includes("<Hangup"), "Voice forward TwiML should not append Hangup after Dial");
       return `200 dial-> ${smokeTwilioForwardTarget}`;
@@ -1251,6 +1541,34 @@ async function main() {
       });
       await prisma.lead.deleteMany({ where: { id: twilioVoiceLeadId } }).catch((error) => {
         console.warn(`Cleanup warning (twilio lead): ${formatError(error)}`);
+      });
+    }
+    if (createdInvoiceId) {
+      await prisma.invoice.deleteMany({ where: { id: createdInvoiceId } }).catch((error) => {
+        console.warn(`Cleanup warning (golden path invoice): ${formatError(error)}`);
+      });
+    }
+    if (createdCalendarEventId) {
+      await prisma.googleSyncJob.deleteMany({ where: { eventId: createdCalendarEventId } }).catch((error) => {
+        console.warn(`Cleanup warning (golden path google sync job): ${formatError(error)}`);
+      });
+      await prisma.event.deleteMany({ where: { id: createdCalendarEventId } }).catch((error) => {
+        console.warn(`Cleanup warning (golden path event): ${formatError(error)}`);
+      });
+    }
+    if (createdOperationalJobId) {
+      await prisma.job.deleteMany({ where: { id: createdOperationalJobId } }).catch((error) => {
+        console.warn(`Cleanup warning (golden path job): ${formatError(error)}`);
+      });
+    }
+    if (createdEstimateId) {
+      await prisma.estimate.deleteMany({ where: { id: createdEstimateId } }).catch((error) => {
+        console.warn(`Cleanup warning (golden path estimate): ${formatError(error)}`);
+      });
+    }
+    if (createdCustomerId) {
+      await prisma.customer.deleteMany({ where: { id: createdCustomerId } }).catch((error) => {
+        console.warn(`Cleanup warning (golden path customer): ${formatError(error)}`);
       });
     }
     if (createdLeadPhotoId) {

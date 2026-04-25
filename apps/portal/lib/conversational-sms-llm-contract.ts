@@ -15,6 +15,7 @@ export const CONVERSATIONAL_SMS_LLM_EXTRACTION_CONFIDENCE = 0.78;
 export const CONVERSATIONAL_SMS_LLM_HANDOFF_CONFIDENCE = 0.7;
 const MAX_FIELD_LENGTH = 160;
 const MAX_REPLY_LENGTH = 220;
+const AUTOMATION_REVEAL_PATTERN = /\b(bot|a\.?i\.?|automated|automation|agent|handoff|human|representative|operator)\b/i;
 
 function sanitizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -110,4 +111,30 @@ export function getConversationalSmsLlmReplyBody(
   }
 
   return sanitizeText(reply).slice(0, MAX_REPLY_LENGTH) || null;
+}
+
+export function getTrustedConversationalSmsLlmReplyBody(
+  decision: ConversationalSmsLlmDecision | null | undefined,
+  options?: { minConfidence?: number },
+): string | null {
+  const minConfidence = options?.minConfidence ?? CONVERSATIONAL_SMS_LLM_EXTRACTION_CONFIDENCE;
+  if (!decision || decision.confidence < minConfidence || decision.shouldHandoff) {
+    return null;
+  }
+
+  const reply = getConversationalSmsLlmReplyBody(decision);
+  if (!reply) {
+    return null;
+  }
+
+  if (AUTOMATION_REVEAL_PATTERN.test(reply)) {
+    return null;
+  }
+
+  const questionCount = (reply.match(/\?/g) || []).length;
+  if (questionCount > 1) {
+    return null;
+  }
+
+  return reply;
 }

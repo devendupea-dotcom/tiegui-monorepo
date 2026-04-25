@@ -67,7 +67,7 @@ function formatDateLabel(value: Date, locale: string): string {
 
 export default async function WorkerOpsDashboard({ scope, viewer }: WorkerOpsDashboardProps) {
   const t = await getRequestTranslator();
-  const locale = getRequestLocale();
+  const locale = await getRequestLocale();
   const now = new Date();
   const todayStart = startOfTimeZoneDay(now, DEFAULT_CALENDAR_TIMEZONE);
   const todayEnd = endOfTimeZoneDay(now, DEFAULT_CALENDAR_TIMEZONE);

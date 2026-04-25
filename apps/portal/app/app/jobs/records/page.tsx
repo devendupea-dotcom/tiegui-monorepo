@@ -5,11 +5,12 @@ import JobRecordsManager from "./job-records-manager";
 
 export const dynamic = "force-dynamic";
 
-export default async function JobRecordsPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function JobRecordsPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const requestedOrgId = getParam(searchParams?.orgId);
   const scope = await resolveAppScope({
     nextPath: "/app/jobs/records",

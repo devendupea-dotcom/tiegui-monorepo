@@ -2,9 +2,8 @@ import Link from "next/link";
 import { addMonths, startOfMonth, subMonths } from "date-fns";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { isNotFoundError } from "next/dist/client/components/not-found";
-import { isRedirectError } from "next/dist/client/components/redirect";
 import type { MarketingChannel } from "@prisma/client";
+import { isNextNavigationSignal } from "@/lib/next-navigation-signal";
 import { prisma } from "@/lib/prisma";
 import {
   canManageAnyOrgJobs,
@@ -147,11 +146,12 @@ async function saveMarketingSpendAction(formData: FormData) {
   redirect(withOrgQuery(`/app/analytics/ads?month=${encodeURIComponent(month)}&saved=spend`, orgId, actor.internalUser));
 }
 
-export default async function AdsAnalyticsPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function AdsAnalyticsPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   try {
     const requestedOrgId = getParam(searchParams?.orgId);
     const monthParam = getParam(searchParams?.month);
@@ -361,7 +361,7 @@ export default async function AdsAnalyticsPage({
       </>
     );
   } catch (error) {
-    if (isRedirectError(error) || isNotFoundError(error)) {
+    if (isNextNavigationSignal(error)) {
       throw error;
     }
     console.error("AdsAnalyticsPage hard failure.", error);

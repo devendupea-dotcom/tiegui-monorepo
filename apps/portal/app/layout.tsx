@@ -28,7 +28,8 @@ export const metadata: Metadata = {
     default: "TieGui Portal",
     template: "%s | TieGui Portal",
   },
-  description: "TieGui operations portal for jobs, estimates, messaging, invoicing, and field workflows.",
+  description:
+    "TieGui operations workspace for leads, operational jobs, estimates, messaging, invoicing, and field workflows.",
 };
 
 const THEME_INIT_SCRIPT = `
@@ -60,7 +61,9 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className={`${dmSans.variable} ${barlowCondensed.variable} ${geistMono.variable}`}>
+      <body
+        className={`${dmSans.variable} ${barlowCondensed.variable} ${geistMono.variable}`}
+      >
         <Providers>{children}</Providers>
       </body>
     </html>

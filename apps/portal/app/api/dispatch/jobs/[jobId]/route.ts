@@ -14,9 +14,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     jobId: string;
-  };
+  }>;
 };
 
 type UpdateDispatchJobPayload = {
@@ -53,7 +53,8 @@ async function getScopedJobOrThrow(jobId: string) {
   return job;
 }
 
-export async function GET(req: Request, { params }: RouteContext) {
+export async function GET(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const scoped = await getScopedJobOrThrow(params.jobId);
@@ -92,7 +93,8 @@ export async function GET(req: Request, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const scoped = await getScopedJobOrThrow(params.jobId);

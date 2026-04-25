@@ -107,11 +107,12 @@ async function clearStuckJobsAction(formData: FormData) {
   );
 }
 
-export default async function GoogleSyncHealthPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function GoogleSyncHealthPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   await requireInternalUser(HEALTH_PATH);
   const snapshot = await getGoogleSyncHealthSnapshot({
     errorLimit: 20,

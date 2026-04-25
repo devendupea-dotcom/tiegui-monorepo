@@ -3,6 +3,7 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
+import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { requireInternalUser } from "@/lib/session";
@@ -10,6 +11,7 @@ import { sendOutboundSms } from "@/lib/sms";
 import {
   decryptTwilioAuthToken,
   encryptTwilioAuthToken,
+  maskSid,
   maskSecretTail,
 } from "@/lib/twilio-config-crypto";
 import { validateTwilioOrgConfig } from "@/lib/twilio-org";
@@ -22,8 +24,110 @@ const STATUS_OPTIONS: Array<{ value: TwilioConfigStatus; label: string }> = [
   { value: "PAUSED", label: "PAUSED" },
 ];
 
+const APP_BASE_URL = "https://app.tieguisolutions.com";
+const TWILIO_WEBHOOKS = [
+  {
+    label: "Inbound SMS",
+    method: "POST",
+    url: `${APP_BASE_URL}/api/webhooks/twilio/sms`,
+  },
+  {
+    label: "Outbound SMS status callback",
+    method: "POST",
+    url: `${APP_BASE_URL}/api/webhooks/twilio/sms/status`,
+  },
+  {
+    label: "Voice incoming call",
+    method: "POST",
+    url: `${APP_BASE_URL}/api/webhooks/twilio/voice`,
+  },
+  {
+    label: "Voice after-call callback",
+    method: "POST",
+    url: `${APP_BASE_URL}/api/webhooks/twilio/after-call`,
+  },
+] as const;
+
 function getString(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function boolEnv(key: string): boolean {
+  return Boolean(normalizeEnvValue(process.env[key]));
+}
+
+function enabledEnv(key: string): boolean {
+  return normalizeEnvValue(process.env[key]) === "true";
+}
+
+function maskPhone(value: string | null | undefined): string {
+  const normalized = (value || "").trim();
+  const digits = normalized.replace(/\D/g, "");
+  if (digits.length < 4) return normalized || "-";
+  return `${normalized.startsWith("+") ? "+" : ""}***${digits.slice(-4)}`;
+}
+
+function previewText(value: string | null | undefined, maxLength = 90): string {
+  const trimmed = (value || "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return "-";
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function metadataString(metadataJson: unknown, keys: string[]): string | null {
+  const metadata = asRecord(metadataJson);
+  if (!metadata) return null;
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return `${value}`;
+    }
+  }
+  return null;
+}
+
+function formatStatusBadge(value: string, ok: boolean) {
+  return (
+    <span className={`badge ${ok ? "status-success" : "status-overdue"}`}>
+      {value}
+    </span>
+  );
+}
+
+function getFailureReason(input: {
+  providerMessageSid: string | null;
+  communicationEvents: Array<{
+    providerStatus: string | null;
+    metadataJson: unknown;
+  }>;
+}): string {
+  for (const event of input.communicationEvents) {
+    const reason = metadataString(event.metadataJson, [
+      "failureReason",
+      "failureLabel",
+      "deliveryNotice",
+      "providerErrorMessage",
+      "providerErrorCode",
+      "dispatchFailureReason",
+      "errorMessage",
+      "error",
+    ]);
+    if (reason) return reason;
+    if (event.providerStatus) return event.providerStatus;
+  }
+
+  return input.providerMessageSid
+    ? "Provider accepted the message, then reported failure."
+    : "Failed before Twilio accepted the message.";
 }
 
 function parseStatus(value: string): TwilioConfigStatus | null {
@@ -350,13 +454,14 @@ async function sendTestSmsAction(formData: FormData) {
   redirect(statusUrl(orgId, { tested: "1", notice: result.notice || "sent" }));
 }
 
-export default async function HqOrgTwilioPage({
-  params,
-  searchParams,
-}: {
-  params: { orgId: string };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function HqOrgTwilioPage(
+  props: {
+    params: Promise<{ orgId: string }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   await requireInternalUser(`/hq/orgs/${params.orgId}/twilio`);
 
   const organization = await prisma.organization.findUnique({
@@ -420,6 +525,215 @@ export default async function HqOrgTwilioPage({
     }
   }
 
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [
+    messageCounts,
+    latestInboundSms,
+    latestOutboundSms,
+    latestStatusCallback,
+    latestVoiceCall,
+    recentFailedSms,
+    recentUnmatchedStatusCallbacks,
+  ] = await Promise.all([
+    prisma.message.groupBy({
+      by: ["direction", "status"],
+      where: {
+        orgId: organization.id,
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      _count: { status: true },
+    }),
+    prisma.message.findFirst({
+      where: {
+        orgId: organization.id,
+        direction: "INBOUND",
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        createdAt: true,
+        fromNumberE164: true,
+        body: true,
+        status: true,
+      },
+    }),
+    prisma.message.findFirst({
+      where: {
+        orgId: organization.id,
+        direction: "OUTBOUND",
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        createdAt: true,
+        toNumberE164: true,
+        body: true,
+        status: true,
+        type: true,
+      },
+    }),
+    prisma.communicationEvent.findFirst({
+      where: {
+        orgId: organization.id,
+        channel: "SMS",
+        type: "OUTBOUND_SMS_SENT",
+        providerMessageSid: { not: null },
+        providerStatus: {
+          in: ["queued", "sent", "delivered", "undelivered", "failed"],
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        createdAt: true,
+        providerStatus: true,
+        providerMessageSid: true,
+        metadataJson: true,
+      },
+    }),
+    prisma.call.findFirst({
+      where: { orgId: organization.id },
+      orderBy: { startedAt: "desc" },
+      select: {
+        startedAt: true,
+        status: true,
+        fromNumberE164: true,
+        toNumberE164: true,
+        twilioCallSid: true,
+      },
+    }),
+    prisma.message.findMany({
+      where: {
+        orgId: organization.id,
+        direction: "OUTBOUND",
+        status: "FAILED",
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: {
+        id: true,
+        createdAt: true,
+        type: true,
+        toNumberE164: true,
+        body: true,
+        providerMessageSid: true,
+        lead: {
+          select: {
+            id: true,
+            contactName: true,
+            businessName: true,
+            status: true,
+          },
+        },
+        communicationEvents: {
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            providerStatus: true,
+            metadataJson: true,
+          },
+        },
+      },
+    }),
+    prisma.communicationEvent.findMany({
+      where: {
+        orgId: organization.id,
+        channel: "SMS",
+        type: "OUTBOUND_SMS_SENT",
+        summary: "Unmatched outbound SMS status callback",
+        providerMessageSid: { not: null },
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: {
+        id: true,
+        createdAt: true,
+        providerStatus: true,
+        providerMessageSid: true,
+        metadataJson: true,
+      },
+    }),
+  ]);
+
+  const countMessages = (direction: "INBOUND" | "OUTBOUND", status?: string) =>
+    messageCounts
+      .filter((item) => item.direction === direction && (!status || item.status === status))
+      .reduce((sum, item) => sum + item._count.status, 0);
+  const outbound30d = countMessages("OUTBOUND");
+  const inbound30d = countMessages("INBOUND");
+  const failed30d = countMessages("OUTBOUND", "FAILED");
+  const delivered30d = countMessages("OUTBOUND", "DELIVERED");
+  const sent30d = countMessages("OUTBOUND", "SENT");
+  const envSnapshot = {
+    tokenEncryptionKeyPresent: boolEnv("TWILIO_TOKEN_ENCRYPTION_KEY"),
+    sendEnabled: enabledEnv("TWILIO_SEND_ENABLED"),
+    validateSignature: enabledEnv("TWILIO_VALIDATE_SIGNATURE"),
+    voiceAfterCallOverridePresent: boolEnv("TWILIO_VOICE_AFTER_CALL_URL"),
+  };
+  const readinessRows = [
+    {
+      label: "Config saved",
+      ok: Boolean(organization.twilioConfig),
+      detail: organization.twilioConfig
+        ? `${maskSid(organization.twilioConfig.twilioSubaccountSid)} / ${maskSid(organization.twilioConfig.messagingServiceSid)}`
+        : "No org Twilio config yet",
+    },
+    {
+      label: "Status active",
+      ok: organization.twilioConfig?.status === "ACTIVE",
+      detail: organization.twilioConfig?.status || "Not configured",
+    },
+    {
+      label: "Token encryption key",
+      ok: envSnapshot.tokenEncryptionKeyPresent,
+      detail: envSnapshot.tokenEncryptionKeyPresent ? "Present in deployment" : "Missing in this runtime",
+    },
+    {
+      label: "Live send flag",
+      ok: envSnapshot.sendEnabled,
+      detail: envSnapshot.sendEnabled ? "TWILIO_SEND_ENABLED=true" : "Queue-only or disabled here",
+    },
+    {
+      label: "Webhook signature validation",
+      ok: envSnapshot.validateSignature,
+      detail: envSnapshot.validateSignature ? "TWILIO_VALIDATE_SIGNATURE=true" : "Signature validation disabled here",
+    },
+    {
+      label: "Inbound webhook seen",
+      ok: Boolean(latestInboundSms),
+      detail: latestInboundSms
+        ? formatDateTimeForDisplay(latestInboundSms.createdAt, { dateStyle: "medium", timeStyle: "short" })
+        : "No inbound SMS recorded yet",
+    },
+    {
+      label: "Status callback seen",
+      ok: Boolean(latestStatusCallback),
+      detail: latestStatusCallback
+        ? `${latestStatusCallback.providerStatus || "status"} · ${formatDateTimeForDisplay(latestStatusCallback.createdAt, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}`
+        : "No Twilio status callback recorded yet",
+    },
+    {
+      label: "Unmatched status callbacks",
+      ok: recentUnmatchedStatusCallbacks.length === 0,
+      detail:
+        recentUnmatchedStatusCallbacks.length === 0
+          ? "None recorded in the last 30 days"
+          : `${recentUnmatchedStatusCallbacks.length} recent callback(s) need investigation`,
+    },
+    {
+      label: "Voice activity seen",
+      ok: Boolean(latestVoiceCall),
+      detail: latestVoiceCall
+        ? `${latestVoiceCall.status} · ${formatDateTimeForDisplay(latestVoiceCall.startedAt, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}`
+        : "No voice call recorded yet",
+    },
+  ];
+
   return (
     <>
       <section className="card">
@@ -442,6 +756,298 @@ export default async function HqOrgTwilioPage({
             Test SMS sent {notice ? `(${notice})` : ""}.
           </p>
         ) : null}
+      </section>
+
+      <section className="card">
+        <h3>Internal Twilio Launch Readiness</h3>
+        <p className="muted">
+          Admin-operated setup for this business. Customers should only see
+          live, pending, paused, or setup-needed states.
+        </p>
+        <div className="table-wrap" style={{ marginTop: 10 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>Status</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {readinessRows.map((row) => (
+                <tr key={row.label}>
+                  <td>{row.label}</td>
+                  <td>{formatStatusBadge(row.ok ? "Ready" : "Needs attention", row.ok)}</td>
+                  <td>{row.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Traffic Health</h3>
+        <div className="table-wrap" style={{ marginTop: 10 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Window</th>
+                <th>Inbound</th>
+                <th>Outbound</th>
+                <th>Sent</th>
+                <th>Delivered</th>
+                <th>Failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Last 30 days</td>
+                <td>{inbound30d}</td>
+                <td>{outbound30d}</td>
+                <td>{sent30d}</td>
+                <td>{delivered30d}</td>
+                <td>{formatStatusBadge(`${failed30d}`, failed30d === 0)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="table-wrap" style={{ marginTop: 16 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Signal</th>
+                <th>Latest</th>
+                <th>Context</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Inbound SMS</td>
+                <td>
+                  {latestInboundSms
+                    ? formatDateTimeForDisplay(latestInboundSms.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "-"}
+                </td>
+                <td>
+                  {latestInboundSms
+                    ? `${maskPhone(latestInboundSms.fromNumberE164)} · ${previewText(latestInboundSms.body)}`
+                    : "No inbound SMS recorded."}
+                </td>
+              </tr>
+              <tr>
+                <td>Outbound SMS</td>
+                <td>
+                  {latestOutboundSms
+                    ? formatDateTimeForDisplay(latestOutboundSms.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "-"}
+                </td>
+                <td>
+                  {latestOutboundSms
+                    ? `${latestOutboundSms.type} / ${latestOutboundSms.status || "UNKNOWN"} to ${maskPhone(
+                        latestOutboundSms.toNumberE164,
+                      )} · ${previewText(latestOutboundSms.body)}`
+                    : "No outbound SMS recorded."}
+                </td>
+              </tr>
+              <tr>
+                <td>Status callback</td>
+                <td>
+                  {latestStatusCallback
+                    ? formatDateTimeForDisplay(latestStatusCallback.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "-"}
+                </td>
+                <td>
+                  {latestStatusCallback
+                    ? `${latestStatusCallback.providerStatus || "unknown"} · ${maskSid(
+                        latestStatusCallback.providerMessageSid,
+                      )}`
+                    : "No outbound status callback recorded."}
+                </td>
+              </tr>
+              <tr>
+                <td>Voice call</td>
+                <td>
+                  {latestVoiceCall
+                    ? formatDateTimeForDisplay(latestVoiceCall.startedAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "-"}
+                </td>
+                <td>
+                  {latestVoiceCall
+                    ? `${latestVoiceCall.status} · ${maskPhone(latestVoiceCall.fromNumberE164)} → ${maskPhone(
+                        latestVoiceCall.toNumberE164,
+                      )}`
+                    : "No voice call recorded."}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Twilio Webhooks</h3>
+        <p className="muted">
+          Paste these URLs into the Twilio phone number or Messaging Service
+          settings for this business.
+        </p>
+        <div className="table-wrap" style={{ marginTop: 10 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Use</th>
+                <th>Method</th>
+                <th>URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {TWILIO_WEBHOOKS.map((webhook) => (
+                <tr key={webhook.url}>
+                  <td>{webhook.label}</td>
+                  <td>
+                    <code>{webhook.method}</code>
+                  </td>
+                  <td>
+                    <code>{webhook.url}</code>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {envSnapshot.voiceAfterCallOverridePresent ? (
+          <p className="form-status" style={{ marginTop: 10 }}>
+            Voice after-call override is configured in this runtime.
+          </p>
+        ) : null}
+      </section>
+
+      <section className="card">
+        <h3>Unmatched Status Callbacks</h3>
+        {recentUnmatchedStatusCallbacks.length === 0 ? (
+          <p className="muted">No unmatched Twilio status callbacks in the last 30 days.</p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 10 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Status</th>
+                  <th>Message SID</th>
+                  <th>Reason</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentUnmatchedStatusCallbacks.map((callback) => (
+                  <tr key={callback.id}>
+                    <td>
+                      {formatDateTimeForDisplay(callback.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </td>
+                    <td>{callback.providerStatus || "unknown"}</td>
+                    <td>{maskSid(callback.providerMessageSid)}</td>
+                    <td>
+                      {metadataString(callback.metadataJson, [
+                        "failureReason",
+                        "failureLabel",
+                        "providerErrorMessage",
+                        "providerErrorCode",
+                      ]) || "No provider error detail."}
+                    </td>
+                    <td>
+                      {metadataString(callback.metadataJson, [
+                        "failureOperatorActionLabel",
+                        "failureOperatorDetail",
+                      ]) || "Review manually"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <h3>Recent Failed SMS</h3>
+        {recentFailedSms.length === 0 ? (
+          <p className="muted">No outbound SMS failures in the last 30 days.</p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 10 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Type</th>
+                  <th>Lead</th>
+                  <th>Reason</th>
+                  <th>Action</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentFailedSms.map((message) => {
+                  const leadLabel =
+                    message.lead.contactName ||
+                    message.lead.businessName ||
+                    maskPhone(message.toNumberE164);
+                  return (
+                    <tr key={message.id}>
+                      <td>
+                        {formatDateTimeForDisplay(message.createdAt, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </td>
+                      <td>{message.type}</td>
+                      <td>
+                        <Link
+                          className="table-link"
+                          href={`/hq/leads/${message.lead.id}`}
+                        >
+                          {leadLabel}
+                        </Link>
+                      </td>
+                      <td>
+                        {getFailureReason({
+                          providerMessageSid: message.providerMessageSid,
+                          communicationEvents: message.communicationEvents,
+                        })}
+                      </td>
+                      <td>
+                        {message.communicationEvents
+                          .map((event) =>
+                            metadataString(event.metadataJson, [
+                              "failureOperatorActionLabel",
+                              "failureOperatorDetail",
+                            ]),
+                          )
+                          .find(Boolean) || "Review manually"}
+                      </td>
+                      <td>{previewText(message.body, 72)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="card">

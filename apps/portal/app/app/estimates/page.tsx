@@ -6,11 +6,12 @@ import EstimateManager from "./estimate-manager";
 
 export const dynamic = "force-dynamic";
 
-export default async function EstimatesPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function EstimatesPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const requestedOrgId = getParam(searchParams?.orgId);
   const initialCreate = getParam(searchParams?.create) === "1";
   const initialLeadId = getParam(searchParams?.leadId);

@@ -17,10 +17,10 @@ import OperationalJobActionPanel from "./job-action-panel";
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  params: {
+  params: Promise<{
     jobId: string;
-  };
-  searchParams?: Record<string, string | string[] | undefined>;
+  }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 function formatDateOnly(value: Date | null | undefined): string {
@@ -73,7 +73,9 @@ function buildWorkerLeadCandidateWhere(input: {
   return clauses.length === 1 ? clauses[0] || null : { OR: clauses };
 }
 
-export default async function OperationalJobDetailPage({ params, searchParams }: PageProps) {
+export default async function OperationalJobDetailPage(props: PageProps) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   if (!params.jobId) {
     notFound();
   }

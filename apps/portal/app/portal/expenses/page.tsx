@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import { getParam } from "@/app/app/_lib/portal-scope";
 
-export default function ExpensesPortalAliasPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function ExpensesPortalAliasPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const params = new URLSearchParams();
   const orgId = getParam(searchParams?.orgId);
   const jobId = getParam(searchParams?.jobId);

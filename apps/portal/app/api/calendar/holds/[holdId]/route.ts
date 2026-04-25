@@ -12,7 +12,7 @@ import { parseUtcDateTime } from "@/lib/calendar/dates";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { holdId: string };
+  params: Promise<{ holdId: string }>;
 };
 
 type HoldUpdatePayload = {
@@ -65,7 +65,8 @@ function serializeHold(hold: {
   };
 }
 
-export async function GET(_req: Request, { params }: RouteContext) {
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const hold = await prisma.calendarHold.findUnique({
@@ -89,7 +90,8 @@ export async function GET(_req: Request, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const hold = await prisma.calendarHold.findUnique({
@@ -130,7 +132,8 @@ export async function PATCH(req: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(_req: Request, { params }: RouteContext) {
+export async function DELETE(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const hold = await prisma.calendarHold.findUnique({

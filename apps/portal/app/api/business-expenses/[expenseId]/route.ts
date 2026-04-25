@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { expenseId: string };
+  params: Promise<{ expenseId: string }>;
 };
 
 type BusinessExpenseUpdatePayload = {
@@ -40,7 +40,8 @@ async function resolveExpenseOrgId(expenseId: string): Promise<string> {
   return scoped.orgId;
 }
 
-export async function GET(_req: Request, { params }: RouteContext) {
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const orgId = await resolveExpenseOrgId(params.expenseId);
@@ -67,7 +68,8 @@ export async function GET(_req: Request, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const orgId = await resolveExpenseOrgId(params.expenseId);
@@ -100,7 +102,8 @@ export async function PATCH(req: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(_req: Request, { params }: RouteContext) {
+export async function DELETE(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const orgId = await resolveExpenseOrgId(params.expenseId);

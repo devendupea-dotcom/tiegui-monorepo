@@ -4,7 +4,7 @@ import {
   buildOwnerBookingNotificationSms,
   formatOwnerReminderLeadTime,
   selectOrgDispatchNotificationCandidate,
-} from "../lib/org-owner-notifications.ts";
+} from "../lib/org-owner-notification-core.ts";
 
 test("owner reminder lead time stays readable for hour and minute windows", () => {
   assert.equal(formatOwnerReminderLeadTime(45), "45 minutes");

@@ -15,10 +15,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { poId: string };
+  params: Promise<{ poId: string }>;
 };
 
-export async function POST(_req: Request, { params }: RouteContext) {
+export async function POST(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
 

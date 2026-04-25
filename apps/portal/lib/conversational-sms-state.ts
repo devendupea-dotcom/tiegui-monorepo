@@ -266,6 +266,7 @@ export async function sendConversationMessage(input: {
       toNumberE164: input.lead.phoneE164,
       providerMessageSid: outbound.providerMessageSid,
       status: outbound.status,
+      deliveryNotice: outbound.notice || null,
       occurredAt: message.createdAt,
     });
 

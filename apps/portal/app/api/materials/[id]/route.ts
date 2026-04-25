@@ -35,9 +35,9 @@ const materialListSelect = {
 } satisfies Prisma.MaterialSelect;
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 };
 
 type MaterialUpdatePayload = {
@@ -151,7 +151,8 @@ async function getScopedMaterialOrThrow(id: string) {
   return material;
 }
 
-export async function PUT(req: Request, { params }: RouteContext) {
+export async function PUT(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const material = await getScopedMaterialOrThrow(params.id);
@@ -212,7 +213,8 @@ export async function PUT(req: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(_: Request, { params }: RouteContext) {
+export async function DELETE(_: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const material = await getScopedMaterialOrThrow(params.id);

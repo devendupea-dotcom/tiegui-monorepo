@@ -6,15 +6,16 @@ import JobCostingManager from "./job-costing-manager";
 
 export const dynamic = "force-dynamic";
 
-export default async function JobCostingDetailPage({
-  params,
-  searchParams,
-}: {
-  params: {
-    jobId: string;
-  };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function JobCostingDetailPage(
+  props: {
+    params: Promise<{
+      jobId: string;
+    }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   if (!params.jobId) {
     notFound();
   }

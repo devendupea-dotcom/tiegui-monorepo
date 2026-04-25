@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mapTwilioLifecycleStatus, shouldAdvanceOutboundSmsLifecycle } from "../lib/sms-lifecycle.ts";
+import {
+  mapTwilioInitialSendStatus,
+  mapTwilioLifecycleStatus,
+  shouldAdvanceOutboundSmsLifecycle,
+} from "../lib/sms-lifecycle.ts";
+import { classifySmsFailure } from "../lib/sms-failure-intelligence.ts";
+import { buildUnmatchedSmsStatusCallbackEvent } from "../lib/sms-status-diagnostics.ts";
 
 test("mapTwilioLifecycleStatus normalizes Twilio outbound callback statuses", () => {
   assert.equal(mapTwilioLifecycleStatus("accepted"), "QUEUED");
@@ -12,6 +18,87 @@ test("mapTwilioLifecycleStatus normalizes Twilio outbound callback statuses", ()
   assert.equal(mapTwilioLifecycleStatus("undelivered"), "FAILED");
   assert.equal(mapTwilioLifecycleStatus("failed"), "FAILED");
   assert.equal(mapTwilioLifecycleStatus("mystery"), null);
+});
+
+test("mapTwilioInitialSendStatus never overstates provider acceptance as sent", () => {
+  assert.equal(mapTwilioInitialSendStatus("accepted"), "QUEUED");
+  assert.equal(mapTwilioInitialSendStatus("queued"), "QUEUED");
+  assert.equal(mapTwilioInitialSendStatus(null), "QUEUED");
+  assert.equal(mapTwilioInitialSendStatus("sent"), "SENT");
+  assert.equal(mapTwilioInitialSendStatus("delivered"), "DELIVERED");
+  assert.equal(mapTwilioInitialSendStatus("failed"), "FAILED");
+});
+
+test("unmatched SMS status callback diagnostics preserve provider context", () => {
+  const diagnostic = buildUnmatchedSmsStatusCallbackEvent({
+    orgId: "org_1",
+    providerMessageSid: "SM123",
+    providerStatus: "undelivered",
+    lifecycleStatus: "FAILED",
+    errorCode: "30007",
+    errorMessage: "Carrier filtering detected.",
+    occurredAt: new Date("2026-04-23T18:30:00.000Z"),
+  });
+
+  assert.equal(diagnostic.summary, "Unmatched outbound SMS status callback");
+  assert.match(diagnostic.idempotencyKey, /^sms-status-unmatched:/);
+  assert.deepEqual(diagnostic.metadataJson, {
+    unmatchedStatusCallback: true,
+    providerMessageSid: "SM123",
+    providerStatus: "undelivered",
+    status: "FAILED",
+    providerStatusUpdatedAt: "2026-04-23T18:30:00.000Z",
+    providerErrorCode: "30007",
+    providerErrorMessage: "Carrier filtering detected.",
+    failureCategory: "CARRIER_FILTERING",
+    failureLabel: "Carrier filtering",
+    failureOperatorAction: "REWRITE_MESSAGE",
+    failureOperatorActionLabel: "Rewrite message",
+    failureOperatorDetail: "Rewrite the SMS shorter and less promotional, then retry once. Call if the update is urgent.",
+    failureRetryRecommended: true,
+    failureBlocksAutomationRetry: true,
+    failureReason: "Carrier filtering detected.",
+  });
+});
+
+test("classifySmsFailure turns common Twilio failures into operator actions", () => {
+  assert.deepEqual(
+    classifySmsFailure({
+      lifecycleStatus: "FAILED",
+      providerStatus: "undelivered",
+      errorCode: "30003",
+      errorMessage: "Unreachable destination handset.",
+    }),
+    {
+      category: "LANDLINE_OR_UNREACHABLE",
+      label: "Unreachable or non-mobile number",
+      operatorAction: "CALL_CUSTOMER",
+      operatorActionLabel: "Call customer",
+      operatorDetail: "SMS is unlikely to work until the customer provides a reachable mobile number.",
+      retryRecommended: false,
+      blocksAutomationRetry: true,
+    },
+  );
+
+  assert.equal(
+    classifySmsFailure({
+      lifecycleStatus: "FAILED",
+      providerStatus: "failed",
+      errorCode: "21610",
+      errorMessage: "User has replied STOP.",
+    })?.operatorAction,
+    "DO_NOT_RETRY_SMS",
+  );
+
+  assert.equal(
+    classifySmsFailure({
+      lifecycleStatus: "FAILED",
+      providerStatus: "failed",
+      errorCode: "20429",
+      errorMessage: "Too many requests.",
+    })?.retryRecommended,
+    true,
+  );
 });
 
 test("shouldAdvanceOutboundSmsLifecycle prevents weaker or conflicting regressions", () => {

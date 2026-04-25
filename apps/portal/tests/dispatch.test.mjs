@@ -45,7 +45,10 @@ test("dispatch date helpers preserve local calendar dates", () => {
 });
 
 test("dispatch scheduled window formatter handles optional times", () => {
-  assert.equal(formatDispatchScheduledWindow("09:00", "11:00"), "09:00 - 11:00");
+  assert.equal(
+    formatDispatchScheduledWindow("09:00", "11:00"),
+    "09:00 - 11:00",
+  );
   assert.equal(formatDispatchScheduledWindow("09:00", null), "Starts 09:00");
   assert.equal(formatDispatchScheduledWindow(null, "11:00"), "By 11:00");
   assert.equal(formatDispatchScheduledWindow(null, null), "Any time");
@@ -87,7 +90,10 @@ test("compareDispatchJobs sorts by crew order, then time, then name", () => {
 });
 
 test("dispatch notification settings default to disabled while keeping stable per-status toggles", () => {
-  const settings = serializeDispatchNotificationSettings(null, false);
+  const settings = serializeDispatchNotificationSettings(null, {
+    canSend: false,
+    readinessCode: "NOT_CONFIGURED",
+  });
 
   assert.equal(settings.smsEnabled, false);
   assert.equal(settings.notifyScheduled, true);
@@ -95,6 +101,7 @@ test("dispatch notification settings default to disabled while keeping stable pe
   assert.equal(settings.notifyRescheduled, true);
   assert.equal(settings.notifyCompleted, true);
   assert.equal(settings.canSend, false);
+  assert.equal(settings.readinessCode, "NOT_CONFIGURED");
 });
 
 test("dispatch notification toggles gate status-based customer updates", () => {
@@ -105,12 +112,25 @@ test("dispatch notification toggles gate status-based customer updates", () => {
     notifyRescheduled: true,
     notifyCompleted: false,
     canSend: true,
+    readinessCode: "ACTIVE",
   };
 
-  assert.equal(shouldSendDispatchStatusNotification(settings, "scheduled"), false);
-  assert.equal(shouldSendDispatchStatusNotification(settings, "on_the_way"), true);
-  assert.equal(shouldSendDispatchStatusNotification(settings, "rescheduled"), true);
-  assert.equal(shouldSendDispatchStatusNotification(settings, "completed"), false);
+  assert.equal(
+    shouldSendDispatchStatusNotification(settings, "scheduled"),
+    false,
+  );
+  assert.equal(
+    shouldSendDispatchStatusNotification(settings, "on_the_way"),
+    true,
+  );
+  assert.equal(
+    shouldSendDispatchStatusNotification(settings, "rescheduled"),
+    true,
+  );
+  assert.equal(
+    shouldSendDispatchStatusNotification(settings, "completed"),
+    false,
+  );
 });
 
 test("dispatch SMS copy stays concise and contractor-friendly", () => {
@@ -150,7 +170,10 @@ test("schedule-change detection only treats real timing changes as notification-
     ],
   };
 
-  assert.deepEqual(getDispatchScheduleChangeFields(scheduleMetadata), ["scheduledDate", "scheduledStartTime"]);
+  assert.deepEqual(getDispatchScheduleChangeFields(scheduleMetadata), [
+    "scheduledDate",
+    "scheduledStartTime",
+  ]);
   assert.equal(isMeaningfulDispatchScheduleChange(scheduleMetadata), true);
   assert.equal(
     isMeaningfulDispatchScheduleChange({
@@ -276,7 +299,8 @@ test("dispatch SMS remediation stays conservative and actionable", () => {
     {
       kind: "check_phone",
       title: "Check customer phone number",
-      detail: "Verify or correct the number before retrying. If timing is urgent, call the customer.",
+      detail:
+        "Verify or correct the number before retrying. If timing is urgent, call the customer.",
     },
   );
 
@@ -292,7 +316,8 @@ test("dispatch SMS remediation stays conservative and actionable", () => {
     {
       kind: "retry_later",
       title: "Retry during send hours",
-      detail: "Wait until the workspace send window opens, or call the customer if the timing is urgent.",
+      detail:
+        "Wait until the workspace send window opens, or call the customer if the timing is urgent.",
     },
   );
 
@@ -308,7 +333,8 @@ test("dispatch SMS remediation stays conservative and actionable", () => {
     {
       kind: "opted_out",
       title: "Customer opted out",
-      detail: "Do not retry by SMS. Call the customer instead if this update is important.",
+      detail:
+        "Do not retry by SMS. Call the customer instead if this update is important.",
     },
   );
 });

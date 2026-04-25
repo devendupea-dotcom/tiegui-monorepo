@@ -26,29 +26,23 @@ type JobCostingManagerProps = {
   initialJobId: string | null;
 };
 
-type JobsResponse =
-  | {
-      ok?: boolean;
-      jobs?: JobCostingListItem[];
-      error?: string;
-    }
-  | null;
+type JobsResponse = {
+  ok?: boolean;
+  jobs?: JobCostingListItem[];
+  error?: string;
+} | null;
 
-type JobResponse =
-  | {
-      ok?: boolean;
-      job?: JobCostingDetail | null;
-      error?: string;
-    }
-  | null;
+type JobResponse = {
+  ok?: boolean;
+  job?: JobCostingDetail | null;
+  error?: string;
+} | null;
 
-type MaterialsResponse =
-  | {
-      ok?: boolean;
-      materials?: MaterialListItem[];
-      error?: string;
-    }
-  | null;
+type MaterialsResponse = {
+  ok?: boolean;
+  materials?: MaterialListItem[];
+  error?: string;
+} | null;
 
 function buildJobPath(input: {
   orgId: string;
@@ -64,7 +58,9 @@ function buildJobPath(input: {
     params.set("mobile", "1");
   }
   const query = params.toString();
-  const base = input.jobId ? `/app/jobs/records/${input.jobId}/costing` : "/app/jobs/records/costing";
+  const base = input.jobId
+    ? `/app/jobs/records/${input.jobId}/costing`
+    : "/app/jobs/records/costing";
   return query ? `${base}?${query}` : base;
 }
 
@@ -126,19 +122,24 @@ export default function JobCostingManager({
 
   const [jobs, setJobs] = useState<JobCostingListItem[]>([]);
   const [materials, setMaterials] = useState<MaterialListItem[]>([]);
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(initialJobId);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(
+    initialJobId,
+  );
   const [selectedJob, setSelectedJob] = useState<JobCostingDetail | null>(null);
   const [costingNotes, setCostingNotes] = useState("");
   const [materialRows, setMaterialRows] = useState<JobCostingMaterialRow[]>([]);
   const [laborRows, setLaborRows] = useState<JobCostingLaborRow[]>([]);
-  const [selectedCatalogMaterialId, setSelectedCatalogMaterialId] = useState("");
+  const [selectedCatalogMaterialId, setSelectedCatalogMaterialId] =
+    useState("");
 
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [statusFilter, setStatusFilter] = useState("");
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(Boolean(initialJobId));
-  const [loadingMaterials, setLoadingMaterials] = useState(Boolean(initialJobId));
+  const [loadingMaterials, setLoadingMaterials] = useState(
+    Boolean(initialJobId),
+  );
   const [savingNotes, setSavingNotes] = useState(false);
   const [busyMaterialId, setBusyMaterialId] = useState<string | null>(null);
   const [busyLaborId, setBusyLaborId] = useState<string | null>(null);
@@ -179,9 +180,13 @@ export default function JobCostingManager({
           method: "GET",
           cache: "no-store",
         });
-        const payload = (await response.json().catch(() => null)) as JobsResponse;
+        const payload = (await response
+          .json()
+          .catch(() => null)) as JobsResponse;
         if (!response.ok || !payload?.ok || !Array.isArray(payload.jobs)) {
-          throw new Error(payload?.error || "Failed to load job costing overview.");
+          throw new Error(
+            payload?.error || "Failed to load job costing overview.",
+          );
         }
 
         if (cancelled) return;
@@ -189,7 +194,11 @@ export default function JobCostingManager({
       } catch (loadError) {
         if (cancelled) return;
         setJobs([]);
-        setError(loadError instanceof Error ? loadError.message : "Failed to load job costing overview.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load job costing overview.",
+        );
       } finally {
         if (!cancelled) {
           setLoadingJobs(false);
@@ -224,7 +233,9 @@ export default function JobCostingManager({
           method: "GET",
           cache: "no-store",
         });
-        const payload = (await response.json().catch(() => null)) as JobResponse;
+        const payload = (await response
+          .json()
+          .catch(() => null)) as JobResponse;
         if (!response.ok || !payload?.ok || !payload.job) {
           throw new Error(payload?.error || "Failed to load job costing.");
         }
@@ -239,7 +250,11 @@ export default function JobCostingManager({
         setSelectedJob(null);
         setMaterialRows([]);
         setLaborRows([]);
-        setError(loadError instanceof Error ? loadError.message : "Failed to load job costing.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load job costing.",
+        );
       } finally {
         if (!cancelled) {
           setLoadingDetail(false);
@@ -270,7 +285,9 @@ export default function JobCostingManager({
           method: "GET",
           cache: "no-store",
         });
-        const payload = (await response.json().catch(() => null)) as MaterialsResponse;
+        const payload = (await response
+          .json()
+          .catch(() => null)) as MaterialsResponse;
         if (!response.ok || !payload?.ok || !Array.isArray(payload.materials)) {
           throw new Error(payload?.error || "Failed to load materials.");
         }
@@ -279,7 +296,11 @@ export default function JobCostingManager({
       } catch (loadError) {
         if (cancelled) return;
         setMaterials([]);
-        setError(loadError instanceof Error ? loadError.message : "Failed to load materials.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load materials.",
+        );
       } finally {
         if (!cancelled) {
           setLoadingMaterials(false);
@@ -295,21 +316,25 @@ export default function JobCostingManager({
 
   useEffect(() => {
     if (!selectedJobId) {
-      router.replace(buildJobPath({
-        orgId,
-        internalUser,
-        mobileMode,
-        jobId: null,
-      }));
+      router.replace(
+        buildJobPath({
+          orgId,
+          internalUser,
+          mobileMode,
+          jobId: null,
+        }),
+      );
       return;
     }
 
-    router.replace(buildJobPath({
-      orgId,
-      internalUser,
-      mobileMode,
-      jobId: selectedJobId,
-    }));
+    router.replace(
+      buildJobPath({
+        orgId,
+        internalUser,
+        mobileMode,
+        jobId: selectedJobId,
+      }),
+    );
   }, [selectedJobId, orgId, internalUser, mobileMode, router]);
 
   const localSummary = useMemo(
@@ -320,7 +345,12 @@ export default function JobCostingManager({
         materials: materialRows,
         labor: laborRows,
       }),
-    [laborRows, materialRows, selectedJob?.invoicedRevenue, selectedJob?.quotedRevenue],
+    [
+      laborRows,
+      materialRows,
+      selectedJob?.invoicedRevenue,
+      selectedJob?.quotedRevenue,
+    ],
   );
 
   function selectJob(jobId: string | null) {
@@ -329,15 +359,25 @@ export default function JobCostingManager({
     setError(null);
   }
 
-  function updateMaterialRow(index: number, updater: (row: JobCostingMaterialRow) => JobCostingMaterialRow) {
+  function updateMaterialRow(
+    index: number,
+    updater: (row: JobCostingMaterialRow) => JobCostingMaterialRow,
+  ) {
     setMaterialRows((current) =>
-      current.map((row, rowIndex) => (rowIndex === index ? hydrateMaterialRow(updater(row)) : row)),
+      current.map((row, rowIndex) =>
+        rowIndex === index ? hydrateMaterialRow(updater(row)) : row,
+      ),
     );
   }
 
-  function updateLaborRow(index: number, updater: (row: JobCostingLaborRow) => JobCostingLaborRow) {
+  function updateLaborRow(
+    index: number,
+    updater: (row: JobCostingLaborRow) => JobCostingLaborRow,
+  ) {
     setLaborRows((current) =>
-      current.map((row, rowIndex) => (rowIndex === index ? hydrateLaborRow(updater(row)) : row)),
+      current.map((row, rowIndex) =>
+        rowIndex === index ? hydrateLaborRow(updater(row)) : row,
+      ),
     );
   }
 
@@ -367,7 +407,11 @@ export default function JobCostingManager({
       setNotice("Costing notes saved.");
       setRefreshToken((current) => current + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save costing notes.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to save costing notes.",
+      );
     } finally {
       setSavingNotes(false);
     }
@@ -381,15 +425,18 @@ export default function JobCostingManager({
     setNotice(null);
 
     try {
-      const response = await fetch(`/api/jobs/${selectedJobId}/costing/materials`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/jobs/${selectedJobId}/costing/materials`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            materialId: selectedCatalogMaterialId,
+          }),
         },
-        body: JSON.stringify({
-          materialId: selectedCatalogMaterialId,
-        }),
-      });
+      );
       const payload = (await response.json().catch(() => null)) as JobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || "Failed to add material.");
@@ -403,7 +450,11 @@ export default function JobCostingManager({
       setNotice("Material added.");
       setRefreshToken((current) => current + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to add material.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to add material.",
+      );
     } finally {
       setAddingMaterial(false);
     }
@@ -417,18 +468,21 @@ export default function JobCostingManager({
     setNotice(null);
 
     try {
-      const response = await fetch(`/api/jobs/${selectedJobId}/costing/materials`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/jobs/${selectedJobId}/costing/materials`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "Custom material",
+            unit: "each",
+            plannedQuantity: "1",
+            plannedUnitCost: "0",
+          }),
         },
-        body: JSON.stringify({
-          name: "Custom material",
-          unit: "each",
-          plannedQuantity: "1",
-          plannedUnitCost: "0",
-        }),
-      });
+      );
       const payload = (await response.json().catch(() => null)) as JobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || "Failed to add custom material.");
@@ -441,7 +495,11 @@ export default function JobCostingManager({
       setNotice("Custom material row added.");
       setRefreshToken((current) => current + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to add custom material.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to add custom material.",
+      );
     } finally {
       setAddingMaterial(false);
     }
@@ -455,22 +513,25 @@ export default function JobCostingManager({
     setNotice(null);
 
     try {
-      const response = await fetch(`/api/jobs/${selectedJobId}/costing/materials/${row.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/jobs/${selectedJobId}/costing/materials/${row.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            materialId: row.materialId,
+            name: row.name,
+            unit: row.unit,
+            plannedQuantity: row.plannedQuantity,
+            plannedUnitCost: row.plannedUnitCost,
+            actualQuantity: row.actualQuantity,
+            actualUnitCost: row.actualUnitCost,
+            varianceNotes: row.varianceNotes,
+          }),
         },
-        body: JSON.stringify({
-          materialId: row.materialId,
-          name: row.name,
-          unit: row.unit,
-          plannedQuantity: row.plannedQuantity,
-          plannedUnitCost: row.plannedUnitCost,
-          actualQuantity: row.actualQuantity,
-          actualUnitCost: row.actualUnitCost,
-          varianceNotes: row.varianceNotes,
-        }),
-      });
+      );
       const payload = (await response.json().catch(() => null)) as JobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || "Failed to save material row.");
@@ -482,7 +543,11 @@ export default function JobCostingManager({
       setNotice("Material row saved.");
       setRefreshToken((current) => current + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save material row.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to save material row.",
+      );
     } finally {
       setBusyMaterialId(null);
     }
@@ -496,9 +561,12 @@ export default function JobCostingManager({
     setNotice(null);
 
     try {
-      const response = await fetch(`/api/jobs/${selectedJobId}/costing/materials/${rowId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/jobs/${selectedJobId}/costing/materials/${rowId}`,
+        {
+          method: "DELETE",
+        },
+      );
       const payload = (await response.json().catch(() => null)) as JobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || "Failed to delete material row.");
@@ -510,7 +578,11 @@ export default function JobCostingManager({
       setNotice("Material row deleted.");
       setRefreshToken((current) => current + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to delete material row.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to delete material row.",
+      );
     } finally {
       setBusyMaterialId(null);
     }
@@ -547,7 +619,11 @@ export default function JobCostingManager({
       setNotice("Labor row added.");
       setRefreshToken((current) => current + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to add labor row.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to add labor row.",
+      );
     } finally {
       setAddingLabor(false);
     }
@@ -561,21 +637,24 @@ export default function JobCostingManager({
     setNotice(null);
 
     try {
-      const response = await fetch(`/api/jobs/${selectedJobId}/costing/labor/${row.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/jobs/${selectedJobId}/costing/labor/${row.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            description: row.description,
+            unit: row.unit,
+            plannedQuantity: row.plannedQuantity,
+            plannedUnitCost: row.plannedUnitCost,
+            actualHours: row.actualHours,
+            actualHourlyCost: row.actualHourlyCost,
+            varianceNotes: row.varianceNotes,
+          }),
         },
-        body: JSON.stringify({
-          description: row.description,
-          unit: row.unit,
-          plannedQuantity: row.plannedQuantity,
-          plannedUnitCost: row.plannedUnitCost,
-          actualHours: row.actualHours,
-          actualHourlyCost: row.actualHourlyCost,
-          varianceNotes: row.varianceNotes,
-        }),
-      });
+      );
       const payload = (await response.json().catch(() => null)) as JobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || "Failed to save labor row.");
@@ -587,7 +666,11 @@ export default function JobCostingManager({
       setNotice("Labor row saved.");
       setRefreshToken((current) => current + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save labor row.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to save labor row.",
+      );
     } finally {
       setBusyLaborId(null);
     }
@@ -601,9 +684,12 @@ export default function JobCostingManager({
     setNotice(null);
 
     try {
-      const response = await fetch(`/api/jobs/${selectedJobId}/costing/labor/${rowId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/jobs/${selectedJobId}/costing/labor/${rowId}`,
+        {
+          method: "DELETE",
+        },
+      );
       const payload = (await response.json().catch(() => null)) as JobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || "Failed to delete labor row.");
@@ -615,7 +701,11 @@ export default function JobCostingManager({
       setNotice("Labor row deleted.");
       setRefreshToken((current) => current + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to delete labor row.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to delete labor row.",
+      );
     } finally {
       setBusyLaborId(null);
     }
@@ -625,15 +715,27 @@ export default function JobCostingManager({
     <div className="job-costing-shell">
       <section className="card">
         <div className="stack" style={{ gap: 8 }}>
-          <div className="inline" style={{ justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+          <div
+            className="inline"
+            style={{
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "center",
+            }}
+          >
             <div>
-              <h2 style={{ marginBottom: 4 }}>{selectedJobId ? "Costing Workspace" : "Job Profitability"}</h2>
+              <h2 style={{ marginBottom: 4 }}>
+                {selectedJobId ? "Costing Workspace" : "Job Profitability"}
+              </h2>
               <p className="muted">
                 {selectedJobId
                   ? "Track planned vs actual costs, revenue, and margin for this operational job."
                   : `See profitability across operational jobs in ${orgName}.`}
               </p>
-              <p className="muted">Use the Operational Job page for dispatch, schedule, tracking, and customer communication.</p>
+              <p className="muted">
+                Use the Operational Job page for dispatch, schedule, tracking,
+                and customer communication.
+              </p>
             </div>
             <div className="portal-empty-actions">
               {selectedOperationalJobHref ? (
@@ -650,10 +752,14 @@ export default function JobCostingManager({
                   href: "/app/jobs/records",
                 })}
               >
-                Operational Records
+                Operational Jobs
               </Link>
               {selectedJobId ? (
-                <button className="btn secondary" type="button" onClick={() => selectJob(null)}>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => selectJob(null)}
+                >
                   Costing Overview
                 </button>
               ) : null}
@@ -667,7 +773,10 @@ export default function JobCostingManager({
       {!selectedJobId ? (
         <>
           <section className="card">
-            <form className="filters" onSubmit={(event) => event.preventDefault()}>
+            <form
+              className="filters"
+              onSubmit={(event) => event.preventDefault()}
+            >
               <label>
                 Search
                 <input
@@ -678,7 +787,10 @@ export default function JobCostingManager({
               </label>
               <label>
                 Status
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                >
                   <option value="">All</option>
                   {jobStatusOptions.map((option) => (
                     <option key={option} value={option}>
@@ -698,7 +810,10 @@ export default function JobCostingManager({
             ) : jobs.length === 0 ? (
               <div className="portal-empty-state job-costing-empty">
                 <strong>No operational jobs yet.</strong>
-                <p className="muted">Create or convert an operational job first, then open costing to track profitability.</p>
+                <p className="muted">
+                  Create or convert an operational job first, then open costing
+                  to track profitability.
+                </p>
               </div>
             ) : (
               <div className="table-wrap">
@@ -722,15 +837,23 @@ export default function JobCostingManager({
                         <td>
                           <div className="stack-cell">
                             <strong>{job.customerName}</strong>
-                            <span className="muted">{job.projectType || "Project"}</span>
+                            <span className="muted">
+                              {job.projectType || "Project"}
+                            </span>
                             <span className="muted">{job.address}</span>
                             {job.sourceEstimate ? (
-                              <span className="muted">Quote: {job.sourceEstimate.label}</span>
+                              <span className="muted">
+                                Quote: {job.sourceEstimate.label}
+                              </span>
                             ) : null}
                           </div>
                         </td>
                         <td>
-                          <span className={`badge status-${job.status.toLowerCase()}`}>{job.status.replace(/_/g, " ")}</span>
+                          <span
+                            className={`badge status-${job.status.toLowerCase()}`}
+                          >
+                            {job.status.replace(/_/g, " ")}
+                          </span>
                         </td>
                         <td>{formatJobCostingCurrency(job.quotedRevenue)}</td>
                         <td>{formatJobCostingCurrency(job.invoicedRevenue)}</td>
@@ -739,12 +862,20 @@ export default function JobCostingManager({
                         <td>{formatJobCostingCurrency(job.grossProfit)}</td>
                         <td>
                           <div className="stack-cell">
-                            <strong>{formatJobCostingMargin(job.grossMarginPercent)}</strong>
-                            <span className="muted">{formatJobCostingProfitBasis(job.profitBasis)}</span>
+                            <strong>
+                              {formatJobCostingMargin(job.grossMarginPercent)}
+                            </strong>
+                            <span className="muted">
+                              {formatJobCostingProfitBasis(job.profitBasis)}
+                            </span>
                           </div>
                         </td>
                         <td>
-                          <button className="btn secondary" type="button" onClick={() => selectJob(job.id)}>
+                          <button
+                            className="btn secondary"
+                            type="button"
+                            onClick={() => selectJob(job.id)}
+                          >
                             Open Costing
                           </button>
                         </td>
@@ -765,55 +896,96 @@ export default function JobCostingManager({
               </div>
             ) : (
               <div className="stack" style={{ gap: 18 }}>
-                <div className="inline" style={{ justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                <div
+                  className="inline"
+                  style={{
+                    justifyContent: "space-between",
+                    gap: 12,
+                    alignItems: "center",
+                  }}
+                >
                   <div>
-                    <h3 style={{ marginBottom: 4 }}>{selectedJob.customerName}</h3>
+                    <h3 style={{ marginBottom: 4 }}>
+                      {selectedJob.customerName}
+                    </h3>
                     <p className="muted">
-                      {selectedJob.projectType || "Project"} · {selectedJob.address}
+                      {selectedJob.projectType || "Project"} ·{" "}
+                      {selectedJob.address}
                     </p>
                   </div>
                   <div className="quick-meta">
-                    <span className={`badge status-${selectedJob.status.toLowerCase()}`}>
+                    <span
+                      className={`badge status-${selectedJob.status.toLowerCase()}`}
+                    >
                       {selectedJob.status.replace(/_/g, " ")}
                     </span>
-                    <span className="badge">{selectedJob.sourceInvoices.length} invoice(s)</span>
+                    <span className="badge">
+                      {selectedJob.sourceInvoices.length} invoice(s)
+                    </span>
                   </div>
                 </div>
 
                 <div className="job-costing-summary-grid">
                   <article className="card estimate-summary-card">
                     <span className="muted">Quoted Revenue</span>
-                    <strong>{formatJobCostingCurrency(localSummary.quotedRevenue)}</strong>
+                    <strong>
+                      {formatJobCostingCurrency(localSummary.quotedRevenue)}
+                    </strong>
                   </article>
                   <article className="card estimate-summary-card">
                     <span className="muted">Invoiced Revenue</span>
-                    <strong>{formatJobCostingCurrency(localSummary.invoicedRevenue)}</strong>
+                    <strong>
+                      {formatJobCostingCurrency(localSummary.invoicedRevenue)}
+                    </strong>
                   </article>
                   <article className="card estimate-summary-card">
                     <span className="muted">Planned Cost</span>
-                    <strong>{formatJobCostingCurrency(localSummary.plannedCost)}</strong>
+                    <strong>
+                      {formatJobCostingCurrency(localSummary.plannedCost)}
+                    </strong>
                   </article>
                   <article className="card estimate-summary-card">
                     <span className="muted">Actual Cost</span>
-                    <strong>{formatJobCostingCurrency(localSummary.actualCost)}</strong>
+                    <strong>
+                      {formatJobCostingCurrency(localSummary.actualCost)}
+                    </strong>
                   </article>
                   <article className="card estimate-summary-card estimate-summary-card--final">
                     <span className="muted">Gross Profit</span>
-                    <strong>{formatJobCostingCurrency(localSummary.grossProfit)}</strong>
-                    <small className="muted">{formatJobCostingProfitBasis(localSummary.profitBasis)}</small>
+                    <strong>
+                      {formatJobCostingCurrency(localSummary.grossProfit)}
+                    </strong>
+                    <small className="muted">
+                      {formatJobCostingProfitBasis(localSummary.profitBasis)}
+                    </small>
                   </article>
                   <article className="card estimate-summary-card estimate-summary-card--final">
                     <span className="muted">Gross Margin</span>
-                    <strong>{formatJobCostingMargin(localSummary.grossMarginPercent)}</strong>
-                    <small className="muted">Variance {formatJobCostingCurrency(localSummary.costVariance)}</small>
+                    <strong>
+                      {formatJobCostingMargin(localSummary.grossMarginPercent)}
+                    </strong>
+                    <small className="muted">
+                      Variance{" "}
+                      {formatJobCostingCurrency(localSummary.costVariance)}
+                    </small>
                   </article>
                 </div>
 
                 <section className="job-costing-section">
-                  <div className="inline" style={{ justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div
+                    className="inline"
+                    style={{
+                      justifyContent: "space-between",
+                      gap: 12,
+                      alignItems: "center",
+                    }}
+                  >
                     <div>
                       <h4 style={{ marginBottom: 4 }}>Revenue Links</h4>
-                      <p className="muted">Track the quote that created the work and the invoices attached to this job.</p>
+                      <p className="muted">
+                        Track the quote that created the work and the invoices
+                        attached to this job.
+                      </p>
                     </div>
                     <Link
                       className="btn secondary"
@@ -843,7 +1015,11 @@ export default function JobCostingManager({
                           >
                             {selectedJob.sourceEstimate.label}
                           </Link>
-                          <span className="muted">{formatJobCostingCurrency(selectedJob.sourceEstimate.total)}</span>
+                          <span className="muted">
+                            {formatJobCostingCurrency(
+                              selectedJob.sourceEstimate.total,
+                            )}
+                          </span>
                         </div>
                       ) : (
                         <p className="muted" style={{ marginTop: 8 }}>
@@ -860,7 +1036,14 @@ export default function JobCostingManager({
                       ) : (
                         <div className="stack" style={{ gap: 8, marginTop: 8 }}>
                           {selectedJob.sourceInvoices.map((invoice) => (
-                            <div key={invoice.id} className="inline" style={{ justifyContent: "space-between", gap: 12 }}>
+                            <div
+                              key={invoice.id}
+                              className="inline"
+                              style={{
+                                justifyContent: "space-between",
+                                gap: 12,
+                              }}
+                            >
                               <div className="stack-cell">
                                 <Link
                                   className="table-link"
@@ -875,7 +1058,9 @@ export default function JobCostingManager({
                                 </Link>
                                 <span className="muted">{invoice.status}</span>
                               </div>
-                              <strong>{formatJobCostingCurrency(invoice.total)}</strong>
+                              <strong>
+                                {formatJobCostingCurrency(invoice.total)}
+                              </strong>
                             </div>
                           ))}
                         </div>
@@ -885,12 +1070,27 @@ export default function JobCostingManager({
                 </section>
 
                 <section className="job-costing-section">
-                  <div className="inline" style={{ justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div
+                    className="inline"
+                    style={{
+                      justifyContent: "space-between",
+                      gap: 12,
+                      alignItems: "center",
+                    }}
+                  >
                     <div>
                       <h4 style={{ marginBottom: 4 }}>Costing Notes</h4>
-                      <p className="muted">Capture job-wide margin risks, change orders, and variance context.</p>
+                      <p className="muted">
+                        Capture job-wide margin risks, change orders, and
+                        variance context.
+                      </p>
                     </div>
-                    <button className="btn primary" type="button" disabled={!canManage || savingNotes} onClick={saveNotes}>
+                    <button
+                      className="btn primary"
+                      type="button"
+                      disabled={!canManage || savingNotes}
+                      onClick={saveNotes}
+                    >
                       {savingNotes ? "Saving..." : "Save Notes"}
                     </button>
                   </div>
@@ -904,28 +1104,58 @@ export default function JobCostingManager({
                 </section>
 
                 <section className="job-costing-section">
-                  <div className="inline" style={{ justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div
+                    className="inline"
+                    style={{
+                      justifyContent: "space-between",
+                      gap: 12,
+                      alignItems: "center",
+                    }}
+                  >
                     <div>
                       <h4 style={{ marginBottom: 4 }}>Materials</h4>
-                      <p className="muted">Track planned cost against actual purchased quantity and unit cost.</p>
+                      <p className="muted">
+                        Track planned cost against actual purchased quantity and
+                        unit cost.
+                      </p>
                     </div>
                     <div className="portal-empty-actions">
                       <select
                         value={selectedCatalogMaterialId}
                         disabled={!canManage || loadingMaterials}
-                        onChange={(event) => setSelectedCatalogMaterialId(event.target.value)}
+                        onChange={(event) =>
+                          setSelectedCatalogMaterialId(event.target.value)
+                        }
                       >
-                        <option value="">{loadingMaterials ? "Loading materials..." : "Select catalog material"}</option>
+                        <option value="">
+                          {loadingMaterials
+                            ? "Loading materials..."
+                            : "Select catalog material"}
+                        </option>
                         {materials.map((material) => (
                           <option key={material.id} value={material.id}>
                             {material.category} · {material.name}
                           </option>
                         ))}
                       </select>
-                      <button className="btn secondary" type="button" disabled={!canManage || !selectedCatalogMaterialId || addingMaterial} onClick={addCatalogMaterial}>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        disabled={
+                          !canManage ||
+                          !selectedCatalogMaterialId ||
+                          addingMaterial
+                        }
+                        onClick={addCatalogMaterial}
+                      >
                         Add Catalog
                       </button>
-                      <button className="btn secondary" type="button" disabled={!canManage || addingMaterial} onClick={addCustomMaterial}>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        disabled={!canManage || addingMaterial}
+                        onClick={addCustomMaterial}
+                      >
                         Add Custom
                       </button>
                     </div>
@@ -963,9 +1193,16 @@ export default function JobCostingManager({
                                   <input
                                     value={row.name}
                                     disabled={!canManage}
-                                    onChange={(event) => updateMaterialRow(index, (current) => ({ ...current, name: event.target.value }))}
+                                    onChange={(event) =>
+                                      updateMaterialRow(index, (current) => ({
+                                        ...current,
+                                        name: event.target.value,
+                                      }))
+                                    }
                                   />
-                                  {row.notes ? <small className="muted">{row.notes}</small> : null}
+                                  {row.notes ? (
+                                    <small className="muted">{row.notes}</small>
+                                  ) : null}
                                 </div>
                               </td>
                               <td>
@@ -973,7 +1210,10 @@ export default function JobCostingManager({
                                   value={row.plannedQuantity}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateMaterialRow(index, (current) => ({ ...current, plannedQuantity: event.target.value }))
+                                    updateMaterialRow(index, (current) => ({
+                                      ...current,
+                                      plannedQuantity: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
@@ -981,7 +1221,12 @@ export default function JobCostingManager({
                                 <input
                                   value={row.unit}
                                   disabled={!canManage}
-                                  onChange={(event) => updateMaterialRow(index, (current) => ({ ...current, unit: event.target.value }))}
+                                  onChange={(event) =>
+                                    updateMaterialRow(index, (current) => ({
+                                      ...current,
+                                      unit: event.target.value,
+                                    }))
+                                  }
                                 />
                               </td>
                               <td>
@@ -989,19 +1234,27 @@ export default function JobCostingManager({
                                   value={row.plannedUnitCost}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateMaterialRow(index, (current) => ({ ...current, plannedUnitCost: event.target.value }))
+                                    updateMaterialRow(index, (current) => ({
+                                      ...current,
+                                      plannedUnitCost: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
                               <td>
-                                <strong>{formatJobCostingCurrency(row.plannedTotal)}</strong>
+                                <strong>
+                                  {formatJobCostingCurrency(row.plannedTotal)}
+                                </strong>
                               </td>
                               <td>
                                 <input
                                   value={row.actualQuantity}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateMaterialRow(index, (current) => ({ ...current, actualQuantity: event.target.value }))
+                                    updateMaterialRow(index, (current) => ({
+                                      ...current,
+                                      actualQuantity: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
@@ -1010,19 +1263,27 @@ export default function JobCostingManager({
                                   value={row.actualUnitCost}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateMaterialRow(index, (current) => ({ ...current, actualUnitCost: event.target.value }))
+                                    updateMaterialRow(index, (current) => ({
+                                      ...current,
+                                      actualUnitCost: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
                               <td>
-                                <strong>{formatJobCostingCurrency(row.actualTotal)}</strong>
+                                <strong>
+                                  {formatJobCostingCurrency(row.actualTotal)}
+                                </strong>
                               </td>
                               <td>
                                 <input
                                   value={row.varianceNotes}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateMaterialRow(index, (current) => ({ ...current, varianceNotes: event.target.value }))
+                                    updateMaterialRow(index, (current) => ({
+                                      ...current,
+                                      varianceNotes: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
@@ -1031,15 +1292,21 @@ export default function JobCostingManager({
                                   <button
                                     className="btn secondary"
                                     type="button"
-                                    disabled={!canManage || busyMaterialId === row.id}
+                                    disabled={
+                                      !canManage || busyMaterialId === row.id
+                                    }
                                     onClick={() => saveMaterialRow(row)}
                                   >
-                                    {busyMaterialId === row.id ? "Saving..." : "Save"}
+                                    {busyMaterialId === row.id
+                                      ? "Saving..."
+                                      : "Save"}
                                   </button>
                                   <button
                                     className="btn secondary"
                                     type="button"
-                                    disabled={!canManage || busyMaterialId === row.id}
+                                    disabled={
+                                      !canManage || busyMaterialId === row.id
+                                    }
                                     onClick={() => deleteMaterialRow(row.id)}
                                   >
                                     Delete
@@ -1055,12 +1322,27 @@ export default function JobCostingManager({
                 </section>
 
                 <section className="job-costing-section">
-                  <div className="inline" style={{ justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div
+                    className="inline"
+                    style={{
+                      justifyContent: "space-between",
+                      gap: 12,
+                      alignItems: "center",
+                    }}
+                  >
                     <div>
                       <h4 style={{ marginBottom: 4 }}>Labor</h4>
-                      <p className="muted">Track planned crew cost against actual hours and hourly cost.</p>
+                      <p className="muted">
+                        Track planned crew cost against actual hours and hourly
+                        cost.
+                      </p>
                     </div>
-                    <button className="btn secondary" type="button" disabled={!canManage || addingLabor} onClick={addLaborRow}>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      disabled={!canManage || addingLabor}
+                      onClick={addLaborRow}
+                    >
                       {addingLabor ? "Adding..." : "Add Labor"}
                     </button>
                   </div>
@@ -1098,10 +1380,15 @@ export default function JobCostingManager({
                                     value={row.description}
                                     disabled={!canManage}
                                     onChange={(event) =>
-                                      updateLaborRow(index, (current) => ({ ...current, description: event.target.value }))
+                                      updateLaborRow(index, (current) => ({
+                                        ...current,
+                                        description: event.target.value,
+                                      }))
                                     }
                                   />
-                                  {row.notes ? <small className="muted">{row.notes}</small> : null}
+                                  {row.notes ? (
+                                    <small className="muted">{row.notes}</small>
+                                  ) : null}
                                 </div>
                               </td>
                               <td>
@@ -1109,7 +1396,10 @@ export default function JobCostingManager({
                                   value={row.plannedQuantity}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateLaborRow(index, (current) => ({ ...current, plannedQuantity: event.target.value }))
+                                    updateLaborRow(index, (current) => ({
+                                      ...current,
+                                      plannedQuantity: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
@@ -1117,7 +1407,12 @@ export default function JobCostingManager({
                                 <input
                                   value={row.unit}
                                   disabled={!canManage}
-                                  onChange={(event) => updateLaborRow(index, (current) => ({ ...current, unit: event.target.value }))}
+                                  onChange={(event) =>
+                                    updateLaborRow(index, (current) => ({
+                                      ...current,
+                                      unit: event.target.value,
+                                    }))
+                                  }
                                 />
                               </td>
                               <td>
@@ -1125,19 +1420,27 @@ export default function JobCostingManager({
                                   value={row.plannedUnitCost}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateLaborRow(index, (current) => ({ ...current, plannedUnitCost: event.target.value }))
+                                    updateLaborRow(index, (current) => ({
+                                      ...current,
+                                      plannedUnitCost: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
                               <td>
-                                <strong>{formatJobCostingCurrency(row.plannedTotal)}</strong>
+                                <strong>
+                                  {formatJobCostingCurrency(row.plannedTotal)}
+                                </strong>
                               </td>
                               <td>
                                 <input
                                   value={row.actualHours}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateLaborRow(index, (current) => ({ ...current, actualHours: event.target.value }))
+                                    updateLaborRow(index, (current) => ({
+                                      ...current,
+                                      actualHours: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
@@ -1146,19 +1449,27 @@ export default function JobCostingManager({
                                   value={row.actualHourlyCost}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateLaborRow(index, (current) => ({ ...current, actualHourlyCost: event.target.value }))
+                                    updateLaborRow(index, (current) => ({
+                                      ...current,
+                                      actualHourlyCost: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
                               <td>
-                                <strong>{formatJobCostingCurrency(row.actualTotal)}</strong>
+                                <strong>
+                                  {formatJobCostingCurrency(row.actualTotal)}
+                                </strong>
                               </td>
                               <td>
                                 <input
                                   value={row.varianceNotes}
                                   disabled={!canManage}
                                   onChange={(event) =>
-                                    updateLaborRow(index, (current) => ({ ...current, varianceNotes: event.target.value }))
+                                    updateLaborRow(index, (current) => ({
+                                      ...current,
+                                      varianceNotes: event.target.value,
+                                    }))
                                   }
                                 />
                               </td>
@@ -1167,15 +1478,21 @@ export default function JobCostingManager({
                                   <button
                                     className="btn secondary"
                                     type="button"
-                                    disabled={!canManage || busyLaborId === row.id}
+                                    disabled={
+                                      !canManage || busyLaborId === row.id
+                                    }
                                     onClick={() => saveLaborRow(row)}
                                   >
-                                    {busyLaborId === row.id ? "Saving..." : "Save"}
+                                    {busyLaborId === row.id
+                                      ? "Saving..."
+                                      : "Save"}
                                   </button>
                                   <button
                                     className="btn secondary"
                                     type="button"
-                                    disabled={!canManage || busyLaborId === row.id}
+                                    disabled={
+                                      !canManage || busyLaborId === row.id
+                                    }
                                     onClick={() => deleteLaborRow(row.id)}
                                   >
                                     Delete

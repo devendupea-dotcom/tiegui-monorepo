@@ -17,6 +17,7 @@ import {
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import type { CalendarAccessRole, Role } from "@prisma/client";
 import { useTranslations } from "next-intl";
+import type enMessages from "@/messages/en.json";
 import {
   clampSlotMinutes,
   clampWeekStartsOn,
@@ -150,6 +151,8 @@ type FailedMutationState =
       endAt: string;
     }
   | null;
+
+type StatusTranslationKey = keyof typeof enMessages.status;
 
 const EVENT_TYPES = ["JOB", "ESTIMATE", "CALL", "BLOCK", "ADMIN", "TRAVEL"];
 const EVENT_STATUSES = [
@@ -350,8 +353,9 @@ export default function PremiumJobCalendar({
   const localizeStatus = useCallback(
     (value: string) => {
       const key = value.toLowerCase();
-      return statusT.has(key)
-        ? statusT(key as never)
+      const statusKey = key as StatusTranslationKey;
+      return statusT.has(statusKey)
+        ? statusT(statusKey)
         : value.replaceAll("_", " ");
     },
     [statusT],

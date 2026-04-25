@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { derivePotentialSpamSignals } from "../lib/lead-spam.ts";
+import { shouldRouteLeadToSpamReview } from "../lib/lead-spam-lane.ts";
 
 test("derivePotentialSpamSignals flags blocked callers immediately", () => {
   assert.deepEqual(
@@ -41,5 +42,22 @@ test("derivePotentialSpamSignals does not flag a single failed SMS by itself", (
       failedOutboundCount: 1,
     }),
     [],
+  );
+});
+
+test("shouldRouteLeadToSpamReview treats failed outbound SMS as review-worthy", () => {
+  assert.equal(
+    shouldRouteLeadToSpamReview({
+      potentialSpam: false,
+      failedOutboundCount: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRouteLeadToSpamReview({
+      potentialSpamSignals: [],
+      failedOutboundCount: 0,
+    }),
+    false,
   );
 });

@@ -14,10 +14,11 @@ import { upstashRedis } from "@/lib/upstash";
 export const runtime = "nodejs";
 
 type RouteContext = {
-  params: { photoId: string };
+  params: Promise<{ photoId: string }>;
 };
 
-export async function GET(_req: Request, { params }: RouteContext) {
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
 

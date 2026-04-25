@@ -13,9 +13,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     estimateId: string;
-  };
+  }>;
 };
 
 async function getScopedEstimateOrThrow(estimateId: string) {
@@ -42,7 +42,8 @@ function requireEstimateLeadId(leadId: string | null): string {
   return leadId;
 }
 
-export async function GET(_: Request, { params }: RouteContext) {
+export async function GET(_: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const estimate = await getScopedEstimateOrThrow(params.estimateId);
@@ -79,7 +80,8 @@ export async function GET(_: Request, { params }: RouteContext) {
   }
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const estimate = await getScopedEstimateOrThrow(params.estimateId);

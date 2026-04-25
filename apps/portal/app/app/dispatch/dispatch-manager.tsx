@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useLocale } from "next-intl";
 import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import { formatEstimateCurrency } from "@/lib/estimates";
+import type { TwilioMessagingReadinessCode } from "@/lib/twilio-readiness";
 import {
   compareDispatchJobs,
   dispatchStatusValues,
@@ -18,7 +19,10 @@ import {
   type DispatchJobSummary,
   type DispatchStatusValue,
 } from "@/lib/dispatch";
-import DispatchJobForm, { createDispatchJobFormState, type DispatchJobFormState } from "./dispatch-job-form";
+import DispatchJobForm, {
+  createDispatchJobFormState,
+  type DispatchJobFormState,
+} from "./dispatch-job-form";
 
 type DispatchManagerProps = {
   orgId: string;
@@ -29,55 +33,43 @@ type DispatchManagerProps = {
   initialJobId: string | null;
 };
 
-type SnapshotResponse =
-  | {
-      ok?: boolean;
-      snapshot?: DispatchDaySnapshot;
-      error?: string;
-    }
-  | null;
+type SnapshotResponse = {
+  ok?: boolean;
+  snapshot?: DispatchDaySnapshot;
+  error?: string;
+} | null;
 
-type DispatchJobResponse =
-  | {
-      ok?: boolean;
-      job?: DispatchJobDetail;
-      error?: string;
-    }
-  | null;
+type DispatchJobResponse = {
+  ok?: boolean;
+  job?: DispatchJobDetail;
+  error?: string;
+} | null;
 
-type DispatchCreateResponse =
-  | {
-      ok?: boolean;
-      job?: DispatchJobSummary;
-      error?: string;
-    }
-  | null;
+type DispatchCreateResponse = {
+  ok?: boolean;
+  job?: DispatchJobSummary;
+  error?: string;
+} | null;
 
-type DispatchCrewResponse =
-  | {
-      ok?: boolean;
-      crews?: DispatchCrewManagementItem[];
-      error?: string;
-    }
-  | null;
+type DispatchCrewResponse = {
+  ok?: boolean;
+  crews?: DispatchCrewManagementItem[];
+  error?: string;
+} | null;
 
-type DispatchSettingsResponse =
-  | {
-      ok?: boolean;
-      settings?: DispatchNotificationSettings;
-      error?: string;
-    }
-  | null;
+type DispatchSettingsResponse = {
+  ok?: boolean;
+  settings?: DispatchNotificationSettings;
+  error?: string;
+} | null;
 
-type DispatchTrackingLinkResponse =
-  | {
-      ok?: boolean;
-      tracking?: {
-        url: string;
-      };
-      error?: string;
-    }
-  | null;
+type DispatchTrackingLinkResponse = {
+  ok?: boolean;
+  tracking?: {
+    url: string;
+  };
+  error?: string;
+} | null;
 
 type DispatchColumn = {
   crewId: string | null;
@@ -158,7 +150,11 @@ type DispatchManagerCopy = {
   loadingSmsSettings: string;
   sendCustomerDispatchSms: string;
   usesTwilio: string;
-  twilioNotReady: string;
+  twilioNotConfigured: string;
+  twilioPendingA2P: string;
+  twilioPaused: string;
+  twilioSendDisabled: string;
+  twilioTokenMissing: string;
   dispatchStatuses: Record<DispatchStatusValue, string>;
   priorities: Record<"low" | "medium" | "high" | "urgent", string>;
   closeDispatchJobDetails: string;
@@ -195,6 +191,26 @@ type DispatchManagerCopy = {
   byTime: (time: string) => string;
   anyTime: string;
 };
+
+function getDispatchTwilioReadinessMessage(
+  copy: DispatchManagerCopy,
+  readinessCode: TwilioMessagingReadinessCode,
+) {
+  switch (readinessCode) {
+    case "ACTIVE":
+      return copy.usesTwilio;
+    case "PENDING_A2P":
+      return copy.twilioPendingA2P;
+    case "PAUSED":
+      return copy.twilioPaused;
+    case "SEND_DISABLED":
+      return copy.twilioSendDisabled;
+    case "TOKEN_KEY_MISSING":
+      return copy.twilioTokenMissing;
+    default:
+      return copy.twilioNotConfigured;
+  }
+}
 
 function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
   if (locale.startsWith("es")) {
@@ -253,24 +269,39 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
       status: "Estado",
       priority: "Prioridad",
       clearDayTitle: "Este dia sigue libre.",
-      clearDayBody: "Agrega trabajos cuando entren, deja visible lo no asignado y luego arrastra cada parada a la cuadrilla correcta.",
+      clearDayBody:
+        "Agrega trabajos cuando entren, deja visible lo no asignado y luego arrastra cada parada a la cuadrilla correcta.",
       close: "Cerrar",
       save: "Guardar",
       cancel: "Cancelar",
       saving: "Guardando...",
       crewManagement: "Gestion de cuadrillas",
-      crewManagementBody: "Manten el tablero diario alineado con como opera realmente tu equipo.",
+      crewManagementBody:
+        "Manten el tablero diario alineado con como opera realmente tu equipo.",
       loadingCrews: "Cargando cuadrillas...",
       crewName: "Nombre de la cuadrilla",
       active: "Activa",
-      openAssignedJobs: (count) => `${count} ${count === 1 ? "trabajo abierto asignado" : "trabajos abiertos asignados"}`,
+      openAssignedJobs: (count) =>
+        `${count} ${count === 1 ? "trabajo abierto asignado" : "trabajos abiertos asignados"}`,
       noOpenAssignedJobs: "No hay trabajos abiertos asignados actualmente",
       customerSmsUpdates: "Actualizaciones SMS al cliente",
-      customerSmsUpdatesBody: "Manten informado al cliente en momentos clave del despacho sin convertir esto en una campana.",
+      customerSmsUpdatesBody:
+        "Manten informado al cliente en momentos clave del despacho sin convertir esto en una campana.",
       loadingSmsSettings: "Cargando configuracion SMS...",
-      sendCustomerDispatchSms: "Enviar actualizaciones SMS de despacho al cliente",
-      usesTwilio: "Usa tu remitente actual de Twilio y respeta las horas de silencio.",
-      twilioNotReady: "Twilio aun no esta listo, asi que las actualizaciones seguiran apagadas hasta que mensajeria este conectada.",
+      sendCustomerDispatchSms:
+        "Enviar actualizaciones SMS de despacho al cliente",
+      usesTwilio:
+        "Usa tu remitente actual de Twilio y respeta las horas de silencio.",
+      twilioNotConfigured:
+        "Twilio todavia no esta configurado para este espacio, asi que las actualizaciones seguiran apagadas.",
+      twilioPendingA2P:
+        "Twilio esta conectado, pero sigue pendiente A2P. Las actualizaciones seguiran apagadas hasta que el numero quede ACTIVE.",
+      twilioPaused:
+        "Twilio esta pausado para este espacio. Las actualizaciones seguiran apagadas hasta reactivarlo.",
+      twilioSendDisabled:
+        "Twilio esta configurado, pero este despliegue tiene desactivado el envio SMS. Las actualizaciones no saldran en vivo.",
+      twilioTokenMissing:
+        "Twilio esta configurado, pero a este despliegue le falta la llave para leer credenciales. Las actualizaciones seguiran apagadas.",
       dispatchStatuses: {
         scheduled: "Programado",
         on_the_way: "En camino",
@@ -294,14 +325,17 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
       linkedCustomer: "Cliente vinculado",
       linkedLead: "Lead vinculado",
       linkedEstimate: "Estimado vinculado",
-      linkedEstimateBody: "Visible cuando este trabajo ya esta conectado a estimados.",
+      linkedEstimateBody:
+        "Visible cuando este trabajo ya esta conectado a estimados.",
       openEstimate: "Abrir estimado",
       noLinkedEstimate: "Aun no hay estimado vinculado.",
       recentCommunication: "Comunicacion reciente",
-      recentCommunicationBody: "Ultimos mensajes o llamadas conectados con este cliente.",
+      recentCommunicationBody:
+        "Ultimos mensajes o llamadas conectados con este cliente.",
       noRecentCommunication: "Aun no hay comunicacion reciente vinculada.",
       customerTracking: "Seguimiento del cliente",
-      customerTrackingBody: "Genera un enlace publico simple para que el cliente vea el estado y la linea de tiempo en vivo.",
+      customerTrackingBody:
+        "Genera un enlace publico simple para que el cliente vea el estado y la linea de tiempo en vivo.",
       copyLink: "Copiar enlace",
       createLink: "Crear enlace",
       generating: "Generando...",
@@ -309,10 +343,12 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
       openTrackingPage: "Abrir pagina de seguimiento",
       openJobWorkspace: "Abrir trabajo",
       createFreshLink: "Crear enlace nuevo",
-      createShareableLink: "Crea un enlace compartible cuando estes listo para enviarle al cliente actualizaciones en vivo.",
+      createShareableLink:
+        "Crea un enlace compartible cuando estes listo para enviarle al cliente actualizaciones en vivo.",
       editJob: "Editar trabajo",
       editJobBody: "Guarda cambios directamente desde el panel de despacho.",
-      linkedBookingRequired: "La fecha, la hora y el estado de despacho se controlan desde una reserva real del calendario.",
+      linkedBookingRequired:
+        "La fecha, la hora y el estado de despacho se controlan desde una reserva real del calendario.",
       saveChanges: "Guardar cambios",
       notes: "Notas",
       startsAt: (time) => `Empieza ${time}`,
@@ -376,24 +412,37 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
     status: "Status",
     priority: "Priority",
     clearDayTitle: "This day is still clear.",
-    clearDayBody: "Add jobs as they come in, keep unassigned work visible, then drag each stop onto the right crew.",
+    clearDayBody:
+      "Add jobs as they come in, keep unassigned work visible, then drag each stop onto the right crew.",
     close: "Close",
     save: "Save",
     cancel: "Cancel",
     saving: "Saving...",
     crewManagement: "Crew Management",
-    crewManagementBody: "Keep the daily board aligned with how your team actually runs.",
+    crewManagementBody:
+      "Keep the daily board aligned with how your team actually runs.",
     loadingCrews: "Loading crews...",
     crewName: "Crew name",
     active: "Active",
-    openAssignedJobs: (count) => `${count} open ${count === 1 ? "job" : "jobs"} currently assigned`,
+    openAssignedJobs: (count) =>
+      `${count} open ${count === 1 ? "job" : "jobs"} currently assigned`,
     noOpenAssignedJobs: "No open jobs currently assigned",
     customerSmsUpdates: "Customer SMS Updates",
-    customerSmsUpdatesBody: "Keep customers informed at key dispatch moments without turning this into a campaign tool.",
+    customerSmsUpdatesBody:
+      "Keep customers informed at key dispatch moments without turning this into a campaign tool.",
     loadingSmsSettings: "Loading SMS settings...",
     sendCustomerDispatchSms: "Send customer dispatch SMS updates",
     usesTwilio: "Uses your current Twilio sender and respects quiet hours.",
-    twilioNotReady: "Twilio is not fully ready yet, so updates will stay off until messaging is connected.",
+    twilioNotConfigured:
+      "Twilio is not configured for this workspace yet, so updates will stay off.",
+    twilioPendingA2P:
+      "Twilio is connected, but it is still pending A2P approval. Updates stay off until the number becomes ACTIVE.",
+    twilioPaused:
+      "Twilio is paused for this workspace. Updates stay off until it is reactivated.",
+    twilioSendDisabled:
+      "Twilio is configured, but this deployment has SMS sending disabled. Updates will not send live.",
+    twilioTokenMissing:
+      "Twilio is configured, but this deployment is missing the key needed to read credentials safely. Updates stay off.",
     dispatchStatuses: {
       scheduled: "Scheduled",
       on_the_way: "On the way",
@@ -421,10 +470,12 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
     openEstimate: "Open Estimate",
     noLinkedEstimate: "No linked estimate yet.",
     recentCommunication: "Recent communication",
-    recentCommunicationBody: "Last known messages or calls connected to this customer.",
+    recentCommunicationBody:
+      "Last known messages or calls connected to this customer.",
     noRecentCommunication: "No recent communication linked yet.",
     customerTracking: "Customer tracking",
-    customerTrackingBody: "Generate a simple public link so the customer can see live status and timeline updates.",
+    customerTrackingBody:
+      "Generate a simple public link so the customer can see live status and timeline updates.",
     copyLink: "Copy Link",
     createLink: "Create Link",
     generating: "Generating...",
@@ -432,10 +483,12 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
     openTrackingPage: "Open Tracking Page",
     openJobWorkspace: "Open Operational Job",
     createFreshLink: "Create Fresh Link",
-    createShareableLink: "Create a shareable link when you are ready to send the customer live job updates.",
+    createShareableLink:
+      "Create a shareable link when you are ready to send the customer live job updates.",
     editJob: "Edit job",
     editJobBody: "Save updates directly from the dispatch drawer.",
-    linkedBookingRequired: "Schedule timing and dispatch execution stay locked to a real calendar booking.",
+    linkedBookingRequired:
+      "Schedule timing and dispatch execution stay locked to a real calendar booking.",
     saveChanges: "Save Changes",
     notes: "Notes",
     startsAt: (time) => `Starts ${time}`,
@@ -444,13 +497,21 @@ function getDispatchManagerCopy(locale: string): DispatchManagerCopy {
   };
 }
 
-function withOrgQuery(path: string, orgId: string, internalUser: boolean): string {
+function withOrgQuery(
+  path: string,
+  orgId: string,
+  internalUser: boolean,
+): string {
   if (!internalUser) return path;
   const joiner = path.includes("?") ? "&" : "?";
   return `${path}${joiner}orgId=${encodeURIComponent(orgId)}`;
 }
 
-function createQuery(params: Record<string, string>, orgId: string, internalUser: boolean): string {
+function createQuery(
+  params: Record<string, string>,
+  orgId: string,
+  internalUser: boolean,
+): string {
   const query = new URLSearchParams(params);
   if (internalUser) {
     query.set("orgId", orgId);
@@ -462,7 +523,9 @@ function getTodayDateKey(): string {
   return getDispatchTodayDateKey();
 }
 
-function toFormState(job: DispatchJobSummary | DispatchJobDetail): DispatchJobFormState {
+function toFormState(
+  job: DispatchJobSummary | DispatchJobDetail,
+): DispatchJobFormState {
   return {
     customerId: job.customerId || "",
     customerLabel: job.customerLabel || "",
@@ -500,7 +563,10 @@ function toPayload(form: DispatchJobFormState) {
   };
 }
 
-function buildColumns(snapshot: DispatchDaySnapshot | null, unassignedLabel: string): DispatchColumn[] {
+function buildColumns(
+  snapshot: DispatchDaySnapshot | null,
+  unassignedLabel: string,
+): DispatchColumn[] {
   if (!snapshot) {
     return [
       {
@@ -531,7 +597,11 @@ function buildColumns(snapshot: DispatchDaySnapshot | null, unassignedLabel: str
     return [];
   }
 
-  const columnsByCrew = new Map(columns.map((column) => [column.crewId || "__unassigned__", column] as const));
+  const columnsByCrew = new Map(
+    columns.map(
+      (column) => [column.crewId || "__unassigned__", column] as const,
+    ),
+  );
   for (const job of snapshot.jobs) {
     const key = job.assignedCrewId || "__unassigned__";
     const column = columnsByCrew.get(key) || fallbackColumn;
@@ -560,14 +630,18 @@ function flattenColumns(columns: DispatchColumn[]): DispatchJobSummary[] {
   return jobs.sort(compareDispatchJobs);
 }
 
-function snapshotFromColumns(snapshot: DispatchDaySnapshot, columns: DispatchColumn[]): DispatchDaySnapshot {
+function snapshotFromColumns(
+  snapshot: DispatchDaySnapshot,
+  columns: DispatchColumn[],
+): DispatchDaySnapshot {
   const jobs = flattenColumns(columns);
   return {
     ...snapshot,
     jobs,
     crews: snapshot.crews.map((crew) => ({
       ...crew,
-      jobCount: columns.find((column) => column.crewId === crew.id)?.jobs.length || 0,
+      jobCount:
+        columns.find((column) => column.crewId === crew.id)?.jobs.length || 0,
     })),
     counts: {
       total: jobs.length,
@@ -604,7 +678,8 @@ function moveJobBetweenColumns(input: {
   }
 
   const targetColumn =
-    nextColumns.find((column) => column.crewId === input.targetCrewId) || nextColumns[0];
+    nextColumns.find((column) => column.crewId === input.targetCrewId) ||
+    nextColumns[0];
   if (!targetColumn || (targetColumn.crewId && !targetColumn.active)) {
     return nextColumns;
   }
@@ -628,21 +703,36 @@ function moveJobBetweenColumns(input: {
 }
 
 function formatEventDateTime(value: string, locale: string): string {
-  return formatDateTimeForDisplay(value, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }, { locale });
+  return formatDateTimeForDisplay(
+    value,
+    {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    },
+    { locale },
+  );
 }
 
-function formatLocalizedDispatchStatus(value: DispatchStatusValue, copy: DispatchManagerCopy): string {
+function formatLocalizedDispatchStatus(
+  value: DispatchStatusValue,
+  copy: DispatchManagerCopy,
+): string {
   return copy.dispatchStatuses[value];
 }
 
-function formatLocalizedDispatchPriority(value: string, copy: DispatchManagerCopy): string {
+function formatLocalizedDispatchPriority(
+  value: string,
+  copy: DispatchManagerCopy,
+): string {
   const normalized = value.trim().toLowerCase();
-  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "urgent") {
+  if (
+    normalized === "low" ||
+    normalized === "medium" ||
+    normalized === "high" ||
+    normalized === "urgent"
+  ) {
     return copy.priorities[normalized];
   }
   return formatDispatchPriorityLabel(value);
@@ -679,35 +769,58 @@ export default function DispatchManager({
   const [refreshToken, setRefreshToken] = useState(0);
 
   const [showNewJob, setShowNewJob] = useState(false);
-  const [newJobForm, setNewJobForm] = useState(() => createDispatchJobFormState(normalizedInitialDate || ""));
+  const [newJobForm, setNewJobForm] = useState(() =>
+    createDispatchJobFormState(normalizedInitialDate || ""),
+  );
   const [creating, setCreating] = useState(false);
 
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(initialJobId);
-  const [selectedJob, setSelectedJob] = useState<DispatchJobDetail | null>(null);
-  const [detailForm, setDetailForm] = useState(() => createDispatchJobFormState(normalizedInitialDate || ""));
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(
+    initialJobId,
+  );
+  const [selectedJob, setSelectedJob] = useState<DispatchJobDetail | null>(
+    null,
+  );
+  const [detailForm, setDetailForm] = useState(() =>
+    createDispatchJobFormState(normalizedInitialDate || ""),
+  );
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [savingDetail, setSavingDetail] = useState(false);
   const [trackingLink, setTrackingLink] = useState<string | null>(null);
-  const [trackingLinkError, setTrackingLinkError] = useState<string | null>(null);
+  const [trackingLinkError, setTrackingLinkError] = useState<string | null>(
+    null,
+  );
   const [generatingTrackingLink, setGeneratingTrackingLink] = useState(false);
 
   const [dragJobId, setDragJobId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<{ crewId: string | null; beforeJobId: string | null } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    crewId: string | null;
+    beforeJobId: string | null;
+  } | null>(null);
   const [reordering, setReordering] = useState(false);
 
   const [showCrewManager, setShowCrewManager] = useState(false);
-  const [crewSettings, setCrewSettings] = useState<DispatchCrewManagementItem[]>([]);
-  const [crewDrafts, setCrewDrafts] = useState<Record<string, { name: string; active: boolean }>>({});
+  const [crewSettings, setCrewSettings] = useState<
+    DispatchCrewManagementItem[]
+  >([]);
+  const [crewDrafts, setCrewDrafts] = useState<
+    Record<string, { name: string; active: boolean }>
+  >({});
   const [loadingCrews, setLoadingCrews] = useState(false);
   const [crewError, setCrewError] = useState<string | null>(null);
   const [savingCrewId, setSavingCrewId] = useState<string | null>(null);
 
-  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
-  const [notificationSettings, setNotificationSettings] = useState<DispatchNotificationSettings | null>(null);
-  const [loadingNotificationSettings, setLoadingNotificationSettings] = useState(false);
-  const [savingNotificationSettings, setSavingNotificationSettings] = useState(false);
-  const [notificationSettingsError, setNotificationSettingsError] = useState<string | null>(null);
+  const [showNotificationSettings, setShowNotificationSettings] =
+    useState(false);
+  const [notificationSettings, setNotificationSettings] =
+    useState<DispatchNotificationSettings | null>(null);
+  const [loadingNotificationSettings, setLoadingNotificationSettings] =
+    useState(false);
+  const [savingNotificationSettings, setSavingNotificationSettings] =
+    useState(false);
+  const [notificationSettingsError, setNotificationSettingsError] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if (selectedDate) return;
@@ -729,12 +842,18 @@ export default function DispatchManager({
       setError(null);
 
       try {
-        const query = createQuery({ date: selectedDate, today: getTodayDateKey() }, orgId, internalUser);
+        const query = createQuery(
+          { date: selectedDate, today: getTodayDateKey() },
+          orgId,
+          internalUser,
+        );
         const response = await fetch(`/api/dispatch?${query}`, {
           method: "GET",
           cache: "no-store",
         });
-        const payload = (await response.json().catch(() => null)) as SnapshotResponse;
+        const payload = (await response
+          .json()
+          .catch(() => null)) as SnapshotResponse;
 
         if (!response.ok || !payload?.ok || !payload.snapshot) {
           throw new Error(payload?.error || copy.errors.loadDispatch);
@@ -743,7 +862,10 @@ export default function DispatchManager({
         if (cancelled) return;
         setSnapshot(payload.snapshot);
 
-        if (selectedJobId && !payload.snapshot.jobs.some((job) => job.id === selectedJobId)) {
+        if (
+          selectedJobId &&
+          !payload.snapshot.jobs.some((job) => job.id === selectedJobId)
+        ) {
           setSelectedJobId(null);
           setSelectedJob(null);
           setDetailError(null);
@@ -751,7 +873,11 @@ export default function DispatchManager({
       } catch (loadError) {
         if (cancelled) return;
         setSnapshot(null);
-        setError(loadError instanceof Error ? loadError.message : copy.errors.loadDispatch);
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : copy.errors.loadDispatch,
+        );
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -764,7 +890,14 @@ export default function DispatchManager({
     return () => {
       cancelled = true;
     };
-  }, [copy.errors.loadDispatch, internalUser, orgId, refreshToken, selectedDate, selectedJobId]);
+  }, [
+    copy.errors.loadDispatch,
+    internalUser,
+    orgId,
+    refreshToken,
+    selectedDate,
+    selectedJobId,
+  ]);
 
   useEffect(() => {
     if (!selectedJobId) return;
@@ -779,11 +912,16 @@ export default function DispatchManager({
         const query = new URLSearchParams({
           today: getTodayDateKey(),
         });
-        const response = await fetch(`/api/dispatch/jobs/${selectedJobId}?${query.toString()}`, {
-          method: "GET",
-          cache: "no-store",
-        });
-        const payload = (await response.json().catch(() => null)) as DispatchJobResponse;
+        const response = await fetch(
+          `/api/dispatch/jobs/${selectedJobId}?${query.toString()}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          },
+        );
+        const payload = (await response
+          .json()
+          .catch(() => null)) as DispatchJobResponse;
         if (!response.ok || !payload?.ok || !payload.job) {
           throw new Error(payload?.error || copy.errors.loadDispatchJob);
         }
@@ -794,7 +932,11 @@ export default function DispatchManager({
       } catch (loadError) {
         if (cancelled) return;
         setSelectedJob(null);
-        setDetailError(loadError instanceof Error ? loadError.message : copy.errors.loadDispatchJob);
+        setDetailError(
+          loadError instanceof Error
+            ? loadError.message
+            : copy.errors.loadDispatchJob,
+        );
       } finally {
         if (!cancelled) {
           setLoadingDetail(false);
@@ -814,11 +956,16 @@ export default function DispatchManager({
     setCrewError(null);
 
     try {
-      const response = await fetch(`/api/dispatch/crews?${createQuery({}, orgId, internalUser)}`, {
-        method: "GET",
-        cache: "no-store",
-      });
-      const payload = (await response.json().catch(() => null)) as DispatchCrewResponse;
+      const response = await fetch(
+        `/api/dispatch/crews?${createQuery({}, orgId, internalUser)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        },
+      );
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DispatchCrewResponse;
       if (!response.ok || !payload?.ok || !payload.crews) {
         throw new Error(payload?.error || copy.errors.loadCrews);
       }
@@ -836,7 +983,9 @@ export default function DispatchManager({
         ),
       );
     } catch (loadError) {
-      setCrewError(loadError instanceof Error ? loadError.message : copy.errors.loadCrews);
+      setCrewError(
+        loadError instanceof Error ? loadError.message : copy.errors.loadCrews,
+      );
     } finally {
       setLoadingCrews(false);
     }
@@ -847,18 +996,27 @@ export default function DispatchManager({
     setNotificationSettingsError(null);
 
     try {
-      const response = await fetch(`/api/dispatch/settings?${createQuery({}, orgId, internalUser)}`, {
-        method: "GET",
-        cache: "no-store",
-      });
-      const payload = (await response.json().catch(() => null)) as DispatchSettingsResponse;
+      const response = await fetch(
+        `/api/dispatch/settings?${createQuery({}, orgId, internalUser)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        },
+      );
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DispatchSettingsResponse;
       if (!response.ok || !payload?.ok || !payload.settings) {
         throw new Error(payload?.error || copy.errors.loadSettings);
       }
 
       setNotificationSettings(payload.settings);
     } catch (loadError) {
-      setNotificationSettingsError(loadError instanceof Error ? loadError.message : copy.errors.loadSettings);
+      setNotificationSettingsError(
+        loadError instanceof Error
+          ? loadError.message
+          : copy.errors.loadSettings,
+      );
     } finally {
       setLoadingNotificationSettings(false);
     }
@@ -881,7 +1039,8 @@ export default function DispatchManager({
   }, [canManage, loadNotificationSettings, showNotificationSettings]);
 
   const columns = buildColumns(snapshot, copy.unassigned);
-  const selectedJobSummary = snapshot?.jobs.find((job) => job.id === selectedJobId) || null;
+  const selectedJobSummary =
+    snapshot?.jobs.find((job) => job.id === selectedJobId) || null;
   const activeCrews = (snapshot?.crews || []).filter((crew) => crew.active);
 
   async function handleCreateJob(event: FormEvent<HTMLFormElement>) {
@@ -903,7 +1062,9 @@ export default function DispatchManager({
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as DispatchCreateResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DispatchCreateResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || copy.errors.createJob);
       }
@@ -913,7 +1074,9 @@ export default function DispatchManager({
       setNotice(copy.notices.jobCreated);
       setRefreshToken((token) => token + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : copy.errors.createJob);
+      setError(
+        saveError instanceof Error ? saveError.message : copy.errors.createJob,
+      );
     } finally {
       setCreating(false);
     }
@@ -939,7 +1102,9 @@ export default function DispatchManager({
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as DispatchJobResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DispatchJobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || copy.errors.saveJob);
       }
@@ -949,7 +1114,9 @@ export default function DispatchManager({
       setNotice(copy.notices.jobUpdated);
       setRefreshToken((token) => token + 1);
     } catch (saveError) {
-      setDetailError(saveError instanceof Error ? saveError.message : copy.errors.saveJob);
+      setDetailError(
+        saveError instanceof Error ? saveError.message : copy.errors.saveJob,
+      );
     } finally {
       setSavingDetail(false);
     }
@@ -976,7 +1143,9 @@ export default function DispatchManager({
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as DispatchCrewResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DispatchCrewResponse;
       if (!response.ok || !payload?.ok || !payload.crews) {
         throw new Error(payload?.error || copy.errors.saveCrew);
       }
@@ -996,7 +1165,9 @@ export default function DispatchManager({
       setNotice(copy.notices.crewUpdated);
       setRefreshToken((token) => token + 1);
     } catch (saveError) {
-      setCrewError(saveError instanceof Error ? saveError.message : copy.errors.saveCrew);
+      setCrewError(
+        saveError instanceof Error ? saveError.message : copy.errors.saveCrew,
+      );
     } finally {
       setSavingCrewId(null);
     }
@@ -1024,7 +1195,9 @@ export default function DispatchManager({
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as DispatchSettingsResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DispatchSettingsResponse;
       if (!response.ok || !payload?.ok || !payload.settings) {
         throw new Error(payload?.error || copy.errors.saveSettings);
       }
@@ -1033,14 +1206,19 @@ export default function DispatchManager({
       setNotice(copy.notices.settingsUpdated);
     } catch (saveError) {
       setNotificationSettingsError(
-        saveError instanceof Error ? saveError.message : copy.errors.saveSettings,
+        saveError instanceof Error
+          ? saveError.message
+          : copy.errors.saveSettings,
       );
     } finally {
       setSavingNotificationSettings(false);
     }
   }
 
-  async function handleQuickStatusChange(job: DispatchJobSummary, status: DispatchStatusValue) {
+  async function handleQuickStatusChange(
+    job: DispatchJobSummary,
+    status: DispatchStatusValue,
+  ) {
     if (!canManage || status === job.status) return;
 
     const previousSnapshot = snapshot;
@@ -1063,7 +1241,8 @@ export default function DispatchManager({
         jobs: nextJobs,
         counts: {
           ...previousSnapshot.counts,
-          completed: nextJobs.filter((entry) => entry.status === "completed").length,
+          completed: nextJobs.filter((entry) => entry.status === "completed")
+            .length,
           overdue: nextJobs.filter((entry) => entry.isOverdue).length,
         },
       });
@@ -1081,7 +1260,9 @@ export default function DispatchManager({
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as DispatchJobResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DispatchJobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
         throw new Error(payload?.error || copy.errors.updateStatus);
       }
@@ -1097,7 +1278,11 @@ export default function DispatchManager({
       if (previousSnapshot) {
         setSnapshot(previousSnapshot);
       }
-      setError(saveError instanceof Error ? saveError.message : copy.errors.updateStatus);
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : copy.errors.updateStatus,
+      );
     }
   }
 
@@ -1108,10 +1293,15 @@ export default function DispatchManager({
     setTrackingLinkError(null);
 
     try {
-      const response = await fetch(`/api/dispatch/jobs/${selectedJobId}/tracking-link`, {
-        method: "POST",
-      });
-      const payload = (await response.json().catch(() => null)) as DispatchTrackingLinkResponse;
+      const response = await fetch(
+        `/api/dispatch/jobs/${selectedJobId}/tracking-link`,
+        {
+          method: "POST",
+        },
+      );
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DispatchTrackingLinkResponse;
       if (!response.ok || !payload?.ok || !payload.tracking?.url) {
         throw new Error(payload?.error || copy.errors.generateLink);
       }
@@ -1125,7 +1315,10 @@ export default function DispatchManager({
         setNotice(copy.notices.trackingLinkCreated);
       }
     } catch (trackingError) {
-      const message = trackingError instanceof Error ? trackingError.message : copy.errors.generateLink;
+      const message =
+        trackingError instanceof Error
+          ? trackingError.message
+          : copy.errors.generateLink;
       setTrackingLinkError(message);
     } finally {
       setGeneratingTrackingLink(false);
@@ -1145,11 +1338,16 @@ export default function DispatchManager({
       setNotice(copy.notices.trackingLinkCopied);
       setTrackingLinkError(null);
     } catch (copyError) {
-      setTrackingLinkError(copyError instanceof Error ? copyError.message : copy.errors.copyLink);
+      setTrackingLinkError(
+        copyError instanceof Error ? copyError.message : copy.errors.copyLink,
+      );
     }
   }
 
-  async function commitReorder(nextColumns: DispatchColumn[], previousSnapshot: DispatchDaySnapshot) {
+  async function commitReorder(
+    nextColumns: DispatchColumn[],
+    previousSnapshot: DispatchDaySnapshot,
+  ) {
     setReordering(true);
     setError(null);
 
@@ -1170,7 +1368,9 @@ export default function DispatchManager({
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as SnapshotResponse;
+      const payload = (await response
+        .json()
+        .catch(() => null)) as SnapshotResponse;
       if (!response.ok || !payload?.ok || !payload.snapshot) {
         throw new Error(payload?.error || copy.errors.reorderBoard);
       }
@@ -1179,7 +1379,11 @@ export default function DispatchManager({
       setRefreshToken((token) => token + 1);
     } catch (saveError) {
       setSnapshot(previousSnapshot);
-      setError(saveError instanceof Error ? saveError.message : copy.errors.reorderBoard);
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : copy.errors.reorderBoard,
+      );
     } finally {
       setReordering(false);
       setDragJobId(null);
@@ -1189,7 +1393,8 @@ export default function DispatchManager({
 
   function handleDrop(targetCrewId: string | null, beforeJobId: string | null) {
     if (!snapshot || !dragJobId || reordering) return;
-    const targetColumn = columns.find((column) => column.crewId === targetCrewId) || columns[0];
+    const targetColumn =
+      columns.find((column) => column.crewId === targetCrewId) || columns[0];
     if (!targetColumn || (targetColumn.crewId && !targetColumn.active)) {
       return;
     }
@@ -1235,7 +1440,11 @@ export default function DispatchManager({
         </div>
 
         <div className="dispatch-toolbar-actions">
-          <div className="dispatch-view-toggle" role="tablist" aria-label={copy.title}>
+          <div
+            className="dispatch-view-toggle"
+            role="tablist"
+            aria-label={copy.title}
+          >
             <button
               className={`btn secondary dispatch-toggle ${view === "board" ? "active" : ""}`}
               type="button"
@@ -1253,10 +1462,18 @@ export default function DispatchManager({
           </div>
           {canManage ? (
             <>
-              <button className="btn secondary" type="button" onClick={() => setShowCrewManager(true)}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setShowCrewManager(true)}
+              >
                 {copy.crews}
               </button>
-              <button className="btn secondary" type="button" onClick={() => setShowNotificationSettings(true)}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setShowNotificationSettings(true)}
+              >
                 {copy.smsUpdates}
               </button>
               <button
@@ -1287,7 +1504,9 @@ export default function DispatchManager({
           <span className="muted">{copy.completed}</span>
           <strong>{snapshot?.counts.completed || 0}</strong>
         </div>
-        <div className={`card dispatch-summary-card ${(snapshot?.counts.overdue || 0) > 0 ? "dispatch-summary-card--warning" : ""}`}>
+        <div
+          className={`card dispatch-summary-card ${(snapshot?.counts.overdue || 0) > 0 ? "dispatch-summary-card--warning" : ""}`}
+        >
           <span className="muted">{copy.overdue}</span>
           <strong>{snapshot?.counts.overdue || 0}</strong>
         </div>
@@ -1315,7 +1534,12 @@ export default function DispatchManager({
                 column.active ? "" : "is-inactive"
               }`}
               onDragOver={(event) => {
-                if (!canManage || !dragJobId || (column.crewId && !column.active)) return;
+                if (
+                  !canManage ||
+                  !dragJobId ||
+                  (column.crewId && !column.active)
+                )
+                  return;
                 event.preventDefault();
                 setDropTarget({ crewId: column.crewId, beforeJobId: null });
               }}
@@ -1328,18 +1552,28 @@ export default function DispatchManager({
               <header className="dispatch-column-head">
                 <div>
                   <h3>{column.name}</h3>
-                  <span className="muted">{copy.jobCount(column.jobs.length)}</span>
+                  <span className="muted">
+                    {copy.jobCount(column.jobs.length)}
+                  </span>
                 </div>
                 <div className="dispatch-column-badges">
-                  {column.crewId ? <span className="badge">{column.jobs.length}</span> : null}
-                  {column.crewId && !column.active ? <span className="badge muted">{copy.inactive}</span> : null}
+                  {column.crewId ? (
+                    <span className="badge">{column.jobs.length}</span>
+                  ) : null}
+                  {column.crewId && !column.active ? (
+                    <span className="badge muted">{copy.inactive}</span>
+                  ) : null}
                 </div>
               </header>
 
               <div className="dispatch-column-body">
                 {column.jobs.length === 0 ? (
                   <div className="dispatch-column-empty">
-                    <strong>{column.crewId && !column.active ? copy.inactiveCrew : copy.noJobsYet}</strong>
+                    <strong>
+                      {column.crewId && !column.active
+                        ? copy.inactiveCrew
+                        : copy.noJobsYet}
+                    </strong>
                     <span className="muted">
                       {column.crewId
                         ? column.active
@@ -1368,12 +1602,21 @@ export default function DispatchManager({
                         setDropTarget(null);
                       }}
                       onDragOver={(event) => {
-                        if (!canManage || !dragJobId || (column.crewId && !column.active)) return;
+                        if (
+                          !canManage ||
+                          !dragJobId ||
+                          (column.crewId && !column.active)
+                        )
+                          return;
                         event.preventDefault();
-                        setDropTarget({ crewId: column.crewId, beforeJobId: job.id });
+                        setDropTarget({
+                          crewId: column.crewId,
+                          beforeJobId: job.id,
+                        });
                       }}
                       onDrop={(event) => {
-                        if (!canManage || (column.crewId && !column.active)) return;
+                        if (!canManage || (column.crewId && !column.active))
+                          return;
                         event.preventDefault();
                         handleDrop(column.crewId, job.id);
                       }}
@@ -1385,19 +1628,34 @@ export default function DispatchManager({
                         </div>
                         {job.priority ? (
                           <span className={`badge priority-${job.priority}`}>
-                            {formatLocalizedDispatchPriority(job.priority, copy)}
+                            {formatLocalizedDispatchPriority(
+                              job.priority,
+                              copy,
+                            )}
                           </span>
                         ) : null}
                       </div>
 
                       <div className="dispatch-job-card-body">
                         <span>{job.address}</span>
-                        <span>{formatLocalizedDispatchWindow(job.scheduledStartTime, job.scheduledEndTime, copy)}</span>
-                        {job.isOverdue ? <span className="badge status-overdue">{copy.overdue}</span> : null}
+                        <span>
+                          {formatLocalizedDispatchWindow(
+                            job.scheduledStartTime,
+                            job.scheduledEndTime,
+                            copy,
+                          )}
+                        </span>
+                        {job.isOverdue ? (
+                          <span className="badge status-overdue">
+                            {copy.overdue}
+                          </span>
+                        ) : null}
                       </div>
 
                       <div className="dispatch-job-card-footer">
-                        <span className={`badge status-${job.status}`}>{formatLocalizedDispatchStatus(job.status, copy)}</span>
+                        <span className={`badge status-${job.status}`}>
+                          {formatLocalizedDispatchStatus(job.status, copy)}
+                        </span>
                         {canManage ? (
                           <select
                             className="dispatch-card-status-select"
@@ -1405,7 +1663,10 @@ export default function DispatchManager({
                             onClick={(event) => event.stopPropagation()}
                             onChange={(event) => {
                               event.stopPropagation();
-                              void handleQuickStatusChange(job, event.target.value as DispatchStatusValue);
+                              void handleQuickStatusChange(
+                                job,
+                                event.target.value as DispatchStatusValue,
+                              );
                             }}
                           >
                             {dispatchStatusValues.map((value) => (
@@ -1444,7 +1705,9 @@ export default function DispatchManager({
                       <span className="muted">{job.serviceType}</span>
                     </div>
                     <div className="quick-meta">
-                      <span className={`badge status-${job.status}`}>{formatLocalizedDispatchStatus(job.status, copy)}</span>
+                      <span className={`badge status-${job.status}`}>
+                        {formatLocalizedDispatchStatus(job.status, copy)}
+                      </span>
                       {job.priority ? (
                         <span className={`badge priority-${job.priority}`}>
                           {formatLocalizedDispatchPriority(job.priority, copy)}
@@ -1453,8 +1716,16 @@ export default function DispatchManager({
                     </div>
                     <div className="stack-cell">
                       <span>{job.address}</span>
-                      <span className="muted">{formatLocalizedDispatchWindow(job.scheduledStartTime, job.scheduledEndTime, copy)}</span>
-                      <span className="muted">{job.assignedCrewName || copy.unassigned}</span>
+                      <span className="muted">
+                        {formatLocalizedDispatchWindow(
+                          job.scheduledStartTime,
+                          job.scheduledEndTime,
+                          copy,
+                        )}
+                      </span>
+                      <span className="muted">
+                        {job.assignedCrewName || copy.unassigned}
+                      </span>
                     </div>
                   </li>
                 ))}
@@ -1490,15 +1761,26 @@ export default function DispatchManager({
                         </td>
                         <td>{job.serviceType}</td>
                         <td>{job.address}</td>
-                        <td>{formatLocalizedDispatchWindow(job.scheduledStartTime, job.scheduledEndTime, copy)}</td>
+                        <td>
+                          {formatLocalizedDispatchWindow(
+                            job.scheduledStartTime,
+                            job.scheduledEndTime,
+                            copy,
+                          )}
+                        </td>
                         <td>{job.assignedCrewName || copy.unassigned}</td>
                         <td>
-                          <span className={`badge status-${job.status}`}>{formatLocalizedDispatchStatus(job.status, copy)}</span>
+                          <span className={`badge status-${job.status}`}>
+                            {formatLocalizedDispatchStatus(job.status, copy)}
+                          </span>
                         </td>
                         <td>
                           {job.priority ? (
                             <span className={`badge priority-${job.priority}`}>
-                              {formatLocalizedDispatchPriority(job.priority, copy)}
+                              {formatLocalizedDispatchPriority(
+                                job.priority,
+                                copy,
+                              )}
                             </span>
                           ) : (
                             <span className="muted">-</span>
@@ -1541,7 +1823,12 @@ export default function DispatchManager({
                 <h3>{copy.newJob}</h3>
                 <p className="muted">{copy.newJobBody(selectedDate)}</p>
               </div>
-              <button className="btn secondary" type="button" onClick={() => setShowNewJob(false)} disabled={creating}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setShowNewJob(false)}
+                disabled={creating}
+              >
                 {copy.close}
               </button>
             </header>
@@ -1551,14 +1838,21 @@ export default function DispatchManager({
               internalUser={internalUser}
               form={newJobForm}
               crews={activeCrews}
-              onChange={(patch) => setNewJobForm((current) => ({ ...current, ...patch }))}
+              onChange={(patch) =>
+                setNewJobForm((current) => ({ ...current, ...patch }))
+              }
               onSubmit={handleCreateJob}
               submitLabel={copy.save}
               submitBusyLabel={copy.saving}
               isSubmitting={creating}
               disabled={creating}
               secondaryActions={
-                <button className="btn secondary" type="button" onClick={() => setShowNewJob(false)} disabled={creating}>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => setShowNewJob(false)}
+                  disabled={creating}
+                >
                   {copy.cancel}
                 </button>
               }
@@ -1575,17 +1869,26 @@ export default function DispatchManager({
                 <h3>{copy.crewManagement}</h3>
                 <p className="muted">{copy.crewManagementBody}</p>
               </div>
-              <button className="btn secondary" type="button" onClick={() => setShowCrewManager(false)}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setShowCrewManager(false)}
+              >
                 {copy.close}
               </button>
             </header>
 
             {loadingCrews ? <p className="muted">{copy.loadingCrews}</p> : null}
-            {crewError ? <p className="muted text-danger">{crewError}</p> : null}
+            {crewError ? (
+              <p className="muted text-danger">{crewError}</p>
+            ) : null}
 
             <div className="dispatch-settings-stack">
               {crewSettings.map((crew) => {
-                const draft = crewDrafts[crew.id] || { name: crew.name, active: crew.active };
+                const draft = crewDrafts[crew.id] || {
+                  name: crew.name,
+                  active: crew.active,
+                };
                 return (
                   <div key={crew.id} className="card dispatch-settings-card">
                     <div className="dispatch-settings-row">
@@ -1654,13 +1957,21 @@ export default function DispatchManager({
                 <h3>{copy.customerSmsUpdates}</h3>
                 <p className="muted">{copy.customerSmsUpdatesBody}</p>
               </div>
-              <button className="btn secondary" type="button" onClick={() => setShowNotificationSettings(false)}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setShowNotificationSettings(false)}
+              >
                 {copy.close}
               </button>
             </header>
 
-            {loadingNotificationSettings ? <p className="muted">{copy.loadingSmsSettings}</p> : null}
-            {notificationSettingsError ? <p className="muted text-danger">{notificationSettingsError}</p> : null}
+            {loadingNotificationSettings ? (
+              <p className="muted">{copy.loadingSmsSettings}</p>
+            ) : null}
+            {notificationSettingsError ? (
+              <p className="muted text-danger">{notificationSettingsError}</p>
+            ) : null}
 
             {notificationSettings ? (
               <div className="dispatch-settings-stack">
@@ -1679,14 +1990,18 @@ export default function DispatchManager({
                             : current,
                         )
                       }
-                      disabled={savingNotificationSettings}
+                      disabled={
+                        savingNotificationSettings ||
+                        !notificationSettings.canSend
+                      }
                     />
                     {copy.sendCustomerDispatchSms}
                   </label>
                   <p className="muted">
-                    {notificationSettings.canSend
-                      ? copy.usesTwilio
-                      : copy.twilioNotReady}
+                    {getDispatchTwilioReadinessMessage(
+                      copy,
+                      notificationSettings.readinessCode,
+                    )}
                   </p>
                 </div>
 
@@ -1705,7 +2020,11 @@ export default function DispatchManager({
                             : current,
                         )
                       }
-                      disabled={savingNotificationSettings || !notificationSettings.smsEnabled}
+                      disabled={
+                        savingNotificationSettings ||
+                        !notificationSettings.smsEnabled ||
+                        !notificationSettings.canSend
+                      }
                     />
                     {copy.dispatchStatuses.scheduled}
                   </label>
@@ -1723,7 +2042,11 @@ export default function DispatchManager({
                             : current,
                         )
                       }
-                      disabled={savingNotificationSettings || !notificationSettings.smsEnabled}
+                      disabled={
+                        savingNotificationSettings ||
+                        !notificationSettings.smsEnabled ||
+                        !notificationSettings.canSend
+                      }
                     />
                     {copy.dispatchStatuses.on_the_way}
                   </label>
@@ -1741,7 +2064,11 @@ export default function DispatchManager({
                             : current,
                         )
                       }
-                      disabled={savingNotificationSettings || !notificationSettings.smsEnabled}
+                      disabled={
+                        savingNotificationSettings ||
+                        !notificationSettings.smsEnabled ||
+                        !notificationSettings.canSend
+                      }
                     />
                     {copy.dispatchStatuses.rescheduled}
                   </label>
@@ -1759,21 +2086,32 @@ export default function DispatchManager({
                             : current,
                         )
                       }
-                      disabled={savingNotificationSettings || !notificationSettings.smsEnabled}
+                      disabled={
+                        savingNotificationSettings ||
+                        !notificationSettings.smsEnabled ||
+                        !notificationSettings.canSend
+                      }
                     />
                     {copy.dispatchStatuses.completed}
                   </label>
                 </div>
 
                 <div className="dispatch-form-actions">
-                  <button className="btn secondary" type="button" onClick={() => setShowNotificationSettings(false)}>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => setShowNotificationSettings(false)}
+                  >
                     {copy.cancel}
                   </button>
                   <button
                     className="btn primary"
                     type="button"
                     onClick={() => void handleSaveNotificationSettings()}
-                    disabled={savingNotificationSettings}
+                    disabled={
+                      savingNotificationSettings ||
+                      !notificationSettings.canSend
+                    }
                   >
                     {savingNotificationSettings ? copy.saving : copy.save}
                   </button>
@@ -1800,13 +2138,21 @@ export default function DispatchManager({
             <div className="dispatch-drawer-head">
               <div>
                 <p className="muted">{copy.jobDetails}</p>
-                <h3>{selectedJob?.customerName || selectedJobSummary?.customerName || copy.dispatchJob}</h3>
+                <h3>
+                  {selectedJob?.customerName ||
+                    selectedJobSummary?.customerName ||
+                    copy.dispatchJob}
+                </h3>
               </div>
               <div className="quick-links">
                 {selectedJob ? (
                   <Link
                     className="btn secondary"
-                    href={withOrgQuery(`/app/jobs/records/${selectedJob.id}`, orgId, internalUser)}
+                    href={withOrgQuery(
+                      `/app/jobs/records/${selectedJob.id}`,
+                      orgId,
+                      internalUser,
+                    )}
                   >
                     {copy.openJobWorkspace}
                   </Link>
@@ -1826,8 +2172,12 @@ export default function DispatchManager({
             </div>
 
             <div className="dispatch-drawer-body">
-              {loadingDetail ? <p className="muted">{copy.loadingJobDetails}</p> : null}
-              {detailError ? <p className="muted text-danger">{detailError}</p> : null}
+              {loadingDetail ? (
+                <p className="muted">{copy.loadingJobDetails}</p>
+              ) : null}
+              {detailError ? (
+                <p className="muted text-danger">{detailError}</p>
+              ) : null}
 
               {selectedJob ? (
                 <>
@@ -1851,11 +2201,18 @@ export default function DispatchManager({
                       </div>
                       <div>
                         <span className="muted">{copy.crew}</span>
-                        <strong>{selectedJob.assignedCrewName || copy.unassigned}</strong>
+                        <strong>
+                          {selectedJob.assignedCrewName || copy.unassigned}
+                        </strong>
                       </div>
                       <div>
                         <span className="muted">{copy.status}</span>
-                        <strong>{formatLocalizedDispatchStatus(selectedJob.status, copy)}</strong>
+                        <strong>
+                          {formatLocalizedDispatchStatus(
+                            selectedJob.status,
+                            copy,
+                          )}
+                        </strong>
                       </div>
                       <div>
                         <span className="muted">{copy.linkedCustomer}</span>
@@ -1884,7 +2241,11 @@ export default function DispatchManager({
                       {selectedJob.linkedEstimate ? (
                         <Link
                           className="btn secondary"
-                          href={withOrgQuery(`/app/estimates/${selectedJob.linkedEstimate.id}`, orgId, internalUser)}
+                          href={withOrgQuery(
+                            `/app/estimates/${selectedJob.linkedEstimate.id}`,
+                            orgId,
+                            internalUser,
+                          )}
                         >
                           {copy.openEstimate}
                         </Link>
@@ -1894,10 +2255,17 @@ export default function DispatchManager({
                     {selectedJob.linkedEstimate ? (
                       <div className="dispatch-estimate-card">
                         <strong>
-                          {selectedJob.linkedEstimate.estimateNumber} · {selectedJob.linkedEstimate.title}
+                          {selectedJob.linkedEstimate.estimateNumber} ·{" "}
+                          {selectedJob.linkedEstimate.title}
                         </strong>
-                        <span className="muted">{selectedJob.linkedEstimate.status}</span>
-                        <span>{formatEstimateCurrency(selectedJob.linkedEstimate.total)}</span>
+                        <span className="muted">
+                          {selectedJob.linkedEstimate.status}
+                        </span>
+                        <span>
+                          {formatEstimateCurrency(
+                            selectedJob.linkedEstimate.total,
+                          )}
+                        </span>
                       </div>
                     ) : (
                       <p className="muted">{copy.noLinkedEstimate}</p>
@@ -1920,7 +2288,8 @@ export default function DispatchManager({
                             <div className="timeline-content">
                               <strong>{event.summary}</strong>
                               <span className="muted">
-                                {event.channel} · {formatEventDateTime(event.occurredAt, locale)}
+                                {event.channel} ·{" "}
+                                {formatEventDateTime(event.occurredAt, locale)}
                                 {event.leadLabel ? ` · ${event.leadLabel}` : ""}
                               </span>
                             </div>
@@ -1945,23 +2314,40 @@ export default function DispatchManager({
                           onClick={() => void handleCopyTrackingLink()}
                           disabled={generatingTrackingLink}
                         >
-                          {generatingTrackingLink ? copy.generating : trackingLink ? copy.copyLink : copy.createLink}
+                          {generatingTrackingLink
+                            ? copy.generating
+                            : trackingLink
+                              ? copy.copyLink
+                              : copy.createLink}
                         </button>
                       </div>
 
-                      {trackingLinkError ? <p className="muted text-danger">{trackingLinkError}</p> : null}
+                      {trackingLinkError ? (
+                        <p className="muted text-danger">{trackingLinkError}</p>
+                      ) : null}
 
                       {trackingLink ? (
                         <div className="estimate-share-link-box">
-                          <input value={trackingLink} readOnly aria-label={copy.customerTrackingLink} />
+                          <input
+                            value={trackingLink}
+                            readOnly
+                            aria-label={copy.customerTrackingLink}
+                          />
                           <div className="portal-empty-actions">
-                            <a className="btn secondary" href={trackingLink} target="_blank" rel="noreferrer">
+                            <a
+                              className="btn secondary"
+                              href={trackingLink}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
                               {copy.openTrackingPage}
                             </a>
                             <button
                               className="btn secondary"
                               type="button"
-                              onClick={() => void handleGenerateTrackingLink(false)}
+                              onClick={() =>
+                                void handleGenerateTrackingLink(false)
+                              }
                               disabled={generatingTrackingLink}
                             >
                               {copy.createFreshLink}
@@ -1988,13 +2374,24 @@ export default function DispatchManager({
                         internalUser={internalUser}
                         form={detailForm}
                         crews={(snapshot?.crews || []).filter(
-                          (crew) => crew.active || crew.id === (detailForm.assignedCrewId || selectedJob.assignedCrewId || ""),
+                          (crew) =>
+                            crew.active ||
+                            crew.id ===
+                              (detailForm.assignedCrewId ||
+                                selectedJob.assignedCrewId ||
+                                ""),
                         )}
                         disableScheduleFields={!selectedJob.hasActiveBooking}
                         disableStatusField={!selectedJob.hasActiveBooking}
-                        scheduleHint={!selectedJob.hasActiveBooking ? copy.linkedBookingRequired : null}
+                        scheduleHint={
+                          !selectedJob.hasActiveBooking
+                            ? copy.linkedBookingRequired
+                            : null
+                        }
                         includeStatus
-                        onChange={(patch) => setDetailForm((current) => ({ ...current, ...patch }))}
+                        onChange={(patch) =>
+                          setDetailForm((current) => ({ ...current, ...patch }))
+                        }
                         onSubmit={handleSaveDetail}
                         submitLabel={copy.saveChanges}
                         submitBusyLabel={copy.saving}

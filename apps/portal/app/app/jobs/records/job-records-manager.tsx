@@ -25,37 +25,29 @@ type JobRecordsManagerProps = {
   canManage: boolean;
 };
 
-type JobsResponse =
-  | {
-      ok?: boolean;
-      jobs?: JobListItem[];
-      error?: string;
-    }
-  | null;
+type JobsResponse = {
+  ok?: boolean;
+  jobs?: JobListItem[];
+  error?: string;
+} | null;
 
-type JobResponse =
-  | {
-      ok?: boolean;
-      job?: JobDetail;
-      error?: string;
-    }
-  | null;
+type JobResponse = {
+  ok?: boolean;
+  job?: JobDetail;
+  error?: string;
+} | null;
 
-type MaterialsResponse =
-  | {
-      ok?: boolean;
-      materials?: MaterialListItem[];
-      error?: string;
-    }
-  | null;
+type MaterialsResponse = {
+  ok?: boolean;
+  materials?: MaterialListItem[];
+  error?: string;
+} | null;
 
-type EstimateDraftsResponse =
-  | {
-      ok?: boolean;
-      drafts?: JobEstimateSummary[];
-      error?: string;
-    }
-  | null;
+type EstimateDraftsResponse = {
+  ok?: boolean;
+  drafts?: JobEstimateSummary[];
+  error?: string;
+} | null;
 
 type JobFormState = {
   customerName: string;
@@ -126,10 +118,13 @@ export default function JobRecordsManager({
   const router = useRouter();
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [materials, setMaterials] = useState<MaterialListItem[]>([]);
-  const [estimateDrafts, setEstimateDrafts] = useState<JobEstimateSummary[]>([]);
+  const [estimateDrafts, setEstimateDrafts] = useState<JobEstimateSummary[]>(
+    [],
+  );
 
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const [selectedCatalogMaterialId, setSelectedCatalogMaterialId] = useState("");
+  const [selectedCatalogMaterialId, setSelectedCatalogMaterialId] =
+    useState("");
   const [form, setForm] = useState<JobFormState>(emptyJobForm);
 
   const [search, setSearch] = useState("");
@@ -177,14 +172,30 @@ export default function JobRecordsManager({
           }),
         ]);
 
-        const materialsPayload = (await materialsResponse.json().catch(() => null)) as MaterialsResponse;
-        const draftsPayload = (await draftsResponse.json().catch(() => null)) as EstimateDraftsResponse;
+        const materialsPayload = (await materialsResponse
+          .json()
+          .catch(() => null)) as MaterialsResponse;
+        const draftsPayload = (await draftsResponse
+          .json()
+          .catch(() => null)) as EstimateDraftsResponse;
 
-        if (!materialsResponse.ok || !materialsPayload?.ok || !Array.isArray(materialsPayload.materials)) {
-          throw new Error(materialsPayload?.error || "Failed to load materials.");
+        if (
+          !materialsResponse.ok ||
+          !materialsPayload?.ok ||
+          !Array.isArray(materialsPayload.materials)
+        ) {
+          throw new Error(
+            materialsPayload?.error || "Failed to load materials.",
+          );
         }
-        if (!draftsResponse.ok || !draftsPayload?.ok || !Array.isArray(draftsPayload.drafts)) {
-          throw new Error(draftsPayload?.error || "Failed to load estimate drafts.");
+        if (
+          !draftsResponse.ok ||
+          !draftsPayload?.ok ||
+          !Array.isArray(draftsPayload.drafts)
+        ) {
+          throw new Error(
+            draftsPayload?.error || "Failed to load estimate drafts.",
+          );
         }
 
         if (cancelled) return;
@@ -194,7 +205,11 @@ export default function JobRecordsManager({
         if (cancelled) return;
         setMaterials([]);
         setEstimateDrafts([]);
-        setError(loadError instanceof Error ? loadError.message : "Failed to load job references.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load job references.",
+        );
       } finally {
         if (!cancelled) {
           setLoadingReferences(false);
@@ -232,7 +247,9 @@ export default function JobRecordsManager({
           method: "GET",
           cache: "no-store",
         });
-        const payload = (await response.json().catch(() => null)) as JobsResponse;
+        const payload = (await response
+          .json()
+          .catch(() => null)) as JobsResponse;
         if (!response.ok || !payload?.ok || !Array.isArray(payload.jobs)) {
           throw new Error(payload?.error || "Failed to load jobs.");
         }
@@ -242,7 +259,11 @@ export default function JobRecordsManager({
       } catch (loadError) {
         if (cancelled) return;
         setJobs([]);
-        setError(loadError instanceof Error ? loadError.message : "Failed to load jobs.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load jobs.",
+        );
       } finally {
         if (!cancelled) {
           setLoadingJobs(false);
@@ -270,7 +291,9 @@ export default function JobRecordsManager({
           method: "GET",
           cache: "no-store",
         });
-        const payload = (await response.json().catch(() => null)) as JobResponse;
+        const payload = (await response
+          .json()
+          .catch(() => null)) as JobResponse;
         if (!response.ok || !payload?.ok || !payload.job) {
           throw new Error(payload?.error || "Failed to load job details.");
         }
@@ -279,7 +302,11 @@ export default function JobRecordsManager({
         setForm(applyJobDetailToForm(payload.job));
       } catch (loadError) {
         if (cancelled) return;
-        setError(loadError instanceof Error ? loadError.message : "Failed to load job details.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load job details.",
+        );
       } finally {
         if (!cancelled) {
           setLoadingDetail(false);
@@ -301,7 +328,10 @@ export default function JobRecordsManager({
     setNotice(null);
   }
 
-  function updateForm<K extends keyof JobFormState>(field: K, value: JobFormState[K]) {
+  function updateForm<K extends keyof JobFormState>(
+    field: K,
+    value: JobFormState[K],
+  ) {
     setForm((current) => ({
       ...current,
       [field]: value,
@@ -309,15 +339,23 @@ export default function JobRecordsManager({
   }
 
   function addMeasurement() {
-    updateForm("measurements", [...form.measurements, createEmptyJobMeasurement()]);
+    updateForm("measurements", [
+      ...form.measurements,
+      createEmptyJobMeasurement(),
+    ]);
   }
 
   function addCustomMaterial() {
-    updateForm("materials", [...form.materials, computeMaterialRow(createEmptyJobMaterial())]);
+    updateForm("materials", [
+      ...form.materials,
+      computeMaterialRow(createEmptyJobMaterial()),
+    ]);
   }
 
   function addCatalogMaterial() {
-    const material = materials.find((entry) => entry.id === selectedCatalogMaterialId);
+    const material = materials.find(
+      (entry) => entry.id === selectedCatalogMaterialId,
+    );
     if (!material) {
       setError("Select a catalog material first.");
       return;
@@ -340,13 +378,18 @@ export default function JobRecordsManager({
   }
 
   function addLabor() {
-    updateForm("labor", [...form.labor, computeLaborRow(createEmptyJobLabor())]);
+    updateForm("labor", [
+      ...form.labor,
+      computeLaborRow(createEmptyJobLabor()),
+    ]);
   }
 
   function updateMeasurement(index: number, patch: Partial<JobMeasurementRow>) {
     updateForm(
       "measurements",
-      form.measurements.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)),
+      form.measurements.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...patch } : row,
+      ),
     );
   }
 
@@ -443,13 +486,16 @@ export default function JobRecordsManager({
         })),
       };
 
-      const response = await fetch(selectedJobId ? `/api/jobs/${selectedJobId}` : "/api/jobs", {
-        method: selectedJobId ? "PUT" : "POST",
-        headers: {
-          "content-type": "application/json",
+      const response = await fetch(
+        selectedJobId ? `/api/jobs/${selectedJobId}` : "/api/jobs",
+        {
+          method: selectedJobId ? "PUT" : "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify(body),
-      });
+      );
 
       const payload = (await response.json().catch(() => null)) as JobResponse;
       if (!response.ok || !payload?.ok || !payload.job) {
@@ -462,7 +508,9 @@ export default function JobRecordsManager({
       setRefreshToken((current) => current + 1);
       router.refresh();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save job.");
+      setError(
+        saveError instanceof Error ? saveError.message : "Failed to save job.",
+      );
     } finally {
       setSaving(false);
     }
@@ -473,12 +521,16 @@ export default function JobRecordsManager({
       <section className="card">
         <div className="invoice-header-row">
           <div className="stack-cell">
-            <h2>Operational Records</h2>
+            <h2>Operational Jobs</h2>
             <p className="muted">
-              Specialized deep-work records for sold jobs in {orgName}: measurements, materials, labor, linked estimates,
-              and operational notes.
+              Structured execution records for sold jobs in {orgName}:
+              measurements, materials, labor, linked estimates, and operational
+              notes.
             </p>
-            <p className="muted">Use the Operational Job page for dispatch, schedule, tracking, and customer communication.</p>
+            <p className="muted">
+              Use the Operational Job page for dispatch, schedule, tracking, and
+              customer communication.
+            </p>
           </div>
           <div className="portal-empty-actions">
             {selectedOperationalJobHref ? (
@@ -493,7 +545,13 @@ export default function JobRecordsManager({
             <button
               className="btn secondary"
               type="button"
-              onClick={() => router.push(internalUser ? `/app/jobs/records/costing?orgId=${orgId}` : "/app/jobs/records/costing")}
+              onClick={() =>
+                router.push(
+                  internalUser
+                    ? `/app/jobs/records/costing?orgId=${orgId}`
+                    : "/app/jobs/records/costing",
+                )
+              }
             >
               Costing Workspace
             </button>
@@ -524,7 +582,9 @@ export default function JobRecordsManager({
               Expenses
             </button>
             <button
-              className={selectedOperationalJobHref ? "btn secondary" : "btn primary"}
+              className={
+                selectedOperationalJobHref ? "btn secondary" : "btn primary"
+              }
               type="button"
               onClick={beginCreateJob}
             >
@@ -533,8 +593,16 @@ export default function JobRecordsManager({
           </div>
         </div>
 
-        {notice ? <p className="form-status" style={{ marginTop: 12 }}>{notice}</p> : null}
-        {error ? <p className="form-status" style={{ marginTop: 12 }}>{error}</p> : null}
+        {notice ? (
+          <p className="form-status" style={{ marginTop: 12 }}>
+            {notice}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="form-status" style={{ marginTop: 12 }}>
+            {error}
+          </p>
+        ) : null}
       </section>
 
       <div className="job-records-grid">
@@ -542,7 +610,10 @@ export default function JobRecordsManager({
           <div className="invoice-header-row">
             <div className="stack-cell">
               <h3>Operational Record Lookup</h3>
-              <p className="muted">Find a sold job when you need records, costing, or other structured deep-work detail.</p>
+              <p className="muted">
+                Find a sold job when you need records, costing, or other
+                structured deep-work detail.
+              </p>
             </div>
           </div>
 
@@ -558,7 +629,10 @@ export default function JobRecordsManager({
             </label>
             <label>
               Status
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value)}>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.currentTarget.value)}
+              >
                 <option value="">All</option>
                 {jobStatusOptions.map((status) => (
                   <option key={status} value={status}>
@@ -576,7 +650,10 @@ export default function JobRecordsManager({
           ) : jobs.length === 0 ? (
             <div className="portal-empty-state job-records-empty">
               <strong>No operational records yet.</strong>
-              <p className="muted">Create your first operational job record to track measurements, materials, labor, and estimate links.</p>
+              <p className="muted">
+                Create your first operational job record to track measurements,
+                materials, labor, and estimate links.
+              </p>
             </div>
           ) : (
             <div className="job-records-list">
@@ -597,11 +674,18 @@ export default function JobRecordsManager({
                     <span className="muted">{job.address}</span>
                   </div>
                   <div className="quick-meta">
-                    <span className="badge">{job.status.replace(/_/g, " ")}</span>
-                    {job.estimateDraft ? <span className="badge status-success">Estimate linked</span> : null}
+                    <span className="badge">
+                      {job.status.replace(/_/g, " ")}
+                    </span>
+                    {job.estimateDraft ? (
+                      <span className="badge status-success">
+                        Estimate linked
+                      </span>
+                    ) : null}
                   </div>
                   <span className="muted">
-                    {job.counts.measurements} measurements • {job.counts.materials} materials • {job.counts.labor} labor
+                    {job.counts.measurements} measurements •{" "}
+                    {job.counts.materials} materials • {job.counts.labor} labor
                   </span>
                 </button>
               ))}
@@ -612,8 +696,13 @@ export default function JobRecordsManager({
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
-              <h3>{selectedJobId ? "Operational Record" : "New Operational Job"}</h3>
-              <p className="muted">Edit job info, attach an estimate, and maintain structured production data when you need it.</p>
+              <h3>
+                {selectedJobId ? "Operational Record" : "New Operational Job"}
+              </h3>
+              <p className="muted">
+                Edit job info, attach an estimate, and maintain structured
+                production data when you need it.
+              </p>
             </div>
           </div>
 
@@ -623,13 +712,19 @@ export default function JobRecordsManager({
             </div>
           ) : (
             <>
-              <form className="auth-form" style={{ marginTop: 14 }} onSubmit={(event) => event.preventDefault()}>
+              <form
+                className="auth-form"
+                style={{ marginTop: 14 }}
+                onSubmit={(event) => event.preventDefault()}
+              >
                 <div className="grid two-col">
                   <label>
                     Customer name
                     <input
                       value={form.customerName}
-                      onChange={(event) => updateForm("customerName", event.currentTarget.value)}
+                      onChange={(event) =>
+                        updateForm("customerName", event.currentTarget.value)
+                      }
                       placeholder="Maria Ramirez"
                     />
                   </label>
@@ -638,7 +733,12 @@ export default function JobRecordsManager({
                     Status
                     <select
                       value={form.status}
-                      onChange={(event) => updateForm("status", event.currentTarget.value as JobFormState["status"])}
+                      onChange={(event) =>
+                        updateForm(
+                          "status",
+                          event.currentTarget.value as JobFormState["status"],
+                        )
+                      }
                     >
                       {jobStatusOptions.map((status) => (
                         <option key={status} value={status}>
@@ -654,7 +754,9 @@ export default function JobRecordsManager({
                     Address
                     <input
                       value={form.address}
-                      onChange={(event) => updateForm("address", event.currentTarget.value)}
+                      onChange={(event) =>
+                        updateForm("address", event.currentTarget.value)
+                      }
                       placeholder="123 Cedar Ave, Tacoma, WA"
                     />
                   </label>
@@ -663,7 +765,9 @@ export default function JobRecordsManager({
                     Project type
                     <input
                       value={form.projectType}
-                      onChange={(event) => updateForm("projectType", event.currentTarget.value)}
+                      onChange={(event) =>
+                        updateForm("projectType", event.currentTarget.value)
+                      }
                       placeholder="Landscape install"
                     />
                   </label>
@@ -673,13 +777,17 @@ export default function JobRecordsManager({
                   Attach estimate
                   <select
                     value={form.estimateDraftId}
-                    onChange={(event) => updateForm("estimateDraftId", event.currentTarget.value)}
+                    onChange={(event) =>
+                      updateForm("estimateDraftId", event.currentTarget.value)
+                    }
                     disabled={loadingReferences}
                   >
                     <option value="">No estimate attached</option>
                     {estimateDrafts.map((draft) => (
                       <option key={draft.id} value={draft.id}>
-                        {draft.projectName} · {draft.customerName || "No customer"} · {formatEstimateCurrency(draft.finalTotal)}
+                        {draft.projectName} ·{" "}
+                        {draft.customerName || "No customer"} ·{" "}
+                        {formatEstimateCurrency(draft.finalTotal)}
                       </option>
                     ))}
                   </select>
@@ -689,7 +797,9 @@ export default function JobRecordsManager({
                   Notes
                   <textarea
                     value={form.notes}
-                    onChange={(event) => updateForm("notes", event.currentTarget.value)}
+                    onChange={(event) =>
+                      updateForm("notes", event.currentTarget.value)
+                    }
                     rows={4}
                     placeholder="Crew access notes, scope reminders, punch items, or customer requests."
                   />
@@ -701,7 +811,11 @@ export default function JobRecordsManager({
                   <div className="stack-cell">
                     <h4>Measurements</h4>
                   </div>
-                  <button className="btn secondary" type="button" onClick={addMeasurement}>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={addMeasurement}
+                  >
                     Add Measurement
                   </button>
                 </div>
@@ -728,19 +842,51 @@ export default function JobRecordsManager({
                         form.measurements.map((row, index) => (
                           <tr key={row.id}>
                             <td>
-                              <input value={row.label} onChange={(event) => updateMeasurement(index, { label: event.currentTarget.value })} />
+                              <input
+                                value={row.label}
+                                onChange={(event) =>
+                                  updateMeasurement(index, {
+                                    label: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <input value={row.value} onChange={(event) => updateMeasurement(index, { value: event.currentTarget.value })} />
+                              <input
+                                value={row.value}
+                                onChange={(event) =>
+                                  updateMeasurement(index, {
+                                    value: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <input value={row.unit} onChange={(event) => updateMeasurement(index, { unit: event.currentTarget.value })} />
+                              <input
+                                value={row.unit}
+                                onChange={(event) =>
+                                  updateMeasurement(index, {
+                                    unit: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <input value={row.notes} onChange={(event) => updateMeasurement(index, { notes: event.currentTarget.value })} />
+                              <input
+                                value={row.notes}
+                                onChange={(event) =>
+                                  updateMeasurement(index, {
+                                    notes: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <button className="btn secondary" type="button" onClick={() => removeMeasurement(index)}>
+                              <button
+                                className="btn secondary"
+                                type="button"
+                                onClick={() => removeMeasurement(index)}
+                              >
                                 Remove
                               </button>
                             </td>
@@ -760,7 +906,9 @@ export default function JobRecordsManager({
                   <div className="portal-empty-actions">
                     <select
                       value={selectedCatalogMaterialId}
-                      onChange={(event) => setSelectedCatalogMaterialId(event.currentTarget.value)}
+                      onChange={(event) =>
+                        setSelectedCatalogMaterialId(event.currentTarget.value)
+                      }
                       disabled={loadingReferences}
                     >
                       <option value="">Select catalog material</option>
@@ -770,10 +918,19 @@ export default function JobRecordsManager({
                         </option>
                       ))}
                     </select>
-                    <button className="btn primary" type="button" onClick={addCatalogMaterial} disabled={!selectedCatalogMaterialId}>
+                    <button
+                      className="btn primary"
+                      type="button"
+                      onClick={addCatalogMaterial}
+                      disabled={!selectedCatalogMaterialId}
+                    >
                       Add Catalog
                     </button>
-                    <button className="btn secondary" type="button" onClick={addCustomMaterial}>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      onClick={addCustomMaterial}
+                    >
                       Add Custom
                     </button>
                   </div>
@@ -804,31 +961,76 @@ export default function JobRecordsManager({
                         form.materials.map((row, index) => (
                           <tr key={row.id}>
                             <td>
-                              <input value={row.name} onChange={(event) => updateMaterial(index, { name: event.currentTarget.value })} />
+                              <input
+                                value={row.name}
+                                onChange={(event) =>
+                                  updateMaterial(index, {
+                                    name: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <input value={row.quantity} onChange={(event) => updateMaterial(index, { quantity: event.currentTarget.value })} />
+                              <input
+                                value={row.quantity}
+                                onChange={(event) =>
+                                  updateMaterial(index, {
+                                    quantity: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <input value={row.unit} onChange={(event) => updateMaterial(index, { unit: event.currentTarget.value })} />
+                              <input
+                                value={row.unit}
+                                onChange={(event) =>
+                                  updateMaterial(index, {
+                                    unit: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <input value={row.cost} onChange={(event) => updateMaterial(index, { cost: event.currentTarget.value })} />
+                              <input
+                                value={row.cost}
+                                onChange={(event) =>
+                                  updateMaterial(index, {
+                                    cost: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
                               <input
                                 value={row.markupPercent}
-                                onChange={(event) => updateMaterial(index, { markupPercent: event.currentTarget.value })}
+                                onChange={(event) =>
+                                  updateMaterial(index, {
+                                    markupPercent: event.currentTarget.value,
+                                  })
+                                }
                               />
                             </td>
                             <td>
-                              <strong>{formatEstimateCurrency(row.total)}</strong>
+                              <strong>
+                                {formatEstimateCurrency(row.total)}
+                              </strong>
                             </td>
                             <td>
-                              <input value={row.notes} onChange={(event) => updateMaterial(index, { notes: event.currentTarget.value })} />
+                              <input
+                                value={row.notes}
+                                onChange={(event) =>
+                                  updateMaterial(index, {
+                                    notes: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <button className="btn secondary" type="button" onClick={() => removeMaterial(index)}>
+                              <button
+                                className="btn secondary"
+                                type="button"
+                                onClick={() => removeMaterial(index)}
+                              >
                                 Remove
                               </button>
                             </td>
@@ -845,7 +1047,11 @@ export default function JobRecordsManager({
                   <div className="stack-cell">
                     <h4>Job Labor</h4>
                   </div>
-                  <button className="btn secondary" type="button" onClick={addLabor}>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={addLabor}
+                  >
                     Add Labor
                   </button>
                 </div>
@@ -877,32 +1083,74 @@ export default function JobRecordsManager({
                             <td>
                               <input
                                 value={row.description}
-                                onChange={(event) => updateLabor(index, { description: event.currentTarget.value })}
+                                onChange={(event) =>
+                                  updateLabor(index, {
+                                    description: event.currentTarget.value,
+                                  })
+                                }
                               />
                             </td>
                             <td>
-                              <input value={row.quantity} onChange={(event) => updateLabor(index, { quantity: event.currentTarget.value })} />
+                              <input
+                                value={row.quantity}
+                                onChange={(event) =>
+                                  updateLabor(index, {
+                                    quantity: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <input value={row.unit} onChange={(event) => updateLabor(index, { unit: event.currentTarget.value })} />
+                              <input
+                                value={row.unit}
+                                onChange={(event) =>
+                                  updateLabor(index, {
+                                    unit: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <input value={row.cost} onChange={(event) => updateLabor(index, { cost: event.currentTarget.value })} />
+                              <input
+                                value={row.cost}
+                                onChange={(event) =>
+                                  updateLabor(index, {
+                                    cost: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
                               <input
                                 value={row.markupPercent}
-                                onChange={(event) => updateLabor(index, { markupPercent: event.currentTarget.value })}
+                                onChange={(event) =>
+                                  updateLabor(index, {
+                                    markupPercent: event.currentTarget.value,
+                                  })
+                                }
                               />
                             </td>
                             <td>
-                              <strong>{formatEstimateCurrency(row.total)}</strong>
+                              <strong>
+                                {formatEstimateCurrency(row.total)}
+                              </strong>
                             </td>
                             <td>
-                              <input value={row.notes} onChange={(event) => updateLabor(index, { notes: event.currentTarget.value })} />
+                              <input
+                                value={row.notes}
+                                onChange={(event) =>
+                                  updateLabor(index, {
+                                    notes: event.currentTarget.value,
+                                  })
+                                }
+                              />
                             </td>
                             <td>
-                              <button className="btn secondary" type="button" onClick={() => removeLabor(index)}>
+                              <button
+                                className="btn secondary"
+                                type="button"
+                                onClick={() => removeLabor(index)}
+                              >
                                 Remove
                               </button>
                             </td>
@@ -915,8 +1163,17 @@ export default function JobRecordsManager({
               </section>
 
               <div className="portal-empty-actions" style={{ marginTop: 18 }}>
-                <button className="btn primary" type="button" disabled={saving || !canManage} onClick={() => void saveJob()}>
-                  {saving ? "Saving..." : selectedJobId ? "Save Job" : "Create Job"}
+                <button
+                  className="btn primary"
+                  type="button"
+                  disabled={saving || !canManage}
+                  onClick={() => void saveJob()}
+                >
+                  {saving
+                    ? "Saving..."
+                    : selectedJobId
+                      ? "Save Job"
+                      : "Create Job"}
                 </button>
               </div>
             </>

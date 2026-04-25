@@ -1,4 +1,6 @@
 import type { DispatchJobStatus } from "@prisma/client";
+import type { TwilioMessagingReadinessCode } from "@/lib/twilio-readiness";
+import { classifySmsFailure } from "@/lib/sms-failure-intelligence";
 import {
   DEFAULT_CALENDAR_TIMEZONE,
   addDaysToDateKey,
@@ -7,7 +9,11 @@ import {
   parseIsoDateOnly,
 } from "@/lib/calendar/dates";
 
-export const DEFAULT_DISPATCH_CREW_NAMES = ["Crew 1", "Crew 2", "Crew 3"] as const;
+export const DEFAULT_DISPATCH_CREW_NAMES = [
+  "Crew 1",
+  "Crew 2",
+  "Crew 3",
+] as const;
 
 export const dispatchStatusValues = [
   "scheduled",
@@ -38,16 +44,22 @@ const dispatchStatusToDbMap: Record<DispatchStatusValue, DispatchJobStatus> = {
   canceled: "CANCELED",
 };
 
-const dispatchStatusFromDbMap: Record<DispatchJobStatus, DispatchStatusValue> = {
-  SCHEDULED: "scheduled",
-  ON_THE_WAY: "on_the_way",
-  ON_SITE: "on_site",
-  COMPLETED: "completed",
-  RESCHEDULED: "rescheduled",
-  CANCELED: "canceled",
-};
+const dispatchStatusFromDbMap: Record<DispatchJobStatus, DispatchStatusValue> =
+  {
+    SCHEDULED: "scheduled",
+    ON_THE_WAY: "on_the_way",
+    ON_SITE: "on_site",
+    COMPLETED: "completed",
+    RESCHEDULED: "rescheduled",
+    CANCELED: "canceled",
+  };
 
-export const dispatchPriorityValues = ["low", "medium", "high", "urgent"] as const;
+export const dispatchPriorityValues = [
+  "low",
+  "medium",
+  "high",
+  "urgent",
+] as const;
 
 export type DispatchPriorityValue = (typeof dispatchPriorityValues)[number];
 
@@ -57,7 +69,8 @@ export const dispatchScheduleChangeFields = [
   "scheduledEndTime",
 ] as const;
 
-export type DispatchScheduleChangeField = (typeof dispatchScheduleChangeFields)[number];
+export type DispatchScheduleChangeField =
+  (typeof dispatchScheduleChangeFields)[number];
 
 export const dispatchPriorityLabels: Record<DispatchPriorityValue, string> = {
   low: "Low",
@@ -94,9 +107,15 @@ export type DispatchNotificationSettings = {
   notifyRescheduled: boolean;
   notifyCompleted: boolean;
   canSend: boolean;
+  readinessCode: TwilioMessagingReadinessCode;
 };
 
-export type DispatchSmsDeliveryState = "queued" | "sent" | "delivered" | "failed" | "suppressed";
+export type DispatchSmsDeliveryState =
+  | "queued"
+  | "sent"
+  | "delivered"
+  | "failed"
+  | "suppressed";
 
 export type DispatchSmsRemediationKind =
   | "retry_later"
@@ -188,15 +207,21 @@ export type DispatchDaySnapshot = {
   };
 };
 
-export function isDispatchStatusValue(value: string): value is DispatchStatusValue {
+export function isDispatchStatusValue(
+  value: string,
+): value is DispatchStatusValue {
   return dispatchStatusValues.some((option) => option === value);
 }
 
-export function dispatchStatusToDb(value: DispatchStatusValue): DispatchJobStatus {
+export function dispatchStatusToDb(
+  value: DispatchStatusValue,
+): DispatchJobStatus {
   return dispatchStatusToDbMap[value];
 }
 
-export function dispatchStatusFromDb(value: DispatchJobStatus): DispatchStatusValue {
+export function dispatchStatusFromDb(
+  value: DispatchJobStatus,
+): DispatchStatusValue {
   return dispatchStatusFromDbMap[value];
 }
 
@@ -204,7 +229,9 @@ export function formatDispatchStatusLabel(value: DispatchStatusValue): string {
   return dispatchStatusLabels[value];
 }
 
-export function isDispatchPriorityValue(value: string): value is DispatchPriorityValue {
+export function isDispatchPriorityValue(
+  value: string,
+): value is DispatchPriorityValue {
   return dispatchPriorityValues.some((option) => option === value);
 }
 
@@ -222,7 +249,9 @@ export function formatDispatchPriorityLabel(value: string): string {
 }
 
 export function isDispatchFinalStatus(value: DispatchStatusValue): boolean {
-  return value === "completed" || value === "rescheduled" || value === "canceled";
+  return (
+    value === "completed" || value === "rescheduled" || value === "canceled"
+  );
 }
 
 export function formatDispatchDateKey(value: Date): string {
@@ -246,7 +275,9 @@ export function parseDispatchDateKey(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-export function normalizeDispatchDateKey(value: string | null | undefined): string | null {
+export function normalizeDispatchDateKey(
+  value: string | null | undefined,
+): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -264,7 +295,10 @@ export function nextDispatchDateKey(value: string): string | null {
   return normalized ? addDaysToDateKey(normalized, 1) : null;
 }
 
-export function formatDispatchScheduledWindow(startTime: string | null, endTime: string | null): string {
+export function formatDispatchScheduledWindow(
+  startTime: string | null,
+  endTime: string | null,
+): string {
   if (startTime && endTime) return `${startTime} - ${endTime}`;
   if (startTime) return `Starts ${startTime}`;
   if (endTime) return `By ${endTime}`;
@@ -279,7 +313,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function recordString(record: Record<string, unknown> | null, key: string): string | null {
+function recordString(
+  record: Record<string, unknown> | null,
+  key: string,
+): string | null {
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value : null;
 }
@@ -292,7 +329,9 @@ function dispatchIssueMentions(value: string, patterns: string[]): boolean {
   return patterns.some((pattern) => value.includes(pattern));
 }
 
-export function getDispatchScheduleChangeFields(metadata: unknown): DispatchScheduleChangeField[] {
+export function getDispatchScheduleChangeFields(
+  metadata: unknown,
+): DispatchScheduleChangeField[] {
   const record = asRecord(metadata);
   const rawChanges = record?.changes;
   if (!Array.isArray(rawChanges)) {
@@ -319,8 +358,14 @@ export function isMeaningfulDispatchScheduleChange(metadata: unknown): boolean {
 }
 
 export function compareDispatchJobs(
-  left: Pick<DispatchJobSummary, "crewOrder" | "scheduledStartTime" | "customerName" | "id">,
-  right: Pick<DispatchJobSummary, "crewOrder" | "scheduledStartTime" | "customerName" | "id">,
+  left: Pick<
+    DispatchJobSummary,
+    "crewOrder" | "scheduledStartTime" | "customerName" | "id"
+  >,
+  right: Pick<
+    DispatchJobSummary,
+    "crewOrder" | "scheduledStartTime" | "customerName" | "id"
+  >,
 ): number {
   const leftOrder = left.crewOrder ?? Number.MAX_SAFE_INTEGER;
   const rightOrder = right.crewOrder ?? Number.MAX_SAFE_INTEGER;
@@ -343,15 +388,24 @@ export function compareDispatchJobs(
 }
 
 function formatDispatchSmsDate(dateKey: string, timeZone: string): string {
-  const [year = 0, month = 1, day = 1] = dateKey.split("-").map((part) => Number.parseInt(part, 10));
+  const [year = 0, month = 1, day = 1] = dateKey
+    .split("-")
+    .map((part) => Number.parseInt(part, 10));
   const date = new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12, 0, 0));
-  return formatDateTimeForDisplay(date, {
-    month: "short",
-    day: "numeric",
-  }, { timeZone });
+  return formatDateTimeForDisplay(
+    date,
+    {
+      month: "short",
+      day: "numeric",
+    },
+    { timeZone },
+  );
 }
 
-function buildScheduledWindowLabel(startTime: string | null, endTime: string | null): string {
+function buildScheduledWindowLabel(
+  startTime: string | null,
+  endTime: string | null,
+): string {
   if (startTime && endTime) {
     return ` between ${startTime} and ${endTime}`;
   }
@@ -376,7 +430,10 @@ export function formatDispatchCustomerSms(input: {
   const orgName = input.orgName.trim() || "TieGui";
   const serviceType = input.serviceType.trim() || "your job";
   const dateLabel = formatDispatchSmsDate(input.scheduledDate, input.timeZone);
-  const windowLabel = buildScheduledWindowLabel(input.scheduledStartTime, input.scheduledEndTime);
+  const windowLabel = buildScheduledWindowLabel(
+    input.scheduledStartTime,
+    input.scheduledEndTime,
+  );
 
   switch (input.status) {
     case "scheduled":
@@ -403,7 +460,10 @@ export function serializeDispatchNotificationSettings(
       }
     | null
     | undefined,
-  canSend: boolean,
+  input: {
+    canSend: boolean;
+    readinessCode: TwilioMessagingReadinessCode;
+  },
 ): DispatchNotificationSettings {
   return {
     smsEnabled: settings?.dispatchSmsEnabled ?? false,
@@ -411,7 +471,8 @@ export function serializeDispatchNotificationSettings(
     notifyOnTheWay: settings?.dispatchSmsOnTheWay ?? true,
     notifyRescheduled: settings?.dispatchSmsRescheduled ?? true,
     notifyCompleted: settings?.dispatchSmsCompleted ?? true,
-    canSend,
+    canSend: input.canSend,
+    readinessCode: input.readinessCode,
   };
 }
 
@@ -437,7 +498,9 @@ export function shouldSendDispatchStatusNotification(
   }
 }
 
-export function getDispatchSmsDeliveryState(value: string | null | undefined): DispatchSmsDeliveryState | null {
+export function getDispatchSmsDeliveryState(
+  value: string | null | undefined,
+): DispatchSmsDeliveryState | null {
   switch ((value || "").trim().toLowerCase()) {
     case "queued":
       return "queued";
@@ -455,7 +518,9 @@ export function getDispatchSmsDeliveryState(value: string | null | undefined): D
   }
 }
 
-export function formatDispatchSmsDeliveryStateLabel(state: DispatchSmsDeliveryState): string {
+export function formatDispatchSmsDeliveryStateLabel(
+  state: DispatchSmsDeliveryState,
+): string {
   switch (state) {
     case "queued":
       return "Queued";
@@ -610,6 +675,28 @@ export function getDispatchSmsRemediation(input: {
     .map((value) => normalizeDispatchIssueText(value))
     .filter(Boolean)
     .join(" ");
+  const failureClassification = classifySmsFailure({
+    providerStatus: input.providerStatus,
+    lifecycleStatus: input.deliveryState === "failed" ? "FAILED" : null,
+    errorCode: input.providerErrorCode,
+    errorMessage: input.providerErrorMessage || input.failureReason,
+  });
+
+  if (failureClassification?.category === "CARRIER_FILTERING") {
+    return {
+      kind: "call_customer",
+      title: "Rewrite or call customer",
+      detail: failureClassification.operatorDetail,
+    };
+  }
+
+  if (failureClassification?.category === "RATE_LIMIT" || failureClassification?.category === "TEMPORARY_PROVIDER") {
+    return {
+      kind: "retry_later",
+      title: failureClassification.operatorActionLabel,
+      detail: failureClassification.operatorDetail,
+    };
+  }
 
   if (
     dispatchIssueMentions(combinedText, [
@@ -623,7 +710,8 @@ export function getDispatchSmsRemediation(input: {
     return {
       kind: "opted_out",
       title: "Customer opted out",
-      detail: "Do not retry by SMS. Call the customer instead if this update is important.",
+      detail:
+        "Do not retry by SMS. Call the customer instead if this update is important.",
     };
   }
 
@@ -643,7 +731,8 @@ export function getDispatchSmsRemediation(input: {
     return {
       kind: "check_phone",
       title: "Check customer phone number",
-      detail: "Verify or correct the number before retrying. If timing is urgent, call the customer.",
+      detail:
+        "Verify or correct the number before retrying. If timing is urgent, call the customer.",
     };
   }
 
@@ -662,15 +751,20 @@ export function getDispatchSmsRemediation(input: {
     return {
       kind: "check_twilio",
       title: "Check Twilio or workspace SMS",
-      detail: "Fix the workspace SMS setup before retrying this customer update.",
+      detail:
+        "Fix the workspace SMS setup before retrying this customer update.",
     };
   }
 
-  if (normalizeDispatchIssueText(input.blockedReason) === "outside sms send hours.") {
+  if (
+    normalizeDispatchIssueText(input.blockedReason) ===
+    "outside sms send hours."
+  ) {
     return {
       kind: "retry_later",
       title: "Retry during send hours",
-      detail: "Wait until the workspace send window opens, or call the customer if the timing is urgent.",
+      detail:
+        "Wait until the workspace send window opens, or call the customer if the timing is urgent.",
     };
   }
 
@@ -678,15 +772,20 @@ export function getDispatchSmsRemediation(input: {
     return {
       kind: "call_customer",
       title: "Call customer instead",
-      detail: "The carrier could not deliver this text. Calling is safer than repeating the same SMS.",
+      detail:
+        "The carrier could not deliver this text. Calling is safer than repeating the same SMS.",
     };
   }
 
-  if (input.deliveryState === "failed" || input.deliveryState === "suppressed") {
+  if (
+    input.deliveryState === "failed" ||
+    input.deliveryState === "suppressed"
+  ) {
     return {
       kind: "retry_later",
       title: "Retry later",
-      detail: "Retry once later if the issue clears, or call the customer if the update is time-sensitive.",
+      detail:
+        "Retry once later if the issue clears, or call the customer if the update is time-sensitive.",
     };
   }
 

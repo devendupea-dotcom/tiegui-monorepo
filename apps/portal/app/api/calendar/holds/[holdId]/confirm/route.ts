@@ -23,7 +23,7 @@ import { resolveWorkspaceUserIds } from "@/lib/workspace-users";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { holdId: string };
+  params: Promise<{ holdId: string }>;
 };
 
 type ConfirmHoldPayload = {
@@ -69,7 +69,8 @@ function parseEventStatus(value: unknown) {
   return allowed.includes(normalized as CalendarEventStatus) ? (normalized as CalendarEventStatus) : "CONFIRMED";
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const hold = await prisma.calendarHold.findUnique({

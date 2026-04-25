@@ -16,10 +16,10 @@ import InvoicePrintToolbar from "./invoice-print-toolbar";
 export const dynamic = "force-dynamic";
 
 type RouteParams = {
-  params: {
+  params: Promise<{
     invoiceId: string;
-  };
-  searchParams?: Record<string, string | string[] | undefined>;
+  }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 function buildAddressLines(input: {
@@ -53,7 +53,9 @@ function taxPercentLabel(value: string): string {
   return (numeric * 100).toFixed(2).replace(/\.00$/, "");
 }
 
-export default async function InvoicePrintPage({ params, searchParams }: RouteParams) {
+export default async function InvoicePrintPage(props: RouteParams) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const requestedOrgId = getParam(searchParams?.orgId);
   const autoprint = getParam(searchParams?.autoprint) === "1";
 

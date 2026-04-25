@@ -8,11 +8,7 @@ import { useRouter } from "next/navigation";
 function getFriendlyAuthError(errorCode: string): string {
   switch (errorCode) {
     case "Configuration":
-      return "Sign-in isn’t configured yet. Check SMTP_URL, EMAIL_FROM, NEXTAUTH_SECRET, and DATABASE_URL in Vercel.";
-    case "EmailSignin":
-      return "We couldn’t send the email. Double-check your SMTP credentials and sender settings.";
-    case "Verification":
-      return "That sign-in link is invalid or expired. Request a new one.";
+      return "Sign-in isn’t configured yet. Check NEXTAUTH_SECRET and DATABASE_URL in Vercel.";
     case "AccessDenied":
       return "Access denied.";
     case "CredentialsSignin":
@@ -31,10 +27,8 @@ export default function LoginPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSubmitting, setPasswordSubmitting] = useState(false);
-  const [magicLinkSubmitting, setMagicLinkSubmitting] = useState(false);
   const [nextPath, setNextPath] = useState("/");
   const [errorCode, setErrorCode] = useState<string | null>(null);
-  const [verify, setVerify] = useState(false);
   const [showRequestAccess, setShowRequestAccess] = useState(false);
   const [requestName, setRequestName] = useState("");
   const [requestCompany, setRequestCompany] = useState("");
@@ -45,16 +39,11 @@ export default function LoginPage() {
     const params = new URLSearchParams(window.location.search);
     setNextPath(params.get("next") || "/");
     setErrorCode(params.get("error"));
-    setVerify(params.has("verify"));
   }, []);
 
   useEffect(() => {
     if (errorCode) setStatus(getFriendlyAuthError(errorCode));
   }, [errorCode]);
-
-  useEffect(() => {
-    if (verify) setStatus("Check your email for a secure sign-in link.");
-  }, [verify]);
 
   const handleRequestAccess = () => {
     const to = "admin@tieguisolutions.com";
@@ -113,38 +102,6 @@ export default function LoginPage() {
     }
   };
 
-  const handleMagicLink = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (magicLinkSubmitting) return;
-
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
-      setEmailError("Enter your email before requesting a login link.");
-      setStatus("Enter your email before requesting a login link.");
-      return;
-    }
-
-    setEmailError(null);
-    setMagicLinkSubmitting(true);
-    setStatus("Sending login link...");
-    try {
-      const result = await signIn("email", {
-        email: trimmedEmail,
-        redirect: false,
-        callbackUrl: nextPath,
-      });
-      if (result?.error) {
-        setStatus(getFriendlyAuthError(result.error));
-        return;
-      }
-      setStatus("Check your email for a secure sign-in link.");
-    } catch {
-      setStatus("We couldn’t send the email. Double-check your SMTP credentials and sender settings.");
-    } finally {
-      setMagicLinkSubmitting(false);
-    }
-  };
-
   return (
     <main className="page auth-surface">
       <section className="auth-card">
@@ -162,7 +119,7 @@ export default function LoginPage() {
               }}
               placeholder="you@business.com"
               required
-              disabled={passwordSubmitting || magicLinkSubmitting}
+              disabled={passwordSubmitting}
               aria-invalid={Boolean(emailError)}
             />
             {emailError ? <span className="form-status">{emailError}</span> : null}
@@ -212,20 +169,6 @@ export default function LoginPage() {
           </p>
           {status && <p className="form-status">{status}</p>}
         </form>
-
-        <div className="auth-divider" />
-
-        <div className="auth-secondary">
-          <p className="auth-secondary-kicker">Prefer passwordless access?</p>
-          <p className="muted">Use a secure sign-in link (magic link).</p>
-          <form onSubmit={handleMagicLink} className="auth-form" style={{ marginTop: 12 }}>
-            <button className="btn secondary" type="submit" disabled={magicLinkSubmitting}>
-              {magicLinkSubmitting ? "Sending login link…" : "Send login link"}
-            </button>
-          </form>
-        </div>
-
-        <div className="auth-divider" />
 
         <div className="auth-secondary">
           <div className="auth-secondary-head">

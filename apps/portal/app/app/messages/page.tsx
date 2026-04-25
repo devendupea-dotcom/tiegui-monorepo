@@ -19,10 +19,11 @@ function toQueryString(searchParams: SearchParams | undefined): string {
   return query ? `?${query}` : "";
 }
 
-export default function MessagesAliasPage({
-  searchParams,
-}: {
-  searchParams?: SearchParams;
-}) {
+export default async function MessagesAliasPage(
+  props: {
+    searchParams?: Promise<SearchParams>;
+  }
+) {
+  const searchParams = await props.searchParams;
   redirect(`/app/inbox${toQueryString(searchParams)}`);
 }

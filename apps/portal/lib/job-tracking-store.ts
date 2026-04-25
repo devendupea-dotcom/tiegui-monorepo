@@ -2,7 +2,10 @@ import "server-only";
 
 import { Prisma, type JobEventType } from "@prisma/client";
 import { AppApiError } from "@/lib/app-api-permissions";
-import { bookingEventTypes, deriveJobBookingProjection } from "@/lib/booking-read-model";
+import {
+  bookingEventTypes,
+  deriveJobBookingProjection,
+} from "@/lib/booking-read-model";
 import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import {
   dispatchStatusFromDb,
@@ -97,14 +100,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function recordString(record: Record<string, unknown> | null, key: string): string | null {
+function recordString(
+  record: Record<string, unknown> | null,
+  key: string,
+): string | null {
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function recordChanges(
-  record: Record<string, unknown> | null,
-): {
+function recordChanges(record: Record<string, unknown> | null): {
   field: string;
   from: string | null;
   to: string | null;
@@ -130,11 +134,15 @@ function recordChanges(
 }
 
 function formatTrackingDate(value: Date): string {
-  return formatDateTimeForDisplay(value, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }, { timeZone: "UTC" });
+  return formatDateTimeForDisplay(
+    value,
+    {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    },
+    { timeZone: "UTC" },
+  );
 }
 
 function formatTimelineDateTime(value: Date): string {
@@ -154,7 +162,10 @@ function buildScheduleSummary(input: {
   if (!input.scheduledDate) return null;
 
   const dateLabel = formatTrackingDate(input.scheduledDate);
-  const windowLabel = formatDispatchScheduledWindow(input.scheduledStartTime, input.scheduledEndTime);
+  const windowLabel = formatDispatchScheduledWindow(
+    input.scheduledStartTime,
+    input.scheduledEndTime,
+  );
   if (windowLabel === "Any time") {
     return `Scheduled for ${dateLabel}.`;
   }
@@ -165,7 +176,9 @@ function buildPendingScheduleSummary() {
   return "Scheduling is still being confirmed.";
 }
 
-function buildEventScheduleSummary(metadata: Record<string, unknown> | null): string | null {
+function buildEventScheduleSummary(
+  metadata: Record<string, unknown> | null,
+): string | null {
   const scheduledDate = recordString(metadata, "scheduledDate");
   if (!scheduledDate) return null;
 
@@ -179,7 +192,9 @@ function buildEventScheduleSummary(metadata: Record<string, unknown> | null): st
   });
 }
 
-function buildManualFollowThroughDetail(metadata: Record<string, unknown> | null): {
+function buildManualFollowThroughDetail(
+  metadata: Record<string, unknown> | null,
+): {
   title: string;
   detail: string;
 } | null {
@@ -188,37 +203,52 @@ function buildManualFollowThroughDetail(metadata: Record<string, unknown> | null
   }
 
   const state = recordString(metadata, "dispatchManualFollowThroughState");
-  const actionId = recordString(metadata, "dispatchManualFollowThroughActionId");
+  const actionId = recordString(
+    metadata,
+    "dispatchManualFollowThroughActionId",
+  );
   const actionLabel =
-    actionId === "open-inbox" ? "Open Inbox Thread"
-    : actionId === "open-crm" ? "Open CRM Folder"
-    : actionId === "edit-phone" ? "Edit Phone"
-    : actionId === "call-customer" ? "Call Customer"
-    : actionId === "open-settings" ? "Open Settings"
-    : actionId === "open-integrations" ? "Open Integrations"
-    : actionId === "mark-handled" ? "Mark Handled Manually"
-    : null;
+    actionId === "open-inbox"
+      ? "Open Inbox Thread"
+      : actionId === "open-crm"
+        ? "Open Lead"
+        : actionId === "edit-phone"
+          ? "Edit Phone"
+          : actionId === "call-customer"
+            ? "Call Customer"
+            : actionId === "open-settings"
+              ? "Open Settings"
+              : actionId === "open-integrations"
+                ? "Open Integrations"
+                : actionId === "mark-handled"
+                  ? "Mark Handled Manually"
+                  : null;
 
   if (state === "handled") {
     return {
       title: "Handled manually",
-      detail: actionLabel && actionLabel !== "Mark Handled Manually"
-        ? `Manual follow-up was handled after ${actionLabel}.`
-        : "Manual follow-up was marked handled.",
+      detail:
+        actionLabel && actionLabel !== "Mark Handled Manually"
+          ? `Manual follow-up was handled after ${actionLabel}.`
+          : "Manual follow-up was marked handled.",
     };
   }
 
   if (state === "started") {
     return {
       title: "Manual follow-up started",
-      detail: actionLabel ? `Started from ${actionLabel}.` : "Manual follow-up started.",
+      detail: actionLabel
+        ? `Started from ${actionLabel}.`
+        : "Manual follow-up started.",
     };
   }
 
   return null;
 }
 
-function buildManualContactOutcomeDetail(metadata: Record<string, unknown> | null): {
+function buildManualContactOutcomeDetail(
+  metadata: Record<string, unknown> | null,
+): {
   title: string;
   detail: string;
 } | null {
@@ -286,7 +316,10 @@ function mapJobEventToTimelineItem(input: {
     };
   }
 
-  if (input.event.eventType === "CREW_ASSIGNED" || input.event.eventType === "CREW_REASSIGNED") {
+  if (
+    input.event.eventType === "CREW_ASSIGNED" ||
+    input.event.eventType === "CREW_REASSIGNED"
+  ) {
     const crewName =
       recordString(metadata, "toCrewName") ||
       recordString(metadata, "assignedCrewName") ||
@@ -295,20 +328,28 @@ function mapJobEventToTimelineItem(input: {
     return {
       id: input.event.id,
       kind: "job_event",
-      title: input.event.eventType === "CREW_REASSIGNED" ? "Crew updated" : "Crew assigned",
-      detail: crewName ? `${crewName} is assigned to this visit.` : "A crew has been assigned to this visit.",
+      title:
+        input.event.eventType === "CREW_REASSIGNED"
+          ? "Crew updated"
+          : "Crew assigned",
+      detail: crewName
+        ? `${crewName} is assigned to this visit.`
+        : "A crew has been assigned to this visit.",
       occurredAt: input.event.createdAt.toISOString(),
     };
   }
 
   if (input.event.eventType === "STATUS_CHANGED") {
     const nextStatus =
-      typeof input.event.toValue === "string" && isDispatchStatusValue(input.event.toValue)
+      typeof input.event.toValue === "string" &&
+      isDispatchStatusValue(input.event.toValue)
         ? input.event.toValue
         : null;
     const statusLabel =
       (nextStatus ? formatJobTrackingStatusLabel(nextStatus) : null) ||
-      (typeof input.event.toValue === "string" ? formatOperationalJobStatusLabel(input.event.toValue) : null) ||
+      (typeof input.event.toValue === "string"
+        ? formatOperationalJobStatusLabel(input.event.toValue)
+        : null) ||
       recordString(metadata, "toStatusLabel") ||
       recordString(metadata, "statusLabel") ||
       "Updated";
@@ -353,10 +394,11 @@ function mapJobEventToTimelineItem(input: {
     };
   }
 
-  const scheduleChanged = changes.some((change) =>
-    change.field === "scheduledDate" ||
-    change.field === "scheduledStartTime" ||
-    change.field === "scheduledEndTime",
+  const scheduleChanged = changes.some(
+    (change) =>
+      change.field === "scheduledDate" ||
+      change.field === "scheduledStartTime" ||
+      change.field === "scheduledEndTime",
   );
 
   if (!scheduleChanged) {
@@ -393,7 +435,9 @@ function mapCommunicationEventToTimelineItem(event: {
   };
 }
 
-async function getPublicTrackingRecordOrThrow(token: string): Promise<PublicTrackingRecord> {
+async function getPublicTrackingRecordOrThrow(
+  token: string,
+): Promise<PublicTrackingRecord> {
   const normalizedToken = typeof token === "string" ? token.trim() : "";
   if (!normalizedToken) {
     throw new AppApiError("This tracking link is invalid.", 404);
@@ -410,7 +454,10 @@ async function getPublicTrackingRecordOrThrow(token: string): Promise<PublicTrac
   }
 
   if (record.revokedAt) {
-    throw new AppApiError("This tracking link has been replaced with a newer link.", 410);
+    throw new AppApiError(
+      "This tracking link has been replaced with a newer link.",
+      410,
+    );
   }
 
   return record;
@@ -453,7 +500,9 @@ export async function getOperationalJobTimeline(input: {
           where: {
             orgId: input.job.orgId,
             OR: [
-              ...(input.job.customerId ? [{ contactId: input.job.customerId }] : []),
+              ...(input.job.customerId
+                ? [{ contactId: input.job.customerId }]
+                : []),
               ...(input.job.leadId ? [{ leadId: input.job.leadId }] : []),
             ],
           },
@@ -479,11 +528,18 @@ export async function getOperationalJobTimeline(input: {
     .filter((event): event is JobTrackingTimelineItem => Boolean(event));
 
   const communicationTimeline = communicationEvents
-    .filter((event) => recordString(asRecord(event.metadataJson), "dispatchJobId") === input.job.id)
+    .filter(
+      (event) =>
+        recordString(asRecord(event.metadataJson), "dispatchJobId") ===
+        input.job.id,
+    )
     .map((event) => mapCommunicationEventToTimelineItem(event));
 
   return [...jobTimeline, ...communicationTimeline]
-    .sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt))
+    .sort(
+      (left, right) =>
+        Date.parse(right.occurredAt) - Date.parse(left.occurredAt),
+    )
     .slice(0, limit);
 }
 
@@ -537,7 +593,9 @@ export async function createJobTrackingLink(input: {
   };
 }
 
-export async function getJobTrackingByToken(token: string): Promise<CustomerJobTrackingDetail> {
+export async function getJobTrackingByToken(
+  token: string,
+): Promise<CustomerJobTrackingDetail> {
   const record = await getPublicTrackingRecordOrThrow(token);
   const bookingProjection = deriveJobBookingProjection({
     events: record.job.calendarEvents,
@@ -550,7 +608,10 @@ export async function getJobTrackingByToken(token: string): Promise<CustomerJobT
     scheduledEndTime: bookingProjection.scheduledEndTime,
   };
   const scheduleWindow = bookingProjection.hasBookingEvent
-    ? formatDispatchScheduledWindow(bookingProjection.scheduledStartTime, bookingProjection.scheduledEndTime)
+    ? formatDispatchScheduledWindow(
+        bookingProjection.scheduledStartTime,
+        bookingProjection.scheduledEndTime,
+      )
     : buildPendingScheduleSummary();
 
   const [jobEvents, communicationEvents] = await Promise.all([
@@ -574,7 +635,9 @@ export async function getJobTrackingByToken(token: string): Promise<CustomerJobT
           where: {
             orgId: record.job.orgId,
             OR: [
-              ...(record.job.customerId ? [{ contactId: record.job.customerId }] : []),
+              ...(record.job.customerId
+                ? [{ contactId: record.job.customerId }]
+                : []),
               ...(record.job.leadId ? [{ leadId: record.job.leadId }] : []),
             ],
           },
@@ -600,15 +663,25 @@ export async function getJobTrackingByToken(token: string): Promise<CustomerJobT
     .filter((event): event is JobTrackingTimelineItem => Boolean(event));
 
   const communicationTimeline = communicationEvents
-    .filter((event) => recordString(asRecord(event.metadataJson), "dispatchJobId") === record.job.id)
+    .filter(
+      (event) =>
+        recordString(asRecord(event.metadataJson), "dispatchJobId") ===
+        record.job.id,
+    )
     .map((event) => mapCommunicationEventToTimelineItem(event));
 
   const timeline = [...jobTimeline, ...communicationTimeline]
-    .sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt))
+    .sort(
+      (left, right) =>
+        Date.parse(right.occurredAt) - Date.parse(left.occurredAt),
+    )
     .slice(0, 16);
 
   const status = dispatchStatusFromDb(record.job.dispatchStatus);
-  const estimateTitle = record.job.linkedEstimate?.title || record.job.sourceEstimate?.title || null;
+  const estimateTitle =
+    record.job.linkedEstimate?.title ||
+    record.job.sourceEstimate?.title ||
+    null;
 
   return {
     jobId: record.job.id,
@@ -617,7 +690,9 @@ export async function getJobTrackingByToken(token: string): Promise<CustomerJobT
     address: record.job.address,
     currentStatus: status,
     currentStatusLabel: formatJobTrackingStatusLabel(status),
-    scheduledDate: bookingProjection.scheduledDate ? formatTrackingDate(bookingProjection.scheduledDate) : null,
+    scheduledDate: bookingProjection.scheduledDate
+      ? formatTrackingDate(bookingProjection.scheduledDate)
+      : null,
     scheduledWindow: scheduleWindow,
     assignedCrewName: record.job.assignedCrew?.name || null,
     contractor: {

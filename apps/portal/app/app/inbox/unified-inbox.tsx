@@ -10,6 +10,8 @@ import {
 import { formatLabel } from "@/lib/hq";
 import { matchesInboxConversationSearch } from "@/lib/inbox-search";
 import { mergeInboxTimelineEvents } from "@/lib/inbox-ui";
+import { shouldRouteLeadToSpamReview } from "@/lib/lead-spam-lane";
+import type { TwilioMessagingReadinessCode } from "@/lib/twilio-readiness";
 import InboxContextPanel, {
   type InboxLeadContext,
 } from "./inbox-context-panel";
@@ -58,6 +60,8 @@ type UnifiedInboxProps = {
   internalUser: boolean;
   onboardingComplete: boolean;
   canManage: boolean;
+  messagingReadinessCode: TwilioMessagingReadinessCode;
+  canComposeMessages: boolean;
   initialLeadId?: string | null;
   initialOpenContextEditor?: boolean;
 };
@@ -133,7 +137,11 @@ type InboxCopy = {
   messageComposer: string;
   send: string;
   messageSent: string;
+  messageQueued: string;
+  messageQueuedNotLive: string;
   messageFailed: string;
+  messageSuppressed: string;
+  messageNotLive: string;
   readOnlyBody: string;
   context: string;
   jobContext: string;
@@ -202,7 +210,13 @@ function getInboxCopy(locale: string): InboxCopy {
       messageComposer: "Redactor de mensajes",
       send: "Enviar",
       messageSent: "Mensaje enviado.",
+      messageQueued: "Mensaje en cola.",
+      messageQueuedNotLive:
+        "Mensajeria no esta en vivo todavia. El mensaje se guardo como en cola.",
       messageFailed: "El mensaje fallo.",
+      messageSuppressed:
+        "El mensaje fue bloqueado porque este contacto no acepta SMS.",
+      messageNotLive: "Mensajeria no esta lista para enviar en vivo todavia.",
       readOnlyBody:
         "Los usuarios de solo lectura no pueden editar contexto ni enviar respuestas desde la bandeja.",
       context: "Contexto",
@@ -270,7 +284,13 @@ function getInboxCopy(locale: string): InboxCopy {
     messageComposer: "Message composer",
     send: "Send",
     messageSent: "Message sent.",
+    messageQueued: "Message queued.",
+    messageQueuedNotLive:
+      "Messaging is not live yet. The message was saved as queued.",
     messageFailed: "Message failed.",
+    messageSuppressed:
+      "This message was blocked because the contact is opted out of SMS.",
+    messageNotLive: "Messaging is not ready for live sending yet.",
     readOnlyBody:
       "Read-only users cannot edit context or send replies from inbox.",
     context: "Context",
@@ -368,7 +388,10 @@ function matchesInboxLane(row: ConversationRow, lane: InboxLane): boolean {
     return row.atRisk || isOverdue(row.nextFollowUpAt);
   }
   if (lane === "spam") {
-    return row.potentialSpam || row.failedOutboundCount > 0;
+    return shouldRouteLeadToSpamReview({
+      potentialSpam: row.potentialSpam,
+      failedOutboundCount: row.failedOutboundCount,
+    });
   }
   return true;
 }
@@ -400,6 +423,67 @@ function callRowLabel(event: TimelineEvent): string {
   return parts.filter(Boolean).join(" • ");
 }
 
+function getMessagingComposerNotice(
+  locale: string,
+  code: TwilioMessagingReadinessCode,
+): string | null {
+  const spanish = locale.startsWith("es");
+  switch (code) {
+    case "SEND_DISABLED":
+      return spanish
+        ? "Mensajeria no esta en vivo en este despliegue. Los mensajes enviados aqui se guardaran como en cola hasta activarla."
+        : "Messaging is not live in this deployment yet. Messages sent here will be saved as queued until sending is enabled.";
+    case "PENDING_A2P":
+      return spanish
+        ? "Mensajeria no esta en vivo todavia. El registro de Twilio sigue pendiente."
+        : "Messaging is not live yet. Twilio registration is still pending.";
+    case "PAUSED":
+      return spanish
+        ? "Mensajeria esta pausada para este negocio hasta reactivar Twilio."
+        : "Messaging is paused for this workspace until Twilio is reactivated.";
+    case "TOKEN_KEY_MISSING":
+      return spanish
+        ? "Mensajeria esta bloqueada porque falta la llave de cifrado del token de Twilio."
+        : "Messaging is blocked because the Twilio token encryption key is missing.";
+    case "NOT_CONFIGURED":
+      return spanish
+        ? "Mensajeria no esta configurada para este negocio todavia."
+        : "Messaging is not configured for this workspace yet.";
+    default:
+      return null;
+  }
+}
+
+function getSendStatusMessage(
+  copy: InboxCopy,
+  payload: {
+    notice?: string;
+    error?: string;
+    deliveryState?: "SENT" | "QUEUED" | "FAILED" | "SUPPRESSED" | "NOT_LIVE";
+    liveSend?: boolean;
+  },
+): string {
+  if (payload.notice) {
+    return payload.notice;
+  }
+  if (payload.error) {
+    return payload.error;
+  }
+
+  switch (payload.deliveryState) {
+    case "FAILED":
+      return copy.messageFailed;
+    case "QUEUED":
+      return payload.liveSend ? copy.messageQueued : copy.messageQueuedNotLive;
+    case "SUPPRESSED":
+      return copy.messageSuppressed;
+    case "NOT_LIVE":
+      return copy.messageNotLive;
+    default:
+      return copy.messageSent;
+  }
+}
+
 function isNearThreadBottom(element: HTMLDivElement | null): boolean {
   if (!element) return true;
   return element.scrollHeight - element.scrollTop - element.clientHeight < 120;
@@ -410,11 +494,14 @@ export default function UnifiedInbox({
   internalUser,
   onboardingComplete,
   canManage,
+  messagingReadinessCode,
+  canComposeMessages,
   initialLeadId = null,
   initialOpenContextEditor = false,
 }: UnifiedInboxProps) {
   const locale = useLocale();
   const copy = getInboxCopy(locale);
+  const composerNotice = getMessagingComposerNotice(locale, messagingReadinessCode);
   function withOrgQuery(path: string) {
     if (!internalUser) return path;
     const joiner = path.includes("?") ? "&" : "?";
@@ -814,7 +901,7 @@ export default function UnifiedInbox({
   }, [initialLeadId, isNarrow, selectedLeadId]);
 
   async function handleSend() {
-    if (!selectedLeadId || !canManage) return;
+    if (!selectedLeadId || !canManage || !canComposeMessages) return;
     const body = draft.trim();
     if (!body || sending) return;
 
@@ -849,6 +936,8 @@ export default function UnifiedInbox({
         ok?: boolean;
         error?: string;
         notice?: string;
+        deliveryState?: "SENT" | "QUEUED" | "FAILED" | "SUPPRESSED" | "NOT_LIVE";
+        liveSend?: boolean;
         message?: {
           id: string;
           direction: "INBOUND" | "OUTBOUND";
@@ -862,7 +951,11 @@ export default function UnifiedInbox({
         setPendingEvents((current) =>
           current.filter((event) => event.id !== optimisticId),
         );
-        setSendStatus(payload?.error || copy.errors.sendMessage);
+        setSendStatus(
+          payload
+            ? getSendStatusMessage(copy, payload)
+            : copy.errors.sendMessage,
+        );
         return;
       }
 
@@ -904,12 +997,7 @@ export default function UnifiedInbox({
             : row,
         ),
       );
-      setSendStatus(
-        payload.notice ||
-          (payload.message.status === "FAILED"
-            ? copy.messageFailed
-            : copy.messageSent),
-      );
+      setSendStatus(getSendStatusMessage(copy, payload));
     } catch {
       setPendingEvents((current) =>
         current.filter((event) => event.id !== optimisticId),
@@ -1394,7 +1482,7 @@ export default function UnifiedInbox({
                           : "What’s the address (or closest cross-street)?",
                       )
                     }
-                    disabled={sending || !canManage}
+                    disabled={sending || !canManage || !canComposeMessages}
                   >
                     {copy.askAddress}
                   </button>
@@ -1408,7 +1496,7 @@ export default function UnifiedInbox({
                           : "When are you looking to get this done — ASAP, this week, next week, or just getting a quote?",
                       )
                     }
-                    disabled={sending || !canManage}
+                    disabled={sending || !canManage || !canComposeMessages}
                   >
                     {copy.askTimeframe}
                   </button>
@@ -1422,11 +1510,15 @@ export default function UnifiedInbox({
                           : "Got it — we’ll reach out shortly.",
                       )
                     }
-                    disabled={sending || !canManage}
+                    disabled={sending || !canManage || !canComposeMessages}
                   >
                     {copy.acknowledge}
                   </button>
                 </div>
+
+                {composerNotice ? (
+                  <p className="muted">{composerNotice}</p>
+                ) : null}
 
                 <textarea
                   value={draft}
@@ -1434,7 +1526,9 @@ export default function UnifiedInbox({
                   placeholder={copy.typeMessage}
                   rows={3}
                   maxLength={1600}
-                  disabled={!selectedLeadId || sending || !canManage}
+                  disabled={
+                    !selectedLeadId || sending || !canManage || !canComposeMessages
+                  }
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
@@ -1451,7 +1545,11 @@ export default function UnifiedInbox({
                     type="button"
                     onClick={() => void handleSend()}
                     disabled={
-                      !draft.trim() || sending || !selectedLeadId || !canManage
+                      !draft.trim() ||
+                      sending ||
+                      !selectedLeadId ||
+                      !canManage ||
+                      !canComposeMessages
                     }
                   >
                     {copy.send}

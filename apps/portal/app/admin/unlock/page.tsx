@@ -35,7 +35,7 @@ export default async function AdminUnlockPage() {
     );
   }
 
-  const vaultToken = cookies().get("tg_admin_vault")?.value;
+  const vaultToken = (await cookies()).get("tg_admin_vault")?.value;
   const decoded = await decode({ token: vaultToken, secret: vaultKey, salt: "admin-vault" });
   if (decoded?.sub === user.id && decoded.unlocked === true) {
     redirect("/admin");

@@ -3,11 +3,13 @@ import type { NextRequest } from "next/server";
 import { getToken, decode } from "next-auth/jwt";
 import { normalizeEnvValue } from "./lib/env";
 
-export async function middleware(req: NextRequest) {
+type GetTokenRequest = NonNullable<Parameters<typeof getToken>[0]>["req"];
+
+export async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   const token = await getToken({
-    req,
+    req: req as unknown as GetTokenRequest,
     secret: normalizeEnvValue(process.env.NEXTAUTH_SECRET),
   });
 

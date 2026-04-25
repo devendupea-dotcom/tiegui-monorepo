@@ -14,10 +14,11 @@ import {
 } from "@/lib/app-api-permissions";
 
 type RouteContext = {
-  params: { leadId: string };
+  params: Promise<{ leadId: string }>;
 };
 
-export async function POST(_req: Request, { params }: RouteContext) {
+export async function POST(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const lead = await prisma.lead.findUnique({

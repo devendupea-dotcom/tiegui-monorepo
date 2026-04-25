@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getAutomatedFollowUpThrottleUntil,
   getQueuedSmsSkipReason,
+  getRecentHardSmsFailureForAutomation,
   shouldSkipQueuedFollowUp,
   shouldSuppressMissedCallKickoff,
 } from "../lib/sms-automation-guards.ts";
@@ -35,6 +36,96 @@ test("getQueuedSmsSkipReason blocks automation during human takeover", () => {
   });
 
   assert.match(reason || "", /human follow-up|human_takeover/i);
+});
+
+test("getQueuedSmsSkipReason blocks automation after a hard SMS failure", () => {
+  const reason = getQueuedSmsSkipReason({
+    jobCreatedAt: new Date("2025-01-01T12:00:00.000Z"),
+    leadStatus: "FOLLOW_UP",
+    leadLastInboundAt: null,
+    messageType: "AUTOMATION",
+    recentHardSmsFailure: {
+      occurredAt: new Date("2025-01-01T12:01:00.000Z"),
+      category: "BAD_NUMBER",
+      label: "Bad or unsupported phone number",
+      operatorActionLabel: "Fix phone number",
+      operatorDetail: "Verify the customer phone number before any SMS retry.",
+    },
+    conversationState: null,
+    now: new Date("2025-01-01T12:05:00.000Z"),
+  });
+
+  assert.match(reason || "", /hard sms failure/i);
+  assert.match(reason || "", /fix phone number/i);
+});
+
+test("getQueuedSmsSkipReason lets manual SMS override hard failure guardrails", () => {
+  const reason = getQueuedSmsSkipReason({
+    jobCreatedAt: new Date("2025-01-01T12:00:00.000Z"),
+    leadStatus: "FOLLOW_UP",
+    leadLastInboundAt: null,
+    messageType: "MANUAL",
+    recentHardSmsFailure: {
+      occurredAt: new Date("2025-01-01T12:01:00.000Z"),
+      category: "BAD_NUMBER",
+      label: "Bad or unsupported phone number",
+      operatorActionLabel: "Fix phone number",
+      operatorDetail: "Verify the customer phone number before any SMS retry.",
+    },
+    conversationState: null,
+    now: new Date("2025-01-01T12:05:00.000Z"),
+  });
+
+  assert.equal(reason, null);
+});
+
+test("getRecentHardSmsFailureForAutomation reads failure intelligence metadata", () => {
+  const failure = getRecentHardSmsFailureForAutomation([
+    {
+      occurredAt: new Date("2025-01-01T12:01:00.000Z"),
+      providerStatus: "undelivered",
+      metadataJson: {
+        providerStatus: "undelivered",
+        status: "FAILED",
+        failureCategory: "CARRIER_FILTERING",
+        failureLabel: "Carrier filtering",
+        failureOperatorActionLabel: "Rewrite message",
+        failureOperatorDetail: "Rewrite the SMS shorter and less promotional, then retry once.",
+        failureBlocksAutomationRetry: true,
+      },
+    },
+  ]);
+
+  assert.deepEqual(failure, {
+    occurredAt: new Date("2025-01-01T12:01:00.000Z"),
+    category: "CARRIER_FILTERING",
+    label: "Carrier filtering",
+    operatorActionLabel: "Rewrite message",
+    operatorDetail: "Rewrite the SMS shorter and less promotional, then retry once.",
+  });
+});
+
+test("getRecentHardSmsFailureForAutomation clears old failures after a newer delivery", () => {
+  const failure = getRecentHardSmsFailureForAutomation([
+    {
+      occurredAt: new Date("2025-01-01T12:04:00.000Z"),
+      providerStatus: "delivered",
+      metadataJson: {
+        providerStatus: "delivered",
+        status: "DELIVERED",
+      },
+    },
+    {
+      occurredAt: new Date("2025-01-01T12:01:00.000Z"),
+      providerStatus: "undelivered",
+      metadataJson: {
+        failureLabel: "Bad or unsupported phone number",
+        failureBlocksAutomationRetry: true,
+      },
+    },
+  ]);
+
+  assert.equal(failure, null);
 });
 
 test("shouldSuppressMissedCallKickoff keeps an active conversation from rewinding", () => {

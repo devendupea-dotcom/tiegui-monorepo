@@ -15,7 +15,7 @@ import {
 } from "@/lib/app-api-permissions";
 
 type RouteContext = {
-  params: { leadId: string };
+  params: Promise<{ leadId: string }>;
 };
 
 type PatchLeadPayload = {
@@ -68,7 +68,8 @@ function parseSourceType(value: unknown): LeadSourceType | null {
   return SOURCE_TYPES.includes(normalized as LeadSourceType) ? (normalized as LeadSourceType) : null;
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const payload = (await req.json().catch(() => null)) as PatchLeadPayload | null;

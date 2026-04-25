@@ -14,9 +14,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 };
 
 type EstimateDraftUpdatePayload = {
@@ -45,7 +45,8 @@ async function getScopedDraftOrThrow(draftId: string) {
   return draft;
 }
 
-export async function GET(_: Request, { params }: RouteContext) {
+export async function GET(_: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const scoped = await getScopedDraftOrThrow(params.id);
@@ -79,7 +80,8 @@ export async function GET(_: Request, { params }: RouteContext) {
   }
 }
 
-export async function PUT(req: Request, { params }: RouteContext) {
+export async function PUT(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const scoped = await getScopedDraftOrThrow(params.id);

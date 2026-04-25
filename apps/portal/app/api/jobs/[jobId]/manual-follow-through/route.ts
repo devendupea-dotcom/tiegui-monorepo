@@ -12,9 +12,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     jobId: string;
-  };
+  }>;
 };
 
 type ManualFollowThroughPayload = {
@@ -42,7 +42,8 @@ function isManualFollowThroughState(value: unknown): value is "started" | "handl
   return value === "started" || value === "handled";
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const scoped = await getScopedJobOrThrow(params.jobId);

@@ -629,11 +629,12 @@ async function completeOnboardingAction(formData: FormData) {
   redirect(onboardingUrl(orgId, actor.internalUser, "finish"));
 }
 
-export default async function AppOnboardingPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function AppOnboardingPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const requestedOrgId = getParam(searchParams?.orgId);
   const scope = await resolveAppScope({ nextPath: "/app/onboarding", requestedOrgId });
   await requireOnboardingEditor(scope.orgId);

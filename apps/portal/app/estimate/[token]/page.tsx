@@ -12,15 +12,16 @@ export const metadata = {
   },
 };
 
-export default async function EstimateSharePage({
-  params,
-  searchParams,
-}: {
-  params: {
-    token: string;
-  };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function EstimateSharePage(
+  props: {
+    params: Promise<{
+      token: string;
+    }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const previewParam = Array.isArray(searchParams?.preview)
     ? searchParams?.preview[0]
     : searchParams?.preview;

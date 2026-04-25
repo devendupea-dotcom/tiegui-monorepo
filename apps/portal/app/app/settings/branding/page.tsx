@@ -92,11 +92,12 @@ async function updateBrandingAction(formData: FormData) {
   redirect(withOrgQuery("/app/settings/branding?saved=1", orgId, internalUser));
 }
 
-export default async function BrandingSettingsPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function BrandingSettingsPage(
+  props: {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const requestedOrgId = getParam(searchParams?.orgId);
   const scope = await resolveAppScope({ nextPath: "/app/settings/branding", requestedOrgId });
   const saved = getParam(searchParams?.saved);

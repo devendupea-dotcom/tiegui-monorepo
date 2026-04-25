@@ -16,6 +16,20 @@ export type DispatchConversationSnapshot = {
   stoppedAt: Date | null;
 };
 
+export type SmsAutomationHardFailureSnapshot = {
+  occurredAt: Date;
+  category: string | null;
+  label: string | null;
+  operatorActionLabel: string | null;
+  operatorDetail: string | null;
+};
+
+export type SmsAutomationFailureEventSnapshot = {
+  occurredAt: Date;
+  metadataJson: unknown;
+  providerStatus?: string | null;
+};
+
 export type MissedCallKickoffStateSnapshot = {
   stage: ConversationStage;
   workSummary?: string | null;
@@ -39,6 +53,70 @@ export type FollowUpStateCurrent = FollowUpStateSnapshot & {
   pausedUntil: Date | null;
   stoppedAt: Date | null;
 };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function recordString(record: Record<string, unknown> | null, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function recordBoolean(record: Record<string, unknown> | null, key: string): boolean {
+  const value = record?.[key];
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  return typeof value === "string" && ["1", "true", "yes"].includes(value.trim().toLowerCase());
+}
+
+function normalizeSmsStatus(value: string | null | undefined): string | null {
+  const normalized = `${value || ""}`.trim().toLowerCase();
+  return normalized || null;
+}
+
+function hasDeliveredAfterFailure(event: SmsAutomationFailureEventSnapshot): boolean {
+  const metadata = asRecord(event.metadataJson);
+  const status =
+    normalizeSmsStatus(recordString(metadata, "providerStatus")) ||
+    normalizeSmsStatus(recordString(metadata, "status")) ||
+    normalizeSmsStatus(event.providerStatus);
+
+  return status === "delivered" || status === "read";
+}
+
+export function getRecentHardSmsFailureForAutomation(
+  events: readonly SmsAutomationFailureEventSnapshot[],
+): SmsAutomationHardFailureSnapshot | null {
+  const ordered = [...events].sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime());
+
+  for (const event of ordered) {
+    if (hasDeliveredAfterFailure(event)) {
+      return null;
+    }
+
+    const metadata = asRecord(event.metadataJson);
+    if (!recordBoolean(metadata, "failureBlocksAutomationRetry")) {
+      continue;
+    }
+
+    return {
+      occurredAt: event.occurredAt,
+      category: recordString(metadata, "failureCategory"),
+      label: recordString(metadata, "failureLabel") || recordString(metadata, "failureReason"),
+      operatorActionLabel: recordString(metadata, "failureOperatorActionLabel"),
+      operatorDetail: recordString(metadata, "failureOperatorDetail"),
+    };
+  }
+
+  return null;
+}
 
 export function getAutomatedFollowUpThrottleUntil(input: {
   lastOutboundAt: Date | null;
@@ -134,6 +212,7 @@ export function getQueuedSmsSkipReason(input: {
   leadStatus: string;
   leadLastInboundAt: Date | null;
   messageType: "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
+  recentHardSmsFailure?: SmsAutomationHardFailureSnapshot | null;
   conversationState: DispatchConversationSnapshot | null;
   now: Date;
 }): string | null {
@@ -147,6 +226,16 @@ export function getQueuedSmsSkipReason(input: {
 
   if (input.leadLastInboundAt && input.leadLastInboundAt.getTime() > input.jobCreatedAt.getTime()) {
     return "Skipped stale automation after a newer inbound reply.";
+  }
+
+  if (input.recentHardSmsFailure) {
+    const action =
+      input.recentHardSmsFailure.operatorActionLabel ||
+      input.recentHardSmsFailure.label ||
+      "Review latest SMS failure";
+    const detail =
+      input.recentHardSmsFailure.operatorDetail || "Review the latest Twilio failure before automation sends again.";
+    return `Skipped automation after hard SMS failure: ${action}. ${detail}`;
   }
 
   if (!input.conversationState) {
