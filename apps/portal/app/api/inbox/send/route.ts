@@ -2,10 +2,17 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { sendManualLeadSms } from "@/lib/manual-outbound-sms";
+import {
+  normalizeManualSmsIdempotencyKey,
+  runIdempotentManualSmsMutation,
+  type ManualSmsApiResponse,
+} from "@/lib/manual-sms-idempotency";
 import { AppApiError, assertCanMutateLeadJob, assertOrgReadAccess, requireAppApiActor } from "@/lib/app-api-permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const ROUTE = "/api/inbox/send";
 
 function toStringOrEmpty(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -19,6 +26,7 @@ export async function POST(req: Request) {
     const leadId = toStringOrEmpty(payload?.leadId).trim();
     const body = toStringOrEmpty(payload?.body).trim();
     const fromNumberE164 = payload?.fromNumberE164 ? normalizeE164(toStringOrEmpty(payload.fromNumberE164)) : null;
+    const idempotencyKey = normalizeManualSmsIdempotencyKey(req, payload?.idempotencyKey);
 
     if (!leadId) {
       throw new AppApiError("leadId is required.", 400);
@@ -60,35 +68,51 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await sendManualLeadSms({
-      actor,
-      lead,
-      body,
-      fromNumberE164,
+    const response = await runIdempotentManualSmsMutation({
+      orgId: lead.orgId,
+      route: ROUTE,
+      scope: "manual-sms:inbox-send",
+      idempotencyKey,
+      run: async (): Promise<ManualSmsApiResponse> => {
+        const result = await sendManualLeadSms({
+          actor,
+          lead,
+          body,
+          fromNumberE164,
+          clientIdempotencyKey: idempotencyKey,
+        });
+
+        if (!result.ok) {
+          return {
+            httpStatus: result.httpStatus,
+            body: {
+              ok: false,
+              error: result.error,
+              notice: result.notice,
+              deliveryState: result.deliveryState,
+              liveSend: result.liveSend,
+              readinessCode: result.readinessCode,
+              failure: result.failure,
+            },
+          };
+        }
+
+        return {
+          httpStatus: 200,
+          body: {
+            ok: true,
+            message: result.message,
+            notice: result.notice,
+            deliveryState: result.deliveryState,
+            liveSend: result.liveSend,
+            readinessCode: result.readinessCode,
+            failure: result.failure,
+          },
+        };
+      },
     });
 
-    if (!result.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: result.error,
-          notice: result.notice,
-          deliveryState: result.deliveryState,
-          liveSend: result.liveSend,
-          readinessCode: result.readinessCode,
-        },
-        { status: result.httpStatus },
-      );
-    }
-
-    return NextResponse.json({
-      ok: true,
-      message: result.message,
-      notice: result.notice,
-      deliveryState: result.deliveryState,
-      liveSend: result.liveSend,
-      readinessCode: result.readinessCode,
-    });
+    return NextResponse.json(response.body, { status: response.httpStatus });
   } catch (error) {
     if (error instanceof AppApiError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
