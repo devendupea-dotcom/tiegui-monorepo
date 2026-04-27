@@ -74,6 +74,9 @@ export default async function HqDashboardPage() {
           <Link className="btn secondary" href="/hq/inbox">
             Open Inbox
           </Link>
+          <Link className="btn secondary" href="/hq/messaging">
+            Messaging Health
+          </Link>
           <Link className="btn secondary" href="/hq/calendar">
             Open Calendar
           </Link>
