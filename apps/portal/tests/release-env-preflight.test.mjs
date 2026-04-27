@@ -14,6 +14,8 @@ const baseEnv = {
   SMTP_URL: "smtp://user:pass@example.com:587",
   EMAIL_FROM: "ops@example.com",
   CRON_SECRET: "test-cron-secret",
+  UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+  UPSTASH_REDIS_REST_TOKEN: "test-upstash-token",
   STRIPE_SECRET_KEY: "sk_test_123",
   STRIPE_CONNECT_CLIENT_ID: "ca_test_123",
   STRIPE_WEBHOOK_SECRET: "whsec_test_123",
@@ -68,6 +70,41 @@ test("release env preflight blocks queue-only or unsigned Twilio modes", async (
   assert.match(result.stdout, /FAIL Twilio send mode/);
   assert.match(result.stdout, /FAIL Twilio webhook signature validation/);
   assert.match(result.stdout, /Release env preflight: blocked/);
+});
+
+test("release env preflight blocks missing rate-limit backend", async () => {
+  const result = await runPreflight({
+    UPSTASH_REDIS_REST_URL: "",
+    UPSTASH_REDIS_REST_TOKEN: "",
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /FAIL Rate limit backend/);
+  assert.match(result.stdout, /Release env preflight: blocked/);
+});
+
+test("release env preflight accepts Vercel KV rate-limit backend env names", async () => {
+  const result = await runPreflight({
+    UPSTASH_REDIS_REST_URL: "",
+    UPSTASH_REDIS_REST_TOKEN: "",
+    KV_REST_API_URL: "https://example.upstash.io",
+    KV_REST_API_TOKEN: "test-kv-token",
+  });
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /PASS Rate limit backend/);
+  assert.ok(result.stdout.includes("Using KV_REST_API_URL/KV_REST_API_TOKEN"));
+});
+
+test("release env preflight blocks partial rate-limit backend env pairs", async () => {
+  const result = await runPreflight({
+    UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+    UPSTASH_REDIS_REST_TOKEN: "",
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /FAIL Rate limit backend/);
+  assert.ok(result.stdout.includes("Incomplete env pair: UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN"));
 });
 
 test("release env preflight blocks malformed Stripe and Twilio secrets", async () => {
