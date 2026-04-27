@@ -1,10 +1,9 @@
 import "server-only";
 
 import { Redis } from "@upstash/redis";
-import { normalizeEnvValue } from "./env";
+import { getRateLimitBackendEnv } from "./rate-limit-config";
 
-const url = normalizeEnvValue(process.env.UPSTASH_REDIS_REST_URL);
-const token = normalizeEnvValue(process.env.UPSTASH_REDIS_REST_TOKEN);
+const { url, token } = getRateLimitBackendEnv();
 
 export const upstashRedis = url && token ? new Redis({ url, token }) : null;
 

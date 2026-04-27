@@ -1,7 +1,19 @@
 import "server-only";
 
 import { Ratelimit } from "@upstash/ratelimit";
+import {
+  isProductionRateLimitRuntime,
+  isRateLimitBackendConfiguredFromEnv,
+  resolveMissingRateLimitBackendDecision,
+  shouldRequireRateLimitBackend,
+} from "./rate-limit-config";
 import { upstashRedis } from "./upstash";
+
+export {
+  isProductionRateLimitRuntime,
+  isRateLimitBackendConfiguredFromEnv,
+  shouldRequireRateLimitBackend,
+};
 
 type SlidingWindowInput = {
   identifier: string;
@@ -35,6 +47,15 @@ export async function checkSlidingWindowLimit(input: SlidingWindowInput): Promis
 > {
   const limiter = getSlidingWindowLimiter(input);
   if (!limiter) {
+    const missingBackendDecision = resolveMissingRateLimitBackendDecision();
+    if (!missingBackendDecision.ok) {
+      return {
+        ok: false,
+        remaining: 0,
+        resetAtMs: Date.now() + 60_000,
+        retryAfterSeconds: missingBackendDecision.retryAfterSeconds,
+      };
+    }
     return { ok: true, remaining: Number.POSITIVE_INFINITY, resetAtMs: 0 };
   }
 

@@ -90,6 +90,49 @@ function requiredOneOf(
   };
 }
 
+function getRateLimitBackendCheck(): CheckResult {
+  const upstashUrl = hasEnv("UPSTASH_REDIS_REST_URL");
+  const upstashToken = hasEnv("UPSTASH_REDIS_REST_TOKEN");
+  const kvUrl = hasEnv("KV_REST_API_URL");
+  const kvToken = hasEnv("KV_REST_API_TOKEN");
+  const upstashPartial = (upstashUrl || upstashToken) && !(upstashUrl && upstashToken);
+  const kvPartial = (kvUrl || kvToken) && !(kvUrl && kvToken);
+
+  if (upstashPartial || kvPartial) {
+    const partialPairs = [
+      upstashPartial ? "UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN" : null,
+      kvPartial ? "KV_REST_API_URL/KV_REST_API_TOKEN" : null,
+    ].filter(Boolean);
+    return requiredCondition(
+      "Rate limit backend",
+      false,
+      `Incomplete env pair: ${partialPairs.join(", ")}. Set both URL and token, or remove the partial pair.`,
+    );
+  }
+
+  if (upstashUrl && upstashToken) {
+    return requiredCondition(
+      "Rate limit backend",
+      true,
+      "Using UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN.",
+    );
+  }
+
+  if (kvUrl && kvToken) {
+    return requiredCondition(
+      "Rate limit backend",
+      true,
+      "Using KV_REST_API_URL/KV_REST_API_TOKEN.",
+    );
+  }
+
+  return requiredCondition(
+    "Rate limit backend",
+    false,
+    "Missing either UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN or KV_REST_API_URL/KV_REST_API_TOKEN.",
+  );
+}
+
 function envEquals(key: string, expected: string): boolean {
   return envValue(key).toLowerCase() === expected.toLowerCase();
 }
@@ -140,6 +183,7 @@ function buildChecks(): CheckResult[] {
     ]),
     required("Email sender", ["EMAIL_FROM"]),
     required("Cron auth", ["CRON_SECRET"]),
+    getRateLimitBackendCheck(),
     required("Stripe billing", [
       "STRIPE_SECRET_KEY",
       "STRIPE_CONNECT_CLIENT_ID",
