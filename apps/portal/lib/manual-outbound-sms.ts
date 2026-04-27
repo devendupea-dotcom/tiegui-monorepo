@@ -15,6 +15,7 @@ import {
   resolveTwilioMessagingReadiness,
   type TwilioMessagingReadinessCode,
 } from "@/lib/twilio-readiness";
+import type { SmsFailureClassification } from "@/lib/sms-failure-intelligence";
 
 type ManualLeadContext = {
   id: string;
@@ -55,6 +56,7 @@ export type ManualLeadSmsSendResult =
       deliveryState: ManualSmsDeliveryState;
       liveSend: boolean;
       readinessCode: TwilioMessagingReadinessCode;
+      failure?: SmsFailureClassification | null;
     }
   | {
       ok: true;
@@ -64,6 +66,7 @@ export type ManualLeadSmsSendResult =
       deliveryState: Exclude<ManualSmsDeliveryState, "SUPPRESSED" | "NOT_LIVE">;
       liveSend: boolean;
       readinessCode: TwilioMessagingReadinessCode;
+      failure?: SmsFailureClassification | null;
     };
 
 function resolveDeliveryState(status: MessageStatus): "SENT" | "QUEUED" | "FAILED" {
@@ -81,6 +84,7 @@ export async function sendManualLeadSms(input: {
   lead: ManualLeadContext;
   body: string;
   fromNumberE164?: string | null;
+  clientIdempotencyKey?: string | null;
 }): Promise<ManualLeadSmsSendResult> {
   const organization = await prisma.organization.findUnique({
     where: { id: input.lead.orgId },
@@ -211,6 +215,13 @@ export async function sendManualLeadSms(input: {
       providerMessageSid: providerResult.providerMessageSid,
       status: providerResult.status,
       deliveryNotice: providerResult.notice || null,
+      providerStatus: providerResult.providerStatus || null,
+      providerErrorCode: providerResult.providerErrorCode || null,
+      providerErrorMessage: providerResult.providerErrorMessage || null,
+      providerRequestTimedOut: providerResult.providerRequestTimedOut || false,
+      providerAcceptedUnknown: providerResult.providerAcceptedUnknown || false,
+      failure: providerResult.failure || null,
+      clientIdempotencyKey: input.clientIdempotencyKey || null,
       occurredAt: message.createdAt,
     });
 
@@ -281,5 +292,6 @@ export async function sendManualLeadSms(input: {
     deliveryState: resolveDeliveryState(providerResult.status),
     liveSend: readiness.code === "ACTIVE",
     readinessCode: readiness.code,
+    failure: providerResult.failure || null,
   };
 }

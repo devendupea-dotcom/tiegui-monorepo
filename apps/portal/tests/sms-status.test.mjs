@@ -99,6 +99,39 @@ test("classifySmsFailure turns common Twilio failures into operator actions", ()
     })?.retryRecommended,
     true,
   );
+
+  assert.equal(
+    classifySmsFailure({
+      lifecycleStatus: "FAILED",
+      providerStatus: "failed",
+      errorCode: "21614",
+      errorMessage: "To number is not a valid mobile number.",
+    })?.blocksAutomationRetry,
+    true,
+  );
+
+  const retryable = classifySmsFailure({
+    lifecycleStatus: "FAILED",
+    providerStatus: "failed",
+    errorCode: "30008",
+    errorMessage: "Temporary provider network issue.",
+  });
+  assert.equal(retryable?.retryRecommended, true);
+  assert.equal(retryable?.blocksAutomationRetry, false);
+});
+
+test("classifySmsFailure blocks blind retry when provider acceptance is unknown", () => {
+  const classification = classifySmsFailure({
+    providerStatus: "timeout",
+    errorCode: "TIEGUI_TIMEOUT",
+    errorMessage: "Twilio request timed out before TieGui received provider confirmation.",
+    providerAcceptedUnknown: true,
+  });
+
+  assert.equal(classification?.category, "UNKNOWN_PROVIDER_ACCEPTANCE");
+  assert.equal(classification?.retryRecommended, false);
+  assert.equal(classification?.blocksAutomationRetry, true);
+  assert.match(classification?.operatorDetail || "", /may have been accepted/i);
 });
 
 test("shouldAdvanceOutboundSmsLifecycle prevents weaker or conflicting regressions", () => {

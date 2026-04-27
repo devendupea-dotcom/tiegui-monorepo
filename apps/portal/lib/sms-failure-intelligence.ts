@@ -8,6 +8,7 @@ export type SmsFailureCategory =
   | "TWILIO_CONFIGURATION"
   | "RATE_LIMIT"
   | "TEMPORARY_PROVIDER"
+  | "UNKNOWN_PROVIDER_ACCEPTANCE"
   | "UNKNOWN";
 
 export type SmsFailureOperatorAction =
@@ -46,12 +47,26 @@ export function classifySmsFailure(input: {
   lifecycleStatus?: MessageStatus | null;
   errorCode?: string | null;
   errorMessage?: string | null;
+  providerAcceptedUnknown?: boolean;
 }): SmsFailureClassification | null {
   const lifecycleStatus = input.lifecycleStatus || null;
   const providerStatus = normalizeText(input.providerStatus);
   const errorCode = normalizeCode(input.errorCode);
   const errorText = normalizeText(input.errorMessage);
   const combinedText = [providerStatus, errorCode, errorText].filter(Boolean).join(" ");
+
+  if (input.providerAcceptedUnknown || errorCode === "TIEGUI_TIMEOUT") {
+    return {
+      category: "UNKNOWN_PROVIDER_ACCEPTANCE",
+      label: "Provider confirmation timed out",
+      operatorAction: "REVIEW_MANUALLY",
+      operatorActionLabel: "Check Twilio before retrying",
+      operatorDetail:
+        "TieGui did not receive Twilio confirmation. The SMS may have been accepted, so refresh the thread or check Twilio before sending again.",
+      retryRecommended: false,
+      blocksAutomationRetry: true,
+    };
+  }
 
   if (lifecycleStatus && lifecycleStatus !== "FAILED") {
     return null;

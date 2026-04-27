@@ -1,10 +1,10 @@
 import { normalizeE164 } from "@/lib/phone";
-import { prisma } from "@/lib/prisma";
-import { decryptTwilioAuthToken } from "@/lib/twilio-config-crypto";
+import { normalizeEnvValue } from "@/lib/env";
 import {
-  listWorkspaceUsers,
-  sortWorkspaceUsersByCalendarRoleThenCreatedAt,
-} from "@/lib/workspace-users";
+  classifySmsFailure,
+  type SmsFailureClassification,
+} from "@/lib/sms-failure-intelligence";
+import { decryptTwilioAuthToken } from "@/lib/twilio-config-crypto";
 
 type TwilioRequestInput = {
   accountSid: string;
@@ -13,6 +13,7 @@ type TwilioRequestInput = {
   baseUrl?: string;
   method?: "GET" | "POST";
   formBody?: URLSearchParams;
+  timeoutMs?: number;
 };
 
 export type TwilioOrgRuntimeConfig = {
@@ -30,6 +31,8 @@ type TwilioApiResult = {
   ok: boolean;
   status: number;
   payload: Record<string, unknown> | null;
+  timedOut?: boolean;
+  errorMessage?: string;
 };
 
 type ValidateConfigInput = {
@@ -62,28 +65,75 @@ function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function readProviderErrorCode(payload: Record<string, unknown> | null, status: number): string | null {
+  const code = payload?.code;
+  if (typeof code === "string" && code.trim()) {
+    return code.trim();
+  }
+  if (typeof code === "number" && Number.isFinite(code)) {
+    return `${code}`;
+  }
+  if (status === 429) {
+    return "20429";
+  }
+  return null;
+}
+
 function readArray(record: Record<string, unknown> | null, key: string): unknown[] {
   const value = record?.[key];
   return Array.isArray(value) ? value : [];
 }
 
+async function getPrismaClient() {
+  return (await import("@/lib/prisma")).prisma;
+}
+
 async function twilioRequest(input: TwilioRequestInput): Promise<TwilioApiResult> {
   const baseUrl = input.baseUrl || `https://api.twilio.com/2010-04-01/Accounts/${input.accountSid}`;
-  const response = await fetch(`${baseUrl}${input.path}`, {
-    method: input.method || "GET",
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${input.accountSid}:${input.authToken}`).toString("base64")}`,
-      ...(input.formBody ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
-    },
-    ...(input.formBody ? { body: input.formBody } : {}),
-  });
+  const controller = input.timeoutMs && input.timeoutMs > 0 ? new AbortController() : null;
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), input.timeoutMs as number)
+    : null;
 
-  const payload = asRecord(await response.json().catch(() => null));
-  return {
-    ok: response.ok,
-    status: response.status,
-    payload,
-  };
+  try {
+    const response = await fetch(`${baseUrl}${input.path}`, {
+      method: input.method || "GET",
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${input.accountSid}:${input.authToken}`).toString("base64")}`,
+        ...(input.formBody ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+      },
+      ...(input.formBody ? { body: input.formBody } : {}),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+
+    const payload = asRecord(await response.json().catch(() => null));
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+    };
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      return {
+        ok: false,
+        status: 0,
+        payload: null,
+        timedOut: true,
+        errorMessage: "Twilio request timed out before TieGui received provider confirmation.",
+      };
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      payload: null,
+      errorMessage: error instanceof Error ? error.message : "Twilio request failed before provider confirmation.",
+    };
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function twilioErrorMessage(payload: Record<string, unknown> | null, status: number, fallback: string): string {
@@ -99,6 +149,7 @@ function normalizeTwilioPhone(phoneNumber: string): string | null {
 }
 
 export async function getTwilioOrgRuntimeConfigByOrgId(orgId: string): Promise<TwilioOrgRuntimeConfig | null> {
+  const prisma = await getPrismaClient();
   const config = await prisma.organizationTwilioConfig.findUnique({
     where: { organizationId: orgId },
     select: {
@@ -132,6 +183,7 @@ export async function getTwilioOrgRuntimeConfigByOrgId(orgId: string): Promise<T
 export async function getTwilioOrgRuntimeConfigByAccountSid(
   twilioSubaccountSid: string,
 ): Promise<TwilioOrgRuntimeConfig | null> {
+  const prisma = await getPrismaClient();
   const config = await prisma.organizationTwilioConfig.findUnique({
     where: { twilioSubaccountSid },
     select: {
@@ -171,6 +223,7 @@ export async function resolveTwilioVoiceForwardingNumber(input: {
     return configuredNumber;
   }
 
+  const { listWorkspaceUsers, sortWorkspaceUsersByCalendarRoleThenCreatedAt } = await import("@/lib/workspace-users");
   const candidates = sortWorkspaceUsersByCalendarRoleThenCreatedAt(
     await listWorkspaceUsers({
       organizationId: input.organizationId,
@@ -278,18 +331,37 @@ export async function sendTwilioMessageWithConfig(input: {
   toNumberE164: string;
   body: string;
   statusCallbackUrl?: string | null;
+  requestTimeoutMs?: number;
 }): Promise<
   | {
       ok: true;
       providerMessageSid: string | null;
       providerStatus: string | null;
+      providerMetadata: {
+        status: string | null;
+        errorCode: null;
+        errorMessage: null;
+        requestTimedOut: false;
+        providerAcceptedUnknown: false;
+        failure: null;
+      };
     }
   | {
       ok: false;
       error: string;
       providerMessageSid: string | null;
+      providerStatus: string | null;
+      providerErrorCode: string | null;
+      providerErrorMessage: string | null;
+      requestTimedOut: boolean;
+      providerAcceptedUnknown: boolean;
+      failure: SmsFailureClassification | null;
     }
 > {
+  const configuredTimeoutMs = Math.max(
+    1000,
+    Math.round(Number(normalizeEnvValue(process.env.TWILIO_SEND_TIMEOUT_MS)) || 10000),
+  );
   const response = await twilioRequest({
     accountSid: input.config.twilioSubaccountSid,
     authToken: input.config.twilioAuthToken,
@@ -303,21 +375,50 @@ export async function sendTwilioMessageWithConfig(input: {
         ...(input.statusCallbackUrl ? { StatusCallback: input.statusCallbackUrl } : {}),
       }),
     ),
+    timeoutMs: input.requestTimeoutMs || configuredTimeoutMs,
   });
 
   const providerMessageSid = typeof response.payload?.sid === "string" ? response.payload.sid : null;
+  const providerStatus = typeof response.payload?.status === "string" ? response.payload.status : null;
+  const providerErrorCode = response.timedOut ? "TIEGUI_TIMEOUT" : readProviderErrorCode(response.payload, response.status);
+  const providerErrorMessage =
+    response.errorMessage || readString(response.payload?.message) || (response.ok ? null : twilioErrorMessage(response.payload, response.status, "Twilio send failed"));
 
   if (!response.ok) {
+    const providerAcceptedUnknown = Boolean(response.timedOut);
+    const failure = classifySmsFailure({
+      providerStatus: providerStatus || (response.timedOut ? "timeout" : "failed"),
+      lifecycleStatus: "FAILED",
+      errorCode: providerErrorCode,
+      errorMessage: providerErrorMessage,
+      providerAcceptedUnknown,
+    });
     return {
       ok: false,
       providerMessageSid,
-      error: twilioErrorMessage(response.payload, response.status, "Twilio send failed"),
+      providerStatus,
+      providerErrorCode,
+      providerErrorMessage,
+      requestTimedOut: Boolean(response.timedOut),
+      providerAcceptedUnknown,
+      failure,
+      error: response.timedOut
+        ? "Twilio send timed out before TieGui received confirmation. The SMS may have been accepted; refresh the thread or check Twilio before retrying."
+        : providerErrorMessage || "Twilio send failed.",
     };
   }
 
   return {
     ok: true,
     providerMessageSid,
-    providerStatus: typeof response.payload?.status === "string" ? response.payload.status : null,
+    providerStatus,
+    providerMetadata: {
+      status: providerStatus,
+      errorCode: null,
+      errorMessage: null,
+      requestTimedOut: false,
+      providerAcceptedUnknown: false,
+      failure: null,
+    },
   };
 }

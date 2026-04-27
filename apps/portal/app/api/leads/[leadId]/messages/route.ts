@@ -3,6 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { sendManualLeadSms } from "@/lib/manual-outbound-sms";
 import {
+  normalizeManualSmsIdempotencyKey,
+  runIdempotentManualSmsMutation,
+  type ManualSmsApiResponse,
+} from "@/lib/manual-sms-idempotency";
+import {
   AppApiError,
   assertCanMutateLeadJob,
   assertOrgReadAccess,
@@ -12,6 +17,8 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const ROUTE = "/api/leads/[leadId]/messages";
 
 type RouteContext = {
   params: Promise<{ leadId: string }>;
@@ -117,13 +124,16 @@ export async function POST(req: Request, props: RouteContext) {
 
   let body = "";
   let fromNumberE164: string | null = null;
+  let idempotencyKey: string | null = null;
   try {
     const payload = (await req.json()) as {
       body?: unknown;
       fromNumberE164?: unknown;
+      idempotencyKey?: unknown;
     };
     body = typeof payload.body === "string" ? payload.body : "";
     fromNumberE164 = typeof payload.fromNumberE164 === "string" ? normalizeE164(payload.fromNumberE164) : null;
+    idempotencyKey = normalizeManualSmsIdempotencyKey(req, payload.idempotencyKey);
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
   }
@@ -147,33 +157,49 @@ export async function POST(req: Request, props: RouteContext) {
     return NextResponse.json({ ok: false, error: "Message must be 1600 characters or less." }, { status: 400 });
   }
 
-  const result = await sendManualLeadSms({
-    actor: scoped.actor,
-    lead: scoped.lead,
-    body: cleanedBody,
-    fromNumberE164,
+  const response = await runIdempotentManualSmsMutation({
+    orgId: scoped.lead.orgId,
+    route: ROUTE,
+    scope: "manual-sms:lead-thread",
+    idempotencyKey,
+    run: async (): Promise<ManualSmsApiResponse> => {
+      const result = await sendManualLeadSms({
+        actor: scoped.actor,
+        lead: scoped.lead,
+        body: cleanedBody,
+        fromNumberE164,
+        clientIdempotencyKey: idempotencyKey,
+      });
+
+      if (!result.ok) {
+        return {
+          httpStatus: result.httpStatus,
+          body: {
+            ok: false,
+            error: result.error,
+            notice: result.notice,
+            deliveryState: result.deliveryState,
+            liveSend: result.liveSend,
+            readinessCode: result.readinessCode,
+            failure: result.failure,
+          },
+        };
+      }
+
+      return {
+        httpStatus: 200,
+        body: {
+          ok: true,
+          message: result.message,
+          notice: result.notice,
+          deliveryState: result.deliveryState,
+          liveSend: result.liveSend,
+          readinessCode: result.readinessCode,
+          failure: result.failure,
+        },
+      };
+    },
   });
 
-  if (!result.ok) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: result.error,
-        notice: result.notice,
-        deliveryState: result.deliveryState,
-        liveSend: result.liveSend,
-        readinessCode: result.readinessCode,
-      },
-      { status: result.httpStatus },
-    );
-  }
-
-  return NextResponse.json({
-    ok: true,
-    message: result.message,
-    notice: result.notice,
-    deliveryState: result.deliveryState,
-    liveSend: result.liveSend,
-    readinessCode: result.readinessCode,
-  });
+  return NextResponse.json(response.body, { status: response.httpStatus });
 }

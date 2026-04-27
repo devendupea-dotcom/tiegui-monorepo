@@ -16,7 +16,11 @@ import {
   mapTwilioLifecycleStatus,
   shouldAdvanceOutboundSmsLifecycle,
 } from "@/lib/sms-lifecycle";
-import { buildSmsFailureReason, classifySmsFailure } from "@/lib/sms-failure-intelligence";
+import {
+  buildSmsFailureReason,
+  classifySmsFailure,
+  type SmsFailureClassification,
+} from "@/lib/sms-failure-intelligence";
 import { buildUnmatchedSmsStatusCallbackEvent } from "@/lib/sms-status-diagnostics";
 
 type SendSmsInput = {
@@ -29,6 +33,12 @@ type SendSmsInput = {
 
 type SendSmsResult = {
   providerMessageSid: string | null;
+  providerStatus?: string | null;
+  providerErrorCode?: string | null;
+  providerErrorMessage?: string | null;
+  providerRequestTimedOut?: boolean;
+  providerAcceptedUnknown?: boolean;
+  failure?: SmsFailureClassification | null;
   status: MessageStatus;
   resolvedFromNumberE164: string | null;
   notice?: string;
@@ -437,6 +447,10 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
 
     return {
       providerMessageSid: null,
+      providerStatus: null,
+      providerErrorCode: "TIEGUI_EXCEPTION",
+      providerErrorMessage:
+        error instanceof Error ? error.message : "Twilio send failed before the provider accepted the message.",
       status: "FAILED",
       resolvedFromNumberE164,
       notice:
@@ -447,7 +461,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
   }
 
   if (!providerResponse.ok) {
-    if (usageReserved) {
+    if (usageReserved && !providerResponse.providerAcceptedUnknown) {
       await refundReservedSmsUsage({
         orgId: input.orgId,
         periodStart,
@@ -457,7 +471,13 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
 
     return {
       providerMessageSid: providerResponse.providerMessageSid,
-      status: "FAILED",
+      providerStatus: providerResponse.providerStatus,
+      providerErrorCode: providerResponse.providerErrorCode,
+      providerErrorMessage: providerResponse.providerErrorMessage,
+      providerRequestTimedOut: providerResponse.requestTimedOut,
+      providerAcceptedUnknown: providerResponse.providerAcceptedUnknown,
+      failure: providerResponse.failure,
+      status: providerResponse.providerAcceptedUnknown ? "QUEUED" : "FAILED",
       resolvedFromNumberE164,
       notice: providerResponse.error,
     };
@@ -465,6 +485,12 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
 
   return {
     providerMessageSid: providerResponse.providerMessageSid,
+    providerStatus: providerResponse.providerStatus,
+    providerErrorCode: null,
+    providerErrorMessage: null,
+    providerRequestTimedOut: false,
+    providerAcceptedUnknown: false,
+    failure: null,
     status: mapTwilioInitialSendStatus(providerResponse.providerStatus),
     resolvedFromNumberE164,
   };
