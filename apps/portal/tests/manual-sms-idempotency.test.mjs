@@ -1,17 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Prisma } from "@prisma/client";
 import {
   normalizeManualSmsIdempotencyKey,
   runIdempotentManualSmsMutation,
 } from "../lib/manual-sms-idempotency.ts";
-
-function duplicateKeyError() {
-  return new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
-    code: "P2002",
-    clientVersion: "test",
-  });
-}
 
 function createReceiptClient() {
   const receiptsByKey = new Map();
@@ -20,10 +12,10 @@ function createReceiptClient() {
 
   const tx = {
     clientMutationReceipt: {
-      async create(input) {
+      async createMany(input) {
         const key = `${input.data.orgId}|${input.data.idempotencyKey}`;
         if (receiptsByKey.has(key)) {
-          throw duplicateKeyError();
+          return { count: 0 };
         }
 
         const receipt = {
@@ -35,13 +27,14 @@ function createReceiptClient() {
         };
         receiptsByKey.set(key, receipt);
         receiptsById.set(receipt.id, receipt);
-        return { id: receipt.id };
+        return { count: 1 };
       },
       async findUnique(input) {
         const key = `${input.where.orgId_idempotencyKey.orgId}|${input.where.orgId_idempotencyKey.idempotencyKey}`;
         const receipt = receiptsByKey.get(key);
         if (!receipt) return null;
         return {
+          id: receipt.id,
           route: receipt.route,
           responseJson: receipt.responseJson,
         };
@@ -165,4 +158,51 @@ test("double-click while first manual SMS send is in flight does not double-send
 
   release();
   assert.equal((await first).httpStatus, 200);
+});
+
+test("manual SMS idempotency replay avoids unique-violation transaction aborts", async () => {
+  const calls = [];
+  const receipt = {
+    id: "receipt_existing",
+    orgId: "org_1",
+    route: "/api/inbox/send",
+    idempotencyKey: "manual-sms:inbox-send:retry-key-3",
+    responseJson: {
+      httpStatus: 200,
+      body: {
+        ok: true,
+        message: {
+          id: "message_existing",
+          status: "SENT",
+        },
+      },
+    },
+  };
+  const client = {
+    async $transaction(callback) {
+      return callback({
+        clientMutationReceipt: {
+          async createMany(input) {
+            calls.push(["createMany", input.skipDuplicates]);
+            return { count: 0 };
+          },
+          async findUnique() {
+            calls.push(["findUnique"]);
+            return receipt;
+          },
+        },
+      });
+    },
+  };
+
+  const result = await runSmsMutation(client, "retry-key-3", async () => {
+    throw new Error("duplicate send should not run");
+  });
+
+  assert.deepEqual(calls, [
+    ["createMany", true],
+    ["findUnique"],
+  ]);
+  assert.equal(result.httpStatus, 200);
+  assert.equal(result.body.message.id, "message_existing");
 });
