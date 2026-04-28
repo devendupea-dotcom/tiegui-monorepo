@@ -66,8 +66,17 @@ export type LeadSmsDebugReceiptInput = {
   responseJson: unknown;
 };
 
+export type LeadSmsDebugConsentInput = {
+  id?: string | null;
+  status: "OPTED_IN" | "OPTED_OUT" | "UNKNOWN";
+  source: string | null;
+  lastKeyword: string | null;
+  lastUpdatedAt: Date | null;
+};
+
 export type LeadSmsDebugBundleInput = {
   lead: LeadSmsDebugLeadInput;
+  smsConsent?: LeadSmsDebugConsentInput | null;
   messages: LeadSmsDebugMessageInput[];
   communicationEvents: LeadSmsDebugEventInput[];
   receipts: LeadSmsDebugReceiptInput[];
@@ -468,7 +477,24 @@ export function buildLeadSmsDebugBundle(input: LeadSmsDebugBundleInput) {
     updatedAt: receipt.updatedAt || null,
     responseJsonExists: Boolean(receipt.responseJson),
   }));
-  const dncBlocked = input.lead.status === "DNC";
+  const smsConsent: LeadSmsDebugConsentInput = input.smsConsent || {
+    id: null,
+    status: "UNKNOWN",
+    source: null,
+    lastKeyword: null,
+    lastUpdatedAt: null,
+  };
+  const legacyDncFallbackActive =
+    input.lead.status === "DNC" && smsConsent.status !== "OPTED_IN";
+  const dncBlocked = smsConsent.status === "OPTED_OUT" || legacyDncFallbackActive;
+  const consentOperatorLabel =
+    smsConsent.status === "OPTED_OUT"
+      ? "SMS opted out"
+      : smsConsent.status === "OPTED_IN"
+        ? "SMS opted in"
+        : legacyDncFallbackActive
+          ? "Legacy DNC fallback blocks SMS"
+          : "SMS consent unknown";
   const complianceEvents = communicationEvents.filter(
     (event) => event.complianceKeyword || event.summary.toUpperCase().includes("STOP"),
   );
@@ -477,7 +503,11 @@ export function buildLeadSmsDebugBundle(input: LeadSmsDebugBundleInput) {
     `Lead: ${input.lead.id}`,
     `Org: ${input.lead.orgName} (${input.lead.orgId})`,
     `Phone: ${maskSmsPhone(input.lead.phoneE164)}`,
-    `Lead status: ${input.lead.status}${dncBlocked ? " (DNC/STOP blocked)" : ""}`,
+    `Lead status: ${input.lead.status}${legacyDncFallbackActive ? " (legacy DNC fallback active)" : ""}`,
+    `SMS consent: ${smsConsent.status} (${consentOperatorLabel})`,
+    `Consent source: ${smsConsent.source || "none"}`,
+    `Consent keyword: ${smsConsent.lastKeyword || "none"}`,
+    `Block state: ${dncBlocked ? "DNC/STOP blocked" : "not blocked by SMS consent"}`,
     `Messages: ${messages.length}`,
     ...messages.map(
       (message) =>
@@ -501,6 +531,15 @@ export function buildLeadSmsDebugBundle(input: LeadSmsDebugBundleInput) {
       dncBlocked,
       lastInboundAt: input.lead.lastInboundAt,
       lastOutboundAt: input.lead.lastOutboundAt,
+    },
+    smsConsent: {
+      id: smsConsent.id || null,
+      status: smsConsent.status,
+      source: smsConsent.source || "none",
+      lastKeyword: smsConsent.lastKeyword,
+      lastUpdatedAt: smsConsent.lastUpdatedAt,
+      operatorLabel: consentOperatorLabel,
+      legacyDncFallbackActive,
     },
     messages,
     communicationEvents,

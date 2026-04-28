@@ -11,6 +11,7 @@ import { formatCallbackTime } from "./intake-time";
 import { prisma } from "./prisma";
 import { pickLocalizedTemplate, resolveMessageLocale } from "./message-language";
 import { ensureSmsA2POpenerDisclosure } from "./sms-compliance";
+import { getSmsSendBlockState } from "./sms-consent";
 import { sendOutboundSms } from "./sms";
 import { queueSmsDispatch } from "./sms-dispatch-queue";
 import { listWorkspaceUsers, sortWorkspaceUsersByCalendarRoleThenLabel } from "./workspace-users";
@@ -119,7 +120,15 @@ async function sendAutomationMessage({
     },
   });
 
-  if (!lead || lead.status === "DNC") {
+  if (!lead) {
+    return;
+  }
+  const smsBlock = await getSmsSendBlockState({
+    orgId: organization.id,
+    phoneE164: toNumberE164,
+    legacyLeadStatus: lead.status,
+  });
+  if (smsBlock.blocked) {
     return;
   }
 
@@ -480,7 +489,15 @@ export async function sendMissedCallIntroAndStartFlow({
     },
   });
 
-  if (!lead || lead.status === "DNC") {
+  if (!lead) {
+    return;
+  }
+  const smsBlock = await getSmsSendBlockState({
+    orgId: organization.id,
+    phoneE164: toNumberE164,
+    legacyLeadStatus: lead.status,
+  });
+  if (smsBlock.blocked) {
     return;
   }
 
@@ -547,7 +564,15 @@ export async function queueMissedCallIntroForQuietHours({
     },
   });
 
-  if (!lead || lead.status === "DNC") {
+  if (!lead) {
+    return { queued: false as const };
+  }
+  const smsBlock = await getSmsSendBlockState({
+    orgId: organization.id,
+    phoneE164: toNumberE164,
+    legacyLeadStatus: lead.status,
+  });
+  if (smsBlock.blocked) {
     return { queued: false as const };
   }
 

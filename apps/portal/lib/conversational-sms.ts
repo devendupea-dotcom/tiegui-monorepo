@@ -14,6 +14,12 @@ import {
   shouldSuppressMissedCallKickoff,
 } from "@/lib/sms-automation-guards";
 import { ensureSmsOptOutHint } from "@/lib/sms-compliance";
+import {
+  getSmsConsentState,
+  getSmsSendBlockState,
+  recordSmsStart,
+  recordSmsStop,
+} from "@/lib/sms-consent";
 import { queueSmsDispatch } from "@/lib/sms-dispatch-queue";
 import { rankConversationalSmsSlotCandidates } from "@/lib/conversational-sms-scheduling";
 import { renderSmsTemplate } from "@/lib/conversational-sms-templates";
@@ -502,8 +508,16 @@ export async function startConversationalSmsFromMissedCall(input: {
   if (!organization || !lead) {
     return { outcome: "skipped", reason: "missing_context" };
   }
-  if (lead.status === "DNC") {
-    return { outcome: "skipped", reason: "lead_dnc" };
+  const smsBlock = await getSmsSendBlockState({
+    orgId: organization.id,
+    phoneE164: lead.phoneE164,
+    legacyLeadStatus: lead.status,
+  });
+  if (smsBlock.blocked) {
+    return {
+      outcome: "skipped",
+      reason: smsBlock.reasonCode === "SMS_CONSENT_OPTED_OUT" ? "sms_opted_out" : "lead_dnc",
+    };
   }
   if (!organization.autoReplyEnabled) {
     return { outcome: "skipped", reason: "auto_reply_disabled" };
@@ -592,8 +606,16 @@ export async function queueConversationalIntroForQuietHours(input: {
   if (!organization || !lead) {
     return { outcome: "skipped", reason: "missing_context" };
   }
-  if (lead.status === "DNC") {
-    return { outcome: "skipped", reason: "lead_dnc" };
+  const smsBlock = await getSmsSendBlockState({
+    orgId: organization.id,
+    phoneE164: lead.phoneE164,
+    legacyLeadStatus: lead.status,
+  });
+  if (smsBlock.blocked) {
+    return {
+      outcome: "skipped",
+      reason: smsBlock.reasonCode === "SMS_CONSENT_OPTED_OUT" ? "sms_opted_out" : "lead_dnc",
+    };
   }
   if (!organization.autoReplyEnabled) {
     return { outcome: "skipped", reason: "auto_reply_disabled" };
@@ -695,6 +717,10 @@ export async function handleConversationalSmsInbound(input: {
   const state = await getOrCreateConversationState(lead);
   const templates = buildTemplateBundle({ organization, lead });
   const now = new Date();
+  const consentBeforeKeyword = await getSmsConsentState({
+    orgId: organization.id,
+    phoneE164: lead.phoneE164,
+  });
 
   await prisma.$transaction(async (tx) => {
     await tx.lead.update({
@@ -721,6 +747,16 @@ export async function handleConversationalSmsInbound(input: {
 
   if (hasStopKeyword(body)) {
     await prisma.$transaction(async (tx) => {
+      await recordSmsStop({
+        client: tx,
+        orgId: organization.id,
+        phoneE164: lead.phoneE164,
+        leadId: lead.id,
+        customerId: lead.customerId,
+        body,
+        occurredAt: now,
+      });
+
       await tx.lead.update({
         where: { id: lead.id },
         data: {
@@ -761,15 +797,23 @@ export async function handleConversationalSmsInbound(input: {
     return { stage: "CLOSED", action: "STOPPED" };
   }
 
-  if (hasStartKeyword(body) && lead.status === "DNC") {
+  if (
+    hasStartKeyword(body) &&
+    (lead.status === "DNC" ||
+      consentBeforeKeyword.status === "OPTED_OUT" ||
+      Boolean(state.stoppedAt))
+  ) {
     await prisma.$transaction(async (tx) => {
-      await tx.lead.update({
-        where: { id: lead.id },
-        data: {
-          status: "FOLLOW_UP",
-          intakeStage: "INTRO_SENT",
-        },
+      await recordSmsStart({
+        client: tx,
+        orgId: organization.id,
+        phoneE164: lead.phoneE164,
+        leadId: lead.id,
+        customerId: lead.customerId,
+        body,
+        occurredAt: now,
       });
+
       await tx.leadConversationState.update({
         where: { id: state.id },
         data: {
@@ -788,10 +832,11 @@ export async function handleConversationalSmsInbound(input: {
     );
     await sendConversationMessage({
       organization,
-      lead: { ...lead, status: "FOLLOW_UP" },
+      lead,
       stateId: state.id,
       body: withSignature({ body: restartPrompt, websiteSignature: organization.smsWebsiteSignature }),
       messageType: "AUTOMATION",
+      allowWhenStopped: true,
     });
     await setNextFollowUp({
       organization,
@@ -1607,7 +1652,13 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
       continue;
     }
 
-    if (!org.followUpsEnabled || lead.status === "DNC") {
+    const followUpSmsBlock = await getSmsSendBlockState({
+      orgId: org.id,
+      phoneE164: lead.phoneE164,
+      legacyLeadStatus: lead.status,
+    });
+
+    if (!org.followUpsEnabled || followUpSmsBlock.blocked) {
       skipped += 1;
       await prisma.$transaction([
         prisma.leadConversationState.update({
