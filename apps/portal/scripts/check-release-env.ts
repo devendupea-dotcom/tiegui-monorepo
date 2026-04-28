@@ -169,6 +169,19 @@ function requiredShape(
   );
 }
 
+function isAtLeastBytes(byteLength: number): (value: string) => boolean {
+  return (value) => Buffer.byteLength(value, "utf8") >= byteLength;
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && parsed.hostname !== "localhost";
+  } catch {
+    return false;
+  }
+}
+
 function buildChecks(): CheckResult[] {
   const checks: CheckResult[] = [
     required("Core database/auth", [
@@ -176,6 +189,7 @@ function buildChecks(): CheckResult[] {
       "NEXTAUTH_URL",
       "NEXTAUTH_SECRET",
     ]),
+    required("Admin vault", ["ADMIN_VAULT_KEY"]),
     requiredOneOf("Outbound email provider", [
       "SMTP_URL",
       "EMAIL_SERVER",
@@ -202,6 +216,42 @@ function buildChecks(): CheckResult[] {
       hasEnv("DIRECT_URL")
         ? "DIRECT_URL is present for migrations."
         : "DIRECT_URL is recommended for reliable Prisma migrations; use DATABASE_URL only if no direct connection exists.",
+    ),
+  );
+
+  checks.push(
+    requiredShape(
+      "NEXTAUTH URL shape",
+      "NEXTAUTH_URL",
+      isHttpsUrl,
+      "an https production URL",
+    ),
+  );
+
+  checks.push(
+    requiredShape(
+      "NEXTAUTH secret strength",
+      "NEXTAUTH_SECRET",
+      isAtLeastBytes(32),
+      "at least 32 bytes of entropy",
+    ),
+  );
+
+  checks.push(
+    requiredShape(
+      "Admin vault key strength",
+      "ADMIN_VAULT_KEY",
+      isAtLeastBytes(32),
+      "at least 32 bytes of entropy",
+    ),
+  );
+
+  checks.push(
+    requiredShape(
+      "Cron secret strength",
+      "CRON_SECRET",
+      isAtLeastBytes(32),
+      "at least 32 bytes of entropy",
     ),
   );
 

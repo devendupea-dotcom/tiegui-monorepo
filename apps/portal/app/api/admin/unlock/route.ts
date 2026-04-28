@@ -4,14 +4,17 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normalizeEnvValue } from "@/lib/env";
 import { encode } from "next-auth/jwt";
-import { timingSafeEqual } from "crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { ensureAdminVaultUnlockAllowed, getClientIpFromHeaders } from "@/lib/auth-rate-limit";
+import { checkSlidingWindowLimit } from "@/lib/rate-limit";
 
 function safeEqual(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.length !== bBuf.length) return false;
-  return timingSafeEqual(aBuf, bBuf);
+  const aDigest = createHash("sha256").update(a, "utf8").digest();
+  const bDigest = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(aDigest, bDigest);
 }
+
+const ADMIN_VAULT_SESSION_SECONDS = 30 * 60;
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
@@ -25,6 +28,21 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { ok: false, error: "Admin vault is not configured (missing ADMIN_VAULT_KEY)." },
       { status: 500 },
+    );
+  }
+
+  const rateLimit = await ensureAdminVaultUnlockAllowed({
+    email: session.user.email,
+    ip: getClientIpFromHeaders(req),
+    checker: checkSlidingWindowLimit,
+  });
+  if (!rateLimit.ok) {
+    return NextResponse.json(
+      { ok: false, error: "Too many unlock attempts. Try again shortly." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+      },
     );
   }
 
@@ -53,7 +71,7 @@ export async function POST(req: Request) {
     token: { sub: requester.id, unlocked: true },
     secret: vaultKey,
     salt: "admin-vault",
-    maxAge: 60 * 60 * 12,
+    maxAge: ADMIN_VAULT_SESSION_SECONDS,
   });
 
   const response = NextResponse.json({ ok: true });
@@ -62,7 +80,7 @@ export async function POST(req: Request) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/admin",
-    maxAge: 60 * 60 * 12,
+    maxAge: ADMIN_VAULT_SESSION_SECONDS,
   });
   return response;
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { sanitizeRedirectPath, sanitizeSameOriginRedirectUrl } from "@/lib/safe-redirect";
 
 function getFriendlyAuthError(errorCode: string): string {
   switch (errorCode) {
@@ -37,7 +38,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setNextPath(params.get("next") || "/");
+    setNextPath(sanitizeRedirectPath(params.get("next"), "/"));
     setErrorCode(params.get("error"));
   }, []);
 
@@ -94,7 +95,7 @@ export default function LoginPage() {
         return;
       }
 
-      router.push(result?.url || nextPath);
+      router.push(sanitizeSameOriginRedirectUrl(result?.url, window.location.origin, nextPath));
     } catch {
       setStatus("Sign-in failed. Please try again.");
     } finally {

@@ -4,11 +4,13 @@ import { hashPassword, isValidPassword, verifyPassword } from "../lib/passwords.
 
 test("isValidPassword enforces the minimum password length", () => {
   assert.equal(isValidPassword("short"), false);
-  assert.equal(isValidPassword("12345678"), true);
+  assert.equal(isValidPassword("12345678901"), false);
+  assert.equal(isValidPassword("123456789012"), true);
+  assert.equal(isValidPassword("a".repeat(257)), false);
 });
 
 test("hashPassword and verifyPassword round-trip valid credentials", async () => {
-  const password = "TieGui123!";
+  const password = "TieGui123!Secure";
   const hash = await hashPassword(password);
 
   assert.notEqual(hash, password);

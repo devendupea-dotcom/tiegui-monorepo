@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { isPasswordWithinPolicy, PASSWORD_POLICY_MESSAGE } from "@/lib/password-policy";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -25,8 +26,8 @@ export default function ResetPasswordPage() {
     event.preventDefault();
     if (submitting) return;
 
-    if (password.length < 8) {
-      setStatus("Password must be at least 8 characters.");
+    if (!isPasswordWithinPolicy(password)) {
+      setStatus(PASSWORD_POLICY_MESSAGE);
       return;
     }
     if (password !== confirm) {
@@ -71,7 +72,7 @@ export default function ResetPasswordPage() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="At least 8 characters"
+              placeholder="12 characters minimum"
               required
               disabled={!token || submitting}
             />

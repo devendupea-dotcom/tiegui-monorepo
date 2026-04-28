@@ -7,6 +7,7 @@ type GetTokenRequest = NonNullable<Parameters<typeof getToken>[0]>["req"];
 
 export async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+  const nextPath = `${pathname}${req.nextUrl.search}`;
 
   const token = await getToken({
     req: req as unknown as GetTokenRequest,
@@ -16,7 +17,7 @@ export async function proxy(req: NextRequest) {
   // Not logged in → login
   if (!token) {
     const loginUrl = new URL("/login", req.url);
-    loginUrl.searchParams.set("next", pathname);
+    loginUrl.searchParams.set("next", nextPath);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -41,7 +42,9 @@ export async function proxy(req: NextRequest) {
 
     const vaultKey = normalizeEnvValue(process.env.ADMIN_VAULT_KEY);
     if (!vaultKey) {
-      return NextResponse.redirect(new URL("/admin/unlock", req.url));
+      const unlockUrl = new URL("/admin/unlock", req.url);
+      unlockUrl.searchParams.set("next", nextPath);
+      return NextResponse.redirect(unlockUrl);
     }
 
     if (pathname === "/admin/unlock") return NextResponse.next();
@@ -54,7 +57,9 @@ export async function proxy(req: NextRequest) {
     });
 
     if (!decoded || decoded.sub !== token.sub || decoded.unlocked !== true) {
-      return NextResponse.redirect(new URL("/admin/unlock", req.url));
+      const unlockUrl = new URL("/admin/unlock", req.url);
+      unlockUrl.searchParams.set("next", nextPath);
+      return NextResponse.redirect(unlockUrl);
     }
   }
 

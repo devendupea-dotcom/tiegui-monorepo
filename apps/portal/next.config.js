@@ -1,6 +1,7 @@
 import process from "node:process";
 import withSerwistInit from "@serwist/next";
 import createNextIntlPlugin from "next-intl/plugin";
+import { buildSecurityHeaders } from "../../packages/security-headers/index.mjs";
 
 const withSerwist = withSerwistInit({
   swSrc: "app/sw.ts",
@@ -43,6 +44,20 @@ function isKnownServerInstrumentationWarning(warning) {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  async headers() {
+    const isProduction = process.env.NODE_ENV === "production";
+    return [
+      {
+        source: "/:path*",
+        headers: buildSecurityHeaders({
+          allowUnsafeEval: !isProduction,
+          allowMicrophone: true,
+          enableHsts: isProduction,
+          upgradeInsecureRequests: isProduction,
+        }),
+      },
+    ];
+  },
   webpack(config, { isServer }) {
     if (isServer) {
       config.ignoreWarnings = [

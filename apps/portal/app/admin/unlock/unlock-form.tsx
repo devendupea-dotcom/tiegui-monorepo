@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { sanitizeRedirectPath } from "@/lib/safe-redirect";
 
 export default function UnlockForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = searchParams.get("next") || "/admin";
+  const nextPath = sanitizeRedirectPath(searchParams.get("next"), "/admin");
 
   const [key, setKey] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -59,4 +60,3 @@ export default function UnlockForm() {
     </form>
   );
 }
-

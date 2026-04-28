@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { hashToken } from "@/lib/tokens";
 import { hashPassword, isValidPassword } from "@/lib/passwords";
+import { PASSWORD_POLICY_MESSAGE } from "@/lib/password-policy";
 
 export async function POST(req: Request) {
   let token = "";
@@ -14,8 +15,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
   }
 
-  if (!token || !isValidPassword(password)) {
+  if (!token) {
     return NextResponse.json({ ok: false, error: "Invalid token or password" }, { status: 400 });
+  }
+  if (!isValidPassword(password)) {
+    return NextResponse.json({ ok: false, error: PASSWORD_POLICY_MESSAGE }, { status: 400 });
   }
 
   const tokenHash = hashToken(token);
@@ -47,4 +51,3 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ ok: true });
 }
-

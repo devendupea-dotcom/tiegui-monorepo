@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { hashPassword, isValidPassword } from "@/lib/passwords";
+import { PASSWORD_POLICY_MESSAGE } from "@/lib/password-policy";
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
@@ -20,7 +21,7 @@ export async function POST(req: Request) {
   }
 
   if (!isValidPassword(password)) {
-    return NextResponse.json({ ok: false, error: "Password must be at least 8 characters." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: PASSWORD_POLICY_MESSAGE }, { status: 400 });
   }
 
   const passwordHash = await hashPassword(password);
@@ -31,4 +32,3 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ ok: true });
 }
-
