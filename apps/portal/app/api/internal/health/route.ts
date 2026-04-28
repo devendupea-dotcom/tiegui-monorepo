@@ -70,7 +70,6 @@ export async function GET(req: Request) {
   const twilioEnvPresent = boolEnv("TWILIO_TOKEN_ENCRYPTION_KEY");
   const stripeEnvPresent =
     boolEnv("STRIPE_SECRET_KEY") &&
-    boolEnv("STRIPE_CONNECT_CLIENT_ID") &&
     boolEnv("STRIPE_WEBHOOK_SECRET");
   const twilioSendEnabled =
     normalizeEnvValue(process.env.TWILIO_SEND_ENABLED) === "true";
@@ -108,7 +107,7 @@ export async function GET(req: Request) {
   }
   if (!stripeEnvPresent) {
     warnings.push(
-      "Stripe billing env is incomplete (STRIPE_SECRET_KEY/STRIPE_CONNECT_CLIENT_ID/STRIPE_WEBHOOK_SECRET).",
+      "Stripe billing env is incomplete (STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET).",
     );
   }
   if (

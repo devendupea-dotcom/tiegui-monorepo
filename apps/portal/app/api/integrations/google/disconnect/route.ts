@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 import { disconnectGoogleForOrgUser } from "@/lib/integrations/google-sync";
 import {
   IntegrationScopeError,
-  resolveIntegrationOrgScope,
+  resolveIntegrationAdminScope,
 } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
-    const scope = await resolveIntegrationOrgScope(req);
+    const scope = await resolveIntegrationAdminScope(req);
     if (!scope.user.id) {
       throw new IntegrationScopeError("Unauthorized", 401);
     }

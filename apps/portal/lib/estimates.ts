@@ -321,6 +321,7 @@ export type EstimateListItem = {
   createdAt: string;
   updatedAt: string;
   lineItemCount: number;
+  invoiceCount: number;
   lead: EstimateLeadSummary | null;
   job: EstimateJobSummary | null;
 };
@@ -590,6 +591,7 @@ export function serializeEstimateSummary(
       _count: {
         select: {
           lineItems: true;
+          sourceInvoices: true;
         };
       };
     };
@@ -621,6 +623,7 @@ export function serializeEstimateSummary(
     createdAt: estimate.createdAt.toISOString(),
     updatedAt: estimate.updatedAt.toISOString(),
     lineItemCount: estimate._count.lineItems,
+    invoiceCount: estimate._count.sourceInvoices,
     lead: serializeEstimateLead(estimate.lead),
     job: serializeEstimateJob(estimate.job),
   };
@@ -665,6 +668,7 @@ export function serializeEstimateDetail(
       _count: {
         select: {
           lineItems: true;
+          sourceInvoices: true;
         };
       };
     };

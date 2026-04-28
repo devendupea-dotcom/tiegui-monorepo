@@ -20,11 +20,11 @@ test("manual compose stays blocked when Twilio is not actually ready", () => {
 test("manual compose notices explain queued deployment mode and blocked states", () => {
   assert.match(
     getTwilioMessagingComposeNotice("SEND_DISABLED") || "",
-    /saved as queued/i,
+    /Queue-only mode/i,
   );
   assert.match(
     getTwilioMessagingComposeNotice("PENDING_A2P") || "",
-    /registration is still pending/i,
+    /A2P registration is still pending/i,
   );
   assert.equal(getTwilioMessagingComposeNotice("ACTIVE"), null);
 });

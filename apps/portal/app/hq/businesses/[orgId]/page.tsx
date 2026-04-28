@@ -196,6 +196,9 @@ export default async function HqBusinessFolderPage(
           <Link className="btn secondary" href={`/hq/orgs/${organization.id}/twilio`}>
             Twilio Config
           </Link>
+          <Link className="btn secondary" href={`/hq/orgs/${organization.id}/website-leads`}>
+            Website Lead Sources
+          </Link>
         </div>
 
         <div className="tab-row" style={{ marginTop: 14 }}>

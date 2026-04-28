@@ -431,27 +431,41 @@ function getMessagingComposerNotice(
   switch (code) {
     case "SEND_DISABLED":
       return spanish
-        ? "Mensajeria no esta en vivo en este despliegue. Los mensajes enviados aqui se guardaran como en cola hasta activarla."
-        : "Messaging is not live in this deployment yet. Messages sent here will be saved as queued until sending is enabled.";
+        ? "Modo solo cola: las respuestas se guardan, pero el cliente no recibira SMS en vivo hasta activar el envio."
+        : "Queue-only mode: replies are saved, but customers will not receive live SMS until sending is enabled.";
     case "PENDING_A2P":
       return spanish
-        ? "Mensajeria no esta en vivo todavia. El registro de Twilio sigue pendiente."
-        : "Messaging is not live yet. Twilio registration is still pending.";
+        ? "SMS no esta en vivo porque el registro A2P de Twilio sigue pendiente."
+        : "SMS is not live yet because Twilio A2P registration is still pending.";
     case "PAUSED":
       return spanish
         ? "Mensajeria esta pausada para este negocio hasta reactivar Twilio."
         : "Messaging is paused for this workspace until Twilio is reactivated.";
     case "TOKEN_KEY_MISSING":
       return spanish
-        ? "Mensajeria esta bloqueada porque falta la llave de cifrado del token de Twilio."
-        : "Messaging is blocked because the Twilio token encryption key is missing.";
+        ? "Mensajeria esta bloqueada porque este despliegue no puede leer credenciales de Twilio."
+        : "Messaging is blocked because this deployment cannot read Twilio credentials.";
     case "NOT_CONFIGURED":
       return spanish
-        ? "Mensajeria no esta configurada para este negocio todavia."
-        : "Messaging is not configured for this workspace yet.";
+        ? "Mensajeria no esta configurada para este negocio todavia. Llamadas y notas manuales aun funcionan."
+        : "Messaging is not configured for this workspace yet. Calls and manual notes still work.";
     default:
       return null;
   }
+}
+
+function getMessagingWorkspaceNotice(
+  locale: string,
+  code: TwilioMessagingReadinessCode,
+): string {
+  const spanish = locale.startsWith("es");
+  if (code === "ACTIVE") {
+    return spanish
+      ? "SMS en vivo: las respuestas salen por Twilio y las respuestas del cliente vuelven a esta bandeja."
+      : "Live SMS: replies send through Twilio and customer responses return to this inbox.";
+  }
+
+  return getMessagingComposerNotice(locale, code) || "";
 }
 
 function getSendStatusMessage(
@@ -502,6 +516,10 @@ export default function UnifiedInbox({
   const locale = useLocale();
   const copy = getInboxCopy(locale);
   const composerNotice = getMessagingComposerNotice(locale, messagingReadinessCode);
+  const workspaceMessagingNotice = getMessagingWorkspaceNotice(
+    locale,
+    messagingReadinessCode,
+  );
   function withOrgQuery(path: string) {
     if (!internalUser) return path;
     const joiner = path.includes("?") ? "&" : "?";
@@ -1095,6 +1113,9 @@ export default function UnifiedInbox({
         <div className="stack-cell">
           <h2>{copy.title}</h2>
           <p className="muted">{copy.subtitle}</p>
+          <p className="form-status" style={{ marginTop: 8 }}>
+            {workspaceMessagingNotice}
+          </p>
         </div>
         {!isNarrow ? (
           <Link className="btn secondary" href={jobHref}>

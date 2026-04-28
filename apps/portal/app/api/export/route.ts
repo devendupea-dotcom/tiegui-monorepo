@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { createOrgExportArchive } from "@/lib/integrations/export";
-import { IntegrationScopeError, resolveIntegrationOrgScope } from "@/lib/integrations/scope";
+import { IntegrationScopeError, resolveIntegrationAdminScope } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
-    const scope = await resolveIntegrationOrgScope(req);
+    const scope = await resolveIntegrationAdminScope(req);
     const archive = await createOrgExportArchive(scope.orgId);
 
     return new NextResponse(archive.stream, {

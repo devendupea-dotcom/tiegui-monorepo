@@ -20,6 +20,7 @@ import {
   buildEstimateActivityMetadata,
   buildExistingLineFallback,
   buildInvoiceLineDescription,
+  canConvertEstimateForTargets,
   mergeJobNotes,
   normalizeEstimateLineItems,
   normalizeEstimatePayloadCore,
@@ -28,6 +29,7 @@ import {
   normalizeOptionalId,
   normalizeOptionalText,
   resolveActivityTypeForStatus,
+  resolveEstimateStatusAfterConversion,
   type EstimateItemPayload,
   type EstimatePayload,
   type NormalizedEstimatePayload,
@@ -148,6 +150,7 @@ export const estimateListInclude = {
   _count: {
     select: {
       lineItems: true,
+      sourceInvoices: true,
     },
   },
 } satisfies Prisma.EstimateInclude;
@@ -1039,7 +1042,11 @@ export async function convertEstimate(input: {
     throw new AppApiError("Estimate not found.", 404);
   }
 
-  if (existing.status !== "APPROVED") {
+  if (
+    !canConvertEstimateForTargets(existing.status, {
+      createInvoice: input.createInvoice,
+    })
+  ) {
     throw new AppApiError("Only approved estimates can be converted.", 400);
   }
 
@@ -1253,6 +1260,22 @@ export async function convertEstimate(input: {
       if (!resolvedCustomer) {
         throw new AppApiError("Customer conversion data is unavailable.", 500);
       }
+      const existingInvoice = await tx.invoice.findFirst({
+        where: {
+          orgId: existing.orgId,
+          sourceEstimateId: existing.id,
+        },
+        select: {
+          invoiceNumber: true,
+        },
+      });
+      if (existingInvoice) {
+        throw new AppApiError(
+          `This estimate already has invoice ${existingInvoice.invoiceNumber}. Open that invoice instead of creating a duplicate.`,
+          409,
+        );
+      }
+
       const issueDate = new Date();
       const dueDate = computeInvoiceDueDate(issueDate, DEFAULT_INVOICE_TERMS);
       const invoiceNumber = await reserveNextInvoiceNumber(
@@ -1316,7 +1339,10 @@ export async function convertEstimate(input: {
     const converted = await tx.estimate.update({
       where: { id: existing.id },
       data: {
-        status: "CONVERTED",
+        status: resolveEstimateStatusAfterConversion({
+          currentStatus: existing.status,
+          createInvoice: input.createInvoice,
+        }),
         ...buildEstimateAttachmentData(
           createdJobId || reusableOperationalJob?.id || existing.jobId,
         ),

@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3001",
+    "dev": "next dev --webpack --port 3001",
     "build": "prisma generate && NEXT_IGNORE_INCORRECT_LOCKFILE=1 next build --webpack",
     "prestart": "node scripts/check-migrations.mjs",
     "start": "next start",
@@ -28,10 +28,13 @@
     "repair:zero-paid-invoices": "node --import tsx scripts/repair-zero-paid-invoices.ts",
     "sanitize:legacy-leads": "node --import tsx scripts/sanitize-legacy-leads.ts",
     "smoke:portal": "tsx scripts/smoke-portal.ts",
+    "smoke:website-leads": "tsx scripts/smoke-website-leads.ts",
     "test:timezone": "node --import tsx --test tests/timezone-dst.test.mjs",
     "db:validate": "node scripts/validate-prisma.mjs",
     "db:migrate:deploy": "node scripts/migrate-deploy.mjs",
-    "db:seed": "node scripts/seed-direct.mjs"
+    "db:seed": "node scripts/seed-direct.mjs",
+    "provision:endeavor": "node scripts/provision-endeavor-builder.mjs",
+    "seed:endeavor-demo": "node scripts/seed-endeavor-demo-projects.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.990.0",

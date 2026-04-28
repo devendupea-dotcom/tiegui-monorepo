@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import process from "node:process";
 import test from "node:test";
 import {
-  buildStripeAuthorizeUrl,
   deriveStripeConnectionStatus,
+  resolveStripeRefreshUri,
   resolveStripeRedirectUri,
 } from "../lib/integrations/stripe-connect.ts";
 
@@ -73,30 +73,16 @@ test("stripe connection status respects explicit disconnect state", () => {
   );
 });
 
-test("stripe authorize url includes the expected standard connect parameters", () => {
-  withEnv(
-    {
-      STRIPE_CONNECT_CLIENT_ID: "ca_test_123",
-    },
-    () => {
-      const authorizeUrl = new URL(
-        buildStripeAuthorizeUrl({
-          state: "state_123",
-          redirectUri: "https://app.example.com/api/integrations/stripe/callback",
-        }),
-      );
-
-      assert.equal(authorizeUrl.origin + authorizeUrl.pathname, "https://connect.stripe.com/oauth/authorize");
-      assert.equal(authorizeUrl.searchParams.get("client_id"), "ca_test_123");
-      assert.equal(authorizeUrl.searchParams.get("response_type"), "code");
-      assert.equal(authorizeUrl.searchParams.get("scope"), "read_write");
-      assert.equal(authorizeUrl.searchParams.get("state"), "state_123");
-      assert.equal(
-        authorizeUrl.searchParams.get("redirect_uri"),
-        "https://app.example.com/api/integrations/stripe/callback",
-      );
-    },
+test("stripe return url includes the org id for account-link onboarding", () => {
+  const redirectUrl = new URL(
+    resolveStripeRedirectUri("https://app.example.com", "org_123"),
   );
+
+  assert.equal(
+    redirectUrl.origin + redirectUrl.pathname,
+    "https://app.example.com/api/integrations/stripe/callback",
+  );
+  assert.equal(redirectUrl.searchParams.get("orgId"), "org_123");
 });
 
 test("stripe redirect uri prefers explicit env overrides", () => {
@@ -106,8 +92,8 @@ test("stripe redirect uri prefers explicit env overrides", () => {
     },
     () => {
       assert.equal(
-        resolveStripeRedirectUri("https://app.example.com"),
-        "https://billing.example.com/stripe/callback",
+        resolveStripeRedirectUri("https://app.example.com", "org_123"),
+        "https://billing.example.com/stripe/callback?orgId=org_123",
       );
     },
   );
@@ -118,9 +104,22 @@ test("stripe redirect uri prefers explicit env overrides", () => {
     },
     () => {
       assert.equal(
-        resolveStripeRedirectUri("https://app.example.com"),
-        "https://app.example.com/api/integrations/stripe/callback",
+        resolveStripeRedirectUri("https://app.example.com", "org_123"),
+        "https://app.example.com/api/integrations/stripe/callback?orgId=org_123",
       );
     },
   );
+});
+
+test("stripe refresh uri sends the user back through the connect route", () => {
+  const refreshUrl = new URL(
+    resolveStripeRefreshUri("https://app.example.com", "org_123"),
+  );
+
+  assert.equal(
+    refreshUrl.origin + refreshUrl.pathname,
+    "https://app.example.com/api/integrations/stripe/connect",
+  );
+  assert.equal(refreshUrl.searchParams.get("resume"), "1");
+  assert.equal(refreshUrl.searchParams.get("orgId"), "org_123");
 });

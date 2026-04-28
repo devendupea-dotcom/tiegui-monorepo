@@ -96,9 +96,35 @@ test("approved work moves to scheduling, then operations, then invoices", () => 
   assert.equal(readyToSchedule.stage, "ready_to_schedule");
   assert.equal(readyToSchedule.nextAction.kind, "schedule_job");
   assert.equal(scheduled.stage, "job_scheduled");
-  assert.equal(scheduled.nextAction.kind, "open_operational_job");
+  assert.equal(scheduled.stageLabel, "Ready to invoice");
+  assert.equal(scheduled.nextAction.kind, "create_invoice");
   assert.equal(awaitingPayment.stage, "awaiting_payment");
   assert.equal(awaitingPayment.nextAction.kind, "open_invoices");
+});
+
+test("scheduled approved work points owners back to the estimate to create the invoice", () => {
+  const workflow = resolveContractorWorkflow({
+    ...baseInput,
+    latestEstimateStatus: "CONVERTED",
+    hasScheduledJob: true,
+    hasOperationalJob: true,
+  });
+  const actionTarget = resolveContractorWorkflowActionTarget({
+    action: workflow.nextAction,
+    messagesHref: "/app/jobs/lead-1?tab=messages",
+    phoneHref: "tel:+15555555555",
+    createEstimateHref: "/app/estimates?create=1&leadId=lead-1",
+    latestEstimateHref: "/app/estimates/estimate-1",
+    scheduleCalendarHref: "/app/calendar?quickAction=schedule&leadId=lead-1",
+    operationalJobHref: "/app/jobs/records/job-1",
+    invoiceHref: "/app/jobs/lead-1?tab=invoice",
+    overviewHref: "/app/jobs/lead-1?tab=overview",
+  });
+
+  assert.equal(workflow.nextAction.kind, "create_invoice");
+  assert.deepEqual(actionTarget, {
+    href: "/app/estimates/estimate-1",
+  });
 });
 
 test("paid work settles into a done state", () => {

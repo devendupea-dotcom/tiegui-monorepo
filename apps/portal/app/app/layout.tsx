@@ -35,6 +35,7 @@ export default async function ClientPortalLayout({
     : user.email?.split("@")[0] || "Contractor";
   let defaultOrgId: string | null = null;
   let calendarAccessRole: CalendarAccessRole = internalUser ? "OWNER" : "WORKER";
+  let portalVertical: string | null = null;
   try {
     const actor = await requireAppApiActor();
     try {
@@ -49,17 +50,21 @@ export default async function ClientPortalLayout({
     console.error("ClientPortalLayout failed to load workspace actor.", error);
   }
 
-  const onboardingOrg = !internalUser && defaultOrgId
+  const onboardingOrg = defaultOrgId
     ? await prisma.organization.findUnique({
         where: { id: defaultOrgId },
         select: {
           onboardingCompletedAt: true,
+          portalVertical: true,
         },
       }).catch((error) => {
         console.error("ClientPortalLayout failed to load onboarding status.", error);
         return null;
       })
     : null;
+  if (onboardingOrg?.portalVertical) {
+    portalVertical = onboardingOrg.portalVertical;
+  }
   const showOnboardingReminder =
     !internalUser &&
     (calendarAccessRole === "OWNER" || calendarAccessRole === "ADMIN") &&
@@ -92,7 +97,7 @@ export default async function ClientPortalLayout({
             <p className="portal-brand-sub">{t("portalLayout.brandDescription")}</p>
           </div>
 
-          <ClientPortalNav calendarAccessRole={calendarAccessRole} />
+          <ClientPortalNav calendarAccessRole={calendarAccessRole} portalVertical={portalVertical} />
 
           <section className="portal-profile">
             <p className="portal-profile-label">{t("portalLayout.signedInAs")}</p>

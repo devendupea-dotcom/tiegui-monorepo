@@ -142,6 +142,26 @@ export function normalizeEstimateStatus(value: unknown, fallback: EstimateStatus
   return fallback;
 }
 
+export function canConvertEstimateForTargets(
+  status: EstimateStatus,
+  input: { createInvoice?: boolean },
+): boolean {
+  if (status === "APPROVED") return true;
+
+  // Legacy job-only conversions may already be marked CONVERTED even though no
+  // invoice exists yet. Let owners finish the revenue loop without recreating
+  // the estimate.
+  return status === "CONVERTED" && Boolean(input.createInvoice);
+}
+
+export function resolveEstimateStatusAfterConversion(input: {
+  currentStatus: EstimateStatus;
+  createInvoice?: boolean;
+}): EstimateStatus {
+  if (input.createInvoice) return "CONVERTED";
+  return input.currentStatus;
+}
+
 export function normalizeEstimateTaxSource(value: unknown, fallback: EstimateTaxSource): EstimateTaxSource {
   if (value === "WA_DOR" || value === "MANUAL") {
     return value;

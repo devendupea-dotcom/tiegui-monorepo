@@ -2,9 +2,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
   AppApiError,
+  type AppApiActor,
   requireAppApiActor,
   resolveActorOrgId,
 } from "@/lib/app-api-permissions";
+import { canAdministerIntegrations } from "@/lib/integrations/access";
 import { type AppSessionUser } from "@/lib/session";
 
 export class IntegrationScopeError extends Error {
@@ -35,6 +37,7 @@ export async function resolveIntegrationOrgScope(req: Request): Promise<{
   orgId: string;
   internalUser: boolean;
   user: AppSessionUser;
+  actor: AppApiActor;
 }> {
   const user = await requireIntegrationSessionUser();
   const requestedOrgId = getQueryParam(req, "orgId");
@@ -49,6 +52,7 @@ export async function resolveIntegrationOrgScope(req: Request): Promise<{
       orgId,
       internalUser: actor.internalUser,
       user,
+      actor,
     };
   } catch (error) {
     if (error instanceof AppApiError) {
@@ -56,6 +60,24 @@ export async function resolveIntegrationOrgScope(req: Request): Promise<{
     }
     throw error;
   }
+}
+
+export function assertIntegrationAdminActorAccess(
+  actor: Pick<AppApiActor, "internalUser" | "calendarAccessRole">,
+): void {
+  if (canAdministerIntegrations(actor)) return;
+  throw new IntegrationScopeError("Owner or admin access required.", 403);
+}
+
+export async function resolveIntegrationAdminScope(req: Request): Promise<{
+  orgId: string;
+  internalUser: boolean;
+  user: AppSessionUser;
+  actor: AppApiActor;
+}> {
+  const scope = await resolveIntegrationOrgScope(req);
+  assertIntegrationAdminActorAccess(scope.actor);
+  return scope;
 }
 
 export async function assertOrgAccess(
@@ -75,6 +97,35 @@ export async function assertOrgAccess(
       actor,
       requestedOrgId: orgId,
     });
+  } catch (error) {
+    if (error instanceof IntegrationScopeError) {
+      throw error;
+    }
+    if (error instanceof AppApiError) {
+      throw new IntegrationScopeError(error.message, error.status);
+    }
+    throw error;
+  }
+}
+
+export async function assertIntegrationAdminAccess(
+  user: Pick<AppSessionUser, "id" | "role" | "orgId">,
+  orgId: string,
+): Promise<void> {
+  if (!user.id) {
+    throw new IntegrationScopeError("Unauthorized", 401);
+  }
+
+  try {
+    const actor = await requireAppApiActor();
+    if (actor.id !== user.id) {
+      throw new IntegrationScopeError("Unauthorized", 401);
+    }
+    await resolveActorOrgId({
+      actor,
+      requestedOrgId: orgId,
+    });
+    assertIntegrationAdminActorAccess(actor);
   } catch (error) {
     if (error instanceof IntegrationScopeError) {
       throw error;

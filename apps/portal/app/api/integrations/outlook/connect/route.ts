@@ -7,7 +7,7 @@ import {
 import { isOutlookConfigured } from "@/lib/integrations/provider-config";
 import {
   IntegrationScopeError,
-  resolveIntegrationOrgScope,
+  resolveIntegrationAdminScope,
 } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +26,7 @@ function buildSettingsUrl(req: Request, input: { orgId: string; internalUser: bo
 
 export async function GET(req: Request) {
   try {
-    const scope = await resolveIntegrationOrgScope(req);
+    const scope = await resolveIntegrationAdminScope(req);
     if (!scope.user.id) {
       throw new IntegrationScopeError("Unauthorized", 401);
     }

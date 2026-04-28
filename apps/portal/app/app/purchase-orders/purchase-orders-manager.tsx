@@ -1,6 +1,12 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "next-intl";
 import { formatJobReferenceLabel, type JobListItem } from "@/lib/job-records";
@@ -132,6 +138,7 @@ function getPurchaseOrdersCopy(locale: string) {
         "Usa la página de trabajo operativo para despacho, agenda, seguimiento y comunicación con el cliente.",
       openOperationalJob: "Abrir trabajo operativo",
       newPurchaseOrder: "Nueva orden de compra",
+      closeWorkspace: "Cerrar espacio",
       summary: {
         total: "Total de OCs",
         draftSent: "Borrador / Enviada",
@@ -245,6 +252,7 @@ function getPurchaseOrdersCopy(locale: string) {
       "Use the Operational Job page for dispatch, schedule, tracking, and customer communication.",
     openOperationalJob: "Open Operational Job",
     newPurchaseOrder: "New Purchase Order",
+    closeWorkspace: "Close Workspace",
     summary: {
       total: "Total POs",
       draftSent: "Draft / Sent",
@@ -396,6 +404,7 @@ export default function PurchaseOrdersManager({
   const [selectedPurchaseOrderId, setSelectedPurchaseOrderId] = useState<
     string | null
   >(null);
+  const [workspaceOpen, setWorkspaceOpen] = useState(Boolean(initialJobId));
   const [selectedCatalogMaterialId, setSelectedCatalogMaterialId] =
     useState("");
   const [form, setForm] = useState<PurchaseOrderFormState>({
@@ -422,6 +431,28 @@ export default function PurchaseOrdersManager({
       ? `/app/jobs/records/${currentOperationalJobId}?orgId=${orgId}`
       : `/app/jobs/records/${currentOperationalJobId}`
     : null;
+
+  const closeWorkspace = useCallback(() => {
+    setWorkspaceOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeWorkspace();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeWorkspace, workspaceOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -653,6 +684,7 @@ export default function PurchaseOrdersManager({
 
   function beginCreate() {
     resetEditor();
+    setWorkspaceOpen(true);
     setNotice(null);
     setError(null);
   }
@@ -775,6 +807,7 @@ export default function PurchaseOrdersManager({
       }
 
       setSelectedPurchaseOrderId(payload.purchaseOrder.id);
+      setWorkspaceOpen(true);
       setForm(applyDetailToForm(payload.purchaseOrder));
       setNotice(
         selectedPurchaseOrderId ? copy.notices.updated : copy.notices.created,
@@ -814,6 +847,7 @@ export default function PurchaseOrdersManager({
 
       setNotice(copy.notices.cancelled);
       resetEditor();
+      closeWorkspace();
       setRefreshToken((current) => current + 1);
     } catch (cancelError) {
       setError(
@@ -930,7 +964,7 @@ export default function PurchaseOrdersManager({
         ) : null}
       </section>
 
-      <div className="job-records-grid">
+      <div className="job-records-grid job-records-grid--list-only">
         <section className="card">
           <div className="invoice-header-row">
             <div className="stack-cell">
@@ -1003,7 +1037,10 @@ export default function PurchaseOrdersManager({
                   purchaseOrders.map((order) => (
                     <tr
                       key={order.id}
-                      onClick={() => setSelectedPurchaseOrderId(order.id)}
+                      onClick={() => {
+                        setSelectedPurchaseOrderId(order.id);
+                        setWorkspaceOpen(true);
+                      }}
                       style={{ cursor: "pointer" }}
                     >
                       <td>
@@ -1025,328 +1062,356 @@ export default function PurchaseOrdersManager({
             </table>
           </div>
         </section>
+      </div>
 
-        <section className="card">
-          <div className="invoice-header-row">
-            <div className="stack-cell">
-              <h3>
-                {selectedPurchaseOrderId
-                  ? copy.editor.editTitle
-                  : copy.editor.addTitle}
-              </h3>
-              <p className="muted">{copy.editor.subtitle}</p>
-            </div>
-          </div>
-
-          {loadingDetail || loadingReferences ? (
-            <p className="form-status">{copy.editor.loading}</p>
-          ) : null}
-
-          <div className="auth-form" style={{ marginTop: 12 }}>
-            <div className="grid two-col">
-              <label>
-                {copy.editor.job}
-                <select
-                  value={form.jobId}
-                  onChange={(event) =>
-                    updateForm("jobId", event.currentTarget.value)
-                  }
-                  disabled={!canManage}
-                >
-                  <option value="">{copy.editor.standalonePo}</option>
-                  {jobs.map((job) => (
-                    <option key={job.id} value={job.id}>
-                      {formatJobReferenceLabel(job)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                {copy.editor.status}
-                <select
-                  value={form.status}
-                  onChange={(event) =>
-                    updateForm(
-                      "status",
-                      event.currentTarget
-                        .value as (typeof purchaseOrderStatusOptions)[number],
-                    )
-                  }
-                  disabled={!canManage}
-                >
-                  {purchaseOrderStatusOptions.map((status) => (
-                    <option key={status} value={status}>
-                      {copy.statuses[status]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <div className="grid two-col">
-              <label>
-                {copy.editor.vendorName}
-                <input
-                  value={form.vendorName}
-                  onChange={(event) =>
-                    updateForm("vendorName", event.currentTarget.value)
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-              <label>
-                {copy.editor.poTitle}
-                <input
-                  value={form.title}
-                  onChange={(event) =>
-                    updateForm("title", event.currentTarget.value)
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-            </div>
-
-            <div className="grid two-col">
-              <label>
-                {copy.editor.vendorEmail}
-                <input
-                  value={form.vendorEmail}
-                  onChange={(event) =>
-                    updateForm("vendorEmail", event.currentTarget.value)
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-              <label>
-                {copy.editor.vendorPhone}
-                <input
-                  value={form.vendorPhone}
-                  onChange={(event) =>
-                    updateForm("vendorPhone", event.currentTarget.value)
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-            </div>
-
-            <label>
-              {copy.editor.vendorAddress}
-              <textarea
-                rows={2}
-                value={form.vendorAddress}
-                onChange={(event) =>
-                  updateForm("vendorAddress", event.currentTarget.value)
-                }
-                disabled={!canManage}
-              />
-            </label>
-
-            <label>
-              {copy.editor.notes}
-              <textarea
-                rows={3}
-                value={form.notes}
-                onChange={(event) =>
-                  updateForm("notes", event.currentTarget.value)
-                }
-                disabled={!canManage}
-              />
-            </label>
-
-            <div className="grid two-col">
-              <label>
-                {copy.editor.taxRate}
-                <input
-                  inputMode="decimal"
-                  value={form.taxRatePercent}
-                  onChange={(event) =>
-                    updateForm("taxRatePercent", event.currentTarget.value)
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-              <div
-                className="stack-cell"
-                style={{ justifyContent: "flex-end" }}
-              >
-                <p className="mini-label">{copy.editor.currentTotals}</p>
-                <p className="muted">
-                  {copy.editor.subtotal}{" "}
-                  {formatMoney(totals.subtotal, displayLocale)} •{" "}
-                  {copy.editor.tax}{" "}
-                  {formatMoney(totals.taxAmount, displayLocale)} •{" "}
-                  {copy.editor.total} {formatMoney(totals.total, displayLocale)}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <section className="card" style={{ marginTop: 16 }}>
-            <div className="invoice-header-row">
+      {workspaceOpen ? (
+        <div
+          className="revenue-workspace-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeWorkspace();
+            }
+          }}
+        >
+          <section
+            className="revenue-workspace-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="purchase-order-workspace-title"
+          >
+            <div className="invoice-header-row revenue-workspace-modal-header">
               <div className="stack-cell">
-                <h3>{copy.lineItems.title}</h3>
-                <p className="muted">{copy.lineItems.subtitle}</p>
+                <h3 id="purchase-order-workspace-title">
+                  {selectedPurchaseOrderId
+                    ? copy.editor.editTitle
+                    : copy.editor.addTitle}
+                </h3>
+                <p className="muted">{copy.editor.subtitle}</p>
               </div>
               <div className="portal-empty-actions">
-                <select
-                  value={selectedCatalogMaterialId}
-                  onChange={(event) =>
-                    setSelectedCatalogMaterialId(event.currentTarget.value)
-                  }
-                  disabled={!canManage}
-                >
-                  <option value="">{copy.lineItems.addCatalogMaterial}</option>
-                  {materials.map((material) => (
-                    <option key={material.id} value={material.id}>
-                      {material.name} • {material.category}
-                    </option>
-                  ))}
-                </select>
                 <button
                   className="btn secondary"
                   type="button"
-                  onClick={addCatalogMaterial}
-                  disabled={!canManage}
+                  onClick={closeWorkspace}
                 >
-                  {copy.lineItems.addCatalogItem}
-                </button>
-                <button
-                  className="btn secondary"
-                  type="button"
-                  onClick={addCustomLine}
-                  disabled={!canManage}
-                >
-                  {copy.lineItems.addCustomLine}
+                  {copy.closeWorkspace}
                 </button>
               </div>
             </div>
 
-            <div className="table-shell" style={{ marginTop: 12 }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>{copy.lineItems.table.item}</th>
-                    <th>{copy.lineItems.table.qty}</th>
-                    <th>{copy.lineItems.table.unit}</th>
-                    <th>{copy.lineItems.table.unitCost}</th>
-                    <th>{copy.lineItems.table.total}</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {form.lineItems.map((item, index) => (
-                    <tr key={item.id}>
-                      <td style={{ minWidth: 220 }}>
-                        <input
-                          value={item.name}
-                          onChange={(event) =>
-                            updateLineItem(index, {
-                              name: event.currentTarget.value,
-                            })
-                          }
-                          placeholder={copy.lineItems.table.namePlaceholder}
-                          disabled={!canManage}
-                        />
-                        <textarea
-                          rows={2}
-                          value={item.description}
-                          onChange={(event) =>
-                            updateLineItem(index, {
-                              description: event.currentTarget.value,
-                            })
-                          }
-                          placeholder={
-                            copy.lineItems.table.descriptionPlaceholder
-                          }
-                          disabled={!canManage}
-                          style={{ marginTop: 8 }}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          inputMode="decimal"
-                          value={item.quantity}
-                          onChange={(event) =>
-                            updateLineItem(index, {
-                              quantity: event.currentTarget.value,
-                            })
-                          }
-                          disabled={!canManage}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          value={item.unit}
-                          onChange={(event) =>
-                            updateLineItem(index, {
-                              unit: event.currentTarget.value,
-                            })
-                          }
-                          disabled={!canManage}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          inputMode="decimal"
-                          value={item.unitCost}
-                          onChange={(event) =>
-                            updateLineItem(index, {
-                              unitCost: event.currentTarget.value,
-                            })
-                          }
-                          disabled={!canManage}
-                        />
-                      </td>
-                      <td>{formatMoney(item.total, displayLocale)}</td>
-                      <td>
-                        <button
-                          className="btn secondary"
-                          type="button"
-                          onClick={() => removeLineItem(index)}
-                          disabled={!canManage}
-                        >
-                          {copy.lineItems.table.remove}
-                        </button>
-                      </td>
+            {loadingDetail || loadingReferences ? (
+              <p className="form-status">{copy.editor.loading}</p>
+            ) : null}
+
+            <div className="auth-form" style={{ marginTop: 12 }}>
+              <div className="grid two-col">
+                <label>
+                  {copy.editor.job}
+                  <select
+                    value={form.jobId}
+                    onChange={(event) =>
+                      updateForm("jobId", event.currentTarget.value)
+                    }
+                    disabled={!canManage}
+                  >
+                    <option value="">{copy.editor.standalonePo}</option>
+                    {jobs.map((job) => (
+                      <option key={job.id} value={job.id}>
+                        {formatJobReferenceLabel(job)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {copy.editor.status}
+                  <select
+                    value={form.status}
+                    onChange={(event) =>
+                      updateForm(
+                        "status",
+                        event.currentTarget
+                          .value as (typeof purchaseOrderStatusOptions)[number],
+                      )
+                    }
+                    disabled={!canManage}
+                  >
+                    {purchaseOrderStatusOptions.map((status) => (
+                      <option key={status} value={status}>
+                        {copy.statuses[status]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid two-col">
+                <label>
+                  {copy.editor.vendorName}
+                  <input
+                    value={form.vendorName}
+                    onChange={(event) =>
+                      updateForm("vendorName", event.currentTarget.value)
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+                <label>
+                  {copy.editor.poTitle}
+                  <input
+                    value={form.title}
+                    onChange={(event) =>
+                      updateForm("title", event.currentTarget.value)
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+              </div>
+
+              <div className="grid two-col">
+                <label>
+                  {copy.editor.vendorEmail}
+                  <input
+                    value={form.vendorEmail}
+                    onChange={(event) =>
+                      updateForm("vendorEmail", event.currentTarget.value)
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+                <label>
+                  {copy.editor.vendorPhone}
+                  <input
+                    value={form.vendorPhone}
+                    onChange={(event) =>
+                      updateForm("vendorPhone", event.currentTarget.value)
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+              </div>
+
+              <label>
+                {copy.editor.vendorAddress}
+                <textarea
+                  rows={2}
+                  value={form.vendorAddress}
+                  onChange={(event) =>
+                    updateForm("vendorAddress", event.currentTarget.value)
+                  }
+                  disabled={!canManage}
+                />
+              </label>
+
+              <label>
+                {copy.editor.notes}
+                <textarea
+                  rows={3}
+                  value={form.notes}
+                  onChange={(event) =>
+                    updateForm("notes", event.currentTarget.value)
+                  }
+                  disabled={!canManage}
+                />
+              </label>
+
+              <div className="grid two-col">
+                <label>
+                  {copy.editor.taxRate}
+                  <input
+                    inputMode="decimal"
+                    value={form.taxRatePercent}
+                    onChange={(event) =>
+                      updateForm("taxRatePercent", event.currentTarget.value)
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+                <div
+                  className="stack-cell"
+                  style={{ justifyContent: "flex-end" }}
+                >
+                  <p className="mini-label">{copy.editor.currentTotals}</p>
+                  <p className="muted">
+                    {copy.editor.subtotal}{" "}
+                    {formatMoney(totals.subtotal, displayLocale)} •{" "}
+                    {copy.editor.tax}{" "}
+                    {formatMoney(totals.taxAmount, displayLocale)} •{" "}
+                    {copy.editor.total}{" "}
+                    {formatMoney(totals.total, displayLocale)}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <section className="card" style={{ marginTop: 16 }}>
+              <div className="invoice-header-row">
+                <div className="stack-cell">
+                  <h3>{copy.lineItems.title}</h3>
+                  <p className="muted">{copy.lineItems.subtitle}</p>
+                </div>
+                <div className="portal-empty-actions">
+                  <select
+                    value={selectedCatalogMaterialId}
+                    onChange={(event) =>
+                      setSelectedCatalogMaterialId(event.currentTarget.value)
+                    }
+                    disabled={!canManage}
+                  >
+                    <option value="">
+                      {copy.lineItems.addCatalogMaterial}
+                    </option>
+                    {materials.map((material) => (
+                      <option key={material.id} value={material.id}>
+                        {material.name} • {material.category}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={addCatalogMaterial}
+                    disabled={!canManage}
+                  >
+                    {copy.lineItems.addCatalogItem}
+                  </button>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={addCustomLine}
+                    disabled={!canManage}
+                  >
+                    {copy.lineItems.addCustomLine}
+                  </button>
+                </div>
+              </div>
+
+              <div className="table-shell" style={{ marginTop: 12 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{copy.lineItems.table.item}</th>
+                      <th>{copy.lineItems.table.qty}</th>
+                      <th>{copy.lineItems.table.unit}</th>
+                      <th>{copy.lineItems.table.unitCost}</th>
+                      <th>{copy.lineItems.table.total}</th>
+                      <th />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {form.lineItems.map((item, index) => (
+                      <tr key={item.id}>
+                        <td style={{ minWidth: 220 }}>
+                          <input
+                            value={item.name}
+                            onChange={(event) =>
+                              updateLineItem(index, {
+                                name: event.currentTarget.value,
+                              })
+                            }
+                            placeholder={copy.lineItems.table.namePlaceholder}
+                            disabled={!canManage}
+                          />
+                          <textarea
+                            rows={2}
+                            value={item.description}
+                            onChange={(event) =>
+                              updateLineItem(index, {
+                                description: event.currentTarget.value,
+                              })
+                            }
+                            placeholder={
+                              copy.lineItems.table.descriptionPlaceholder
+                            }
+                            disabled={!canManage}
+                            style={{ marginTop: 8 }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            inputMode="decimal"
+                            value={item.quantity}
+                            onChange={(event) =>
+                              updateLineItem(index, {
+                                quantity: event.currentTarget.value,
+                              })
+                            }
+                            disabled={!canManage}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={item.unit}
+                            onChange={(event) =>
+                              updateLineItem(index, {
+                                unit: event.currentTarget.value,
+                              })
+                            }
+                            disabled={!canManage}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            inputMode="decimal"
+                            value={item.unitCost}
+                            onChange={(event) =>
+                              updateLineItem(index, {
+                                unitCost: event.currentTarget.value,
+                              })
+                            }
+                            disabled={!canManage}
+                          />
+                        </td>
+                        <td>{formatMoney(item.total, displayLocale)}</td>
+                        <td>
+                          <button
+                            className="btn secondary"
+                            type="button"
+                            onClick={() => removeLineItem(index)}
+                            disabled={!canManage}
+                          >
+                            {copy.lineItems.table.remove}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <div className="portal-empty-actions" style={{ marginTop: 16 }}>
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => void savePurchaseOrder()}
+                disabled={saving || !canManage}
+              >
+                {saving
+                  ? copy.actions.saving
+                  : selectedPurchaseOrderId
+                    ? copy.actions.save
+                    : copy.actions.create}
+              </button>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => void prepareEmailDraft()}
+                disabled={saving || !selectedPurchaseOrderId}
+              >
+                {copy.actions.sendEmail}
+              </button>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => void cancelSelectedPurchaseOrder()}
+                disabled={saving || !selectedPurchaseOrderId || !canManage}
+              >
+                {copy.actions.cancelPo}
+              </button>
             </div>
           </section>
-
-          <div className="portal-empty-actions" style={{ marginTop: 16 }}>
-            <button
-              className="btn primary"
-              type="button"
-              onClick={() => void savePurchaseOrder()}
-              disabled={saving || !canManage}
-            >
-              {saving
-                ? copy.actions.saving
-                : selectedPurchaseOrderId
-                  ? copy.actions.save
-                  : copy.actions.create}
-            </button>
-            <button
-              className="btn secondary"
-              type="button"
-              onClick={() => void prepareEmailDraft()}
-              disabled={saving || !selectedPurchaseOrderId}
-            >
-              {copy.actions.sendEmail}
-            </button>
-            <button
-              className="btn secondary"
-              type="button"
-              onClick={() => void cancelSelectedPurchaseOrder()}
-              disabled={saving || !selectedPurchaseOrderId || !canManage}
-            >
-              {copy.actions.cancelPo}
-            </button>
-          </div>
-        </section>
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
