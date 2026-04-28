@@ -263,13 +263,17 @@ export default async function LeadDetailPage(
         <div className="tab-row" style={{ marginTop: 14 }}>
           <Link
             href={`/hq/leads/${lead.id}?tab=overview`}
+            scroll={false}
             className={`tab-chip ${currentTab === "overview" ? "active" : ""}`}
+            aria-current={currentTab === "overview" ? "page" : undefined}
           >
             Overview
           </Link>
           <Link
             href={`/hq/leads/${lead.id}?tab=messages`}
+            scroll={false}
             className={`tab-chip ${currentTab === "messages" ? "active" : ""}`}
+            aria-current={currentTab === "messages" ? "page" : undefined}
           >
             Messages
           </Link>

@@ -1105,6 +1105,7 @@ export default async function InvoicesPage(
               scope.orgId,
               scope.internalUser,
             )}
+            scroll={false}
           >
             {t("invoices.collections.viewOverdue")}
           </Link>
@@ -1115,6 +1116,7 @@ export default async function InvoicesPage(
               scope.orgId,
               scope.internalUser,
             )}
+            scroll={false}
           >
             {t("invoices.collections.viewOpen")}
           </Link>
@@ -1125,6 +1127,7 @@ export default async function InvoicesPage(
               scope.orgId,
               scope.internalUser,
             )}
+            scroll={false}
           >
             {t("invoices.collections.viewDrafts")}
           </Link>
@@ -1213,6 +1216,7 @@ export default async function InvoicesPage(
               scope.orgId,
               scope.internalUser,
             )}
+            scroll={false}
           >
             {t("invoices.reset")}
           </Link>

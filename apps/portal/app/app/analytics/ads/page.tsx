@@ -198,10 +198,18 @@ export default async function AdsAnalyticsPage(
               </button>
             </form>
             <div className="analytics-month-nav">
-              <Link className="btn secondary" href={formatMonthHref({ monthStart, delta: -1, orgId: scope.orgId, internalUser: scope.internalUser })}>
+              <Link
+                className="btn secondary"
+                href={formatMonthHref({ monthStart, delta: -1, orgId: scope.orgId, internalUser: scope.internalUser })}
+                scroll={false}
+              >
                 Previous month
               </Link>
-              <Link className="btn secondary" href={formatMonthHref({ monthStart, delta: 1, orgId: scope.orgId, internalUser: scope.internalUser })}>
+              <Link
+                className="btn secondary"
+                href={formatMonthHref({ monthStart, delta: 1, orgId: scope.orgId, internalUser: scope.internalUser })}
+                scroll={false}
+              >
                 Next month
               </Link>
             </div>

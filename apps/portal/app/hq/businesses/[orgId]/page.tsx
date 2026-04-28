@@ -206,7 +206,9 @@ export default async function HqBusinessFolderPage(
             <Link
               key={item.key}
               href={`${tabBaseHref}?tab=${item.key}`}
+              scroll={false}
               className={`tab-chip ${tab === item.key ? "active" : ""}`}
+              aria-current={tab === item.key ? "page" : undefined}
             >
               {item.label}
             </Link>
@@ -837,7 +839,11 @@ async function MessagesTab({
                     key={lead.id}
                     className={`thread-item ${activeLead?.id === lead.id ? "active" : ""}`}
                   >
-                    <Link className="thread-link" href={`/hq/businesses/${orgId}?tab=messages&leadId=${lead.id}`}>
+                    <Link
+                      className="thread-link"
+                      href={`/hq/businesses/${orgId}?tab=messages&leadId=${lead.id}`}
+                      scroll={false}
+                    >
                       <div className="thread-top">
                         <strong>{label}</strong>
                         <span className="muted">{lead._count.messages} msgs</span>

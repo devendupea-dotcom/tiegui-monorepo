@@ -225,7 +225,9 @@ export default function EstimateBuilder({
       params.set("orgId", orgId);
     }
     const query = params.toString();
-    router.replace(query ? `/app/estimates/new?${query}` : "/app/estimates/new");
+    router.replace(query ? `/app/estimates/new?${query}` : "/app/estimates/new", {
+      scroll: false,
+    });
   }
 
   function updateLine(lineId: string, patch: Partial<EstimateBuilderLineItem>) {
