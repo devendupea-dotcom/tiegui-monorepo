@@ -1,7 +1,10 @@
 import { validateTwilioWebhook } from "@/lib/twilio";
 import { getTwilioOrgRuntimeConfigByAccountSid } from "@/lib/twilio-org";
 import { maskSid } from "@/lib/twilio-config-crypto";
-import { reconcileOutboundSmsProviderStatus } from "@/lib/sms";
+import {
+  normalizeProviderMessageSid,
+  reconcileOutboundSmsProviderStatus,
+} from "@/lib/sms-status-reconciliation";
 import { capturePortalError } from "@/lib/telemetry";
 
 function asString(value: FormDataEntryValue | null): string {
@@ -18,7 +21,11 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const form = await req.formData();
   const accountSid = asString(form.get("AccountSid"));
-  const providerMessageSid = asString(form.get("MessageSid")) || asString(form.get("SmsSid"));
+  const providerMessageSid = normalizeProviderMessageSid(
+    asString(form.get("MessageSid")) ||
+      asString(form.get("SmsSid")) ||
+      asString(form.get("SmsMessageSid")),
+  );
   const providerStatus = asString(form.get("MessageStatus")) || asString(form.get("SmsStatus"));
 
   if (!accountSid || !providerMessageSid || !providerStatus) {
