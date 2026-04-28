@@ -9,6 +9,8 @@ type SaveIntegrationAccountInput = {
   refreshToken?: string | null;
   expiresAt?: Date | null;
   providerAccountId?: string | null;
+  providerEmail?: string | null;
+  providerDisplayName?: string | null;
   realmId?: string | null;
   scopes?: string[];
   status?: "CONNECTED" | "DISCONNECTED" | "ERROR";
@@ -20,6 +22,8 @@ type RefreshResult = {
   expiresAt?: Date | null;
   scopes?: string[];
   providerAccountId?: string | null;
+  providerEmail?: string | null;
+  providerDisplayName?: string | null;
   realmId?: string | null;
 };
 
@@ -45,6 +49,8 @@ export async function saveIntegrationAccount(input: SaveIntegrationAccountInput)
       refreshTokenEncrypted,
       expiresAt: input.expiresAt ?? null,
       providerAccountId: input.providerAccountId ?? null,
+      providerEmail: input.providerEmail ?? null,
+      providerDisplayName: input.providerDisplayName ?? null,
       realmId: input.realmId ?? null,
       scopes: input.scopes || [],
       connectedAt: new Date(),
@@ -58,6 +64,8 @@ export async function saveIntegrationAccount(input: SaveIntegrationAccountInput)
       refreshTokenEncrypted,
       expiresAt: input.expiresAt ?? null,
       providerAccountId: input.providerAccountId ?? null,
+      providerEmail: input.providerEmail ?? null,
+      providerDisplayName: input.providerDisplayName ?? null,
       realmId: input.realmId ?? null,
       scopes: input.scopes || [],
       status: input.status || "CONNECTED",
@@ -91,6 +99,8 @@ export async function disconnectIntegrationAccount(input: {
       accessTokenEncrypted: "",
       refreshTokenEncrypted: null,
       expiresAt: null,
+      providerEmail: null,
+      providerDisplayName: null,
       lastError: null,
     },
   });
@@ -134,6 +144,8 @@ export async function getDecryptedAccessToken(input: {
       expiresAt: true,
       realmId: true,
       providerAccountId: true,
+      providerEmail: true,
+      providerDisplayName: true,
       scopes: true,
     },
   });
@@ -166,6 +178,8 @@ export async function getDecryptedAccessToken(input: {
     refreshToken: refreshed.refreshToken ?? refreshToken,
     expiresAt: refreshed.expiresAt ?? null,
     providerAccountId: refreshed.providerAccountId ?? account.providerAccountId ?? null,
+    providerEmail: refreshed.providerEmail ?? account.providerEmail ?? null,
+    providerDisplayName: refreshed.providerDisplayName ?? account.providerDisplayName ?? null,
     realmId: refreshed.realmId ?? account.realmId ?? null,
     scopes: refreshed.scopes ?? account.scopes,
     status: "CONNECTED",

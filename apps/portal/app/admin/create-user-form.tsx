@@ -144,12 +144,7 @@ export default function CreateUserForm({ organizations }: CreateUserFormProps) {
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <code
-              style={{
-                padding: "8px 10px",
-                borderRadius: 10,
-                background: "rgba(0,0,0,0.25)",
-                wordBreak: "break-all",
-              }}
+              className="setup-url-chip"
             >
               {setupUrl}
             </code>

@@ -7,6 +7,22 @@ type JobPhotoUploaderProps = {
   jobId: string;
 };
 
+type ApiResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+    }
+  | null;
+
+type SignUploadResponse =
+  | {
+      ok?: boolean;
+      uploadUrl?: string;
+      photoId?: string;
+      error?: string;
+    }
+  | null;
+
 export default function JobPhotoUploader({ jobId }: JobPhotoUploaderProps) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -16,61 +32,96 @@ export default function JobPhotoUploader({ jobId }: JobPhotoUploaderProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  async function attachUploadedPhoto(photoId: string) {
+    const attachResponse = await fetch(`/api/jobs/${jobId}/photos`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        photoId,
+        caption: caption.trim() || null,
+      }),
+    });
+
+    const attached = (await attachResponse.json().catch(() => null)) as ApiResponse;
+    if (!attachResponse.ok || !attached?.ok) {
+      throw new Error(attached?.error || "Couldn't save photo.");
+    }
+  }
+
+  async function uploadViaSignedUrl(file: File) {
+    const signResponse = await fetch("/api/photos/sign-upload", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        leadId: jobId,
+        contentType: file.type,
+        sizeBytes: file.size,
+        originalName: file.name,
+      }),
+    });
+
+    const signed = (await signResponse.json().catch(() => null)) as SignUploadResponse;
+    if (!signResponse.ok || !signed?.ok || !signed.uploadUrl || !signed.photoId) {
+      throw new Error(signed?.error || "Couldn't start photo upload.");
+    }
+
+    const uploadResponse = await fetch(signed.uploadUrl, {
+      method: "PUT",
+      headers: {
+        "content-type": file.type,
+      },
+      body: file,
+    });
+
+    if (!uploadResponse.ok) {
+      throw new Error("Photo upload to storage failed.");
+    }
+
+    await attachUploadedPhoto(signed.photoId);
+  }
+
+  async function uploadDirectly(file: File) {
+    const formData = new FormData();
+    formData.set("photoFile", file);
+    if (caption.trim()) {
+      formData.set("caption", caption.trim());
+    }
+
+    const uploadResponse = await fetch(`/api/jobs/${jobId}/photos`, {
+      method: "POST",
+      body: formData,
+    });
+
+    const uploaded = (await uploadResponse.json().catch(() => null)) as ApiResponse;
+    if (!uploadResponse.ok || !uploaded?.ok) {
+      throw new Error(uploaded?.error || "Couldn't upload photo.");
+    }
+  }
+
   async function handleUpload(file: File) {
     setUploading(true);
     setError(null);
     setSuccess(null);
 
     try {
-      const signResponse = await fetch("/api/photos/sign-upload", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          leadId: jobId,
-          contentType: file.type,
-          sizeBytes: file.size,
-          originalName: file.name,
-        }),
-      });
+      try {
+        await uploadViaSignedUrl(file);
+      } catch (signedUploadError) {
+        const message = signedUploadError instanceof Error ? signedUploadError.message : "";
+        const canFallback =
+          message.includes("Object storage is unavailable") ||
+          message.includes("Couldn't start photo upload.") ||
+          message.includes("Photo upload to storage failed.");
 
-      const signed = (await signResponse.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            uploadUrl?: string;
-            photoId?: string;
-            error?: string;
-          }
-        | null;
+        if (!canFallback) {
+          throw signedUploadError;
+        }
 
-      if (!signResponse.ok || !signed?.ok || !signed.uploadUrl || !signed.photoId) {
-        throw new Error(signed?.error || "Couldn't start upload.");
-      }
-
-      const putResponse = await fetch(signed.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-
-      if (!putResponse.ok) {
-        throw new Error("Upload failed.");
-      }
-
-      const attachResponse = await fetch(`/api/jobs/${jobId}/photos`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ photoId: signed.photoId, caption: caption.trim() || null }),
-      });
-
-      const attached = (await attachResponse.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            error?: string;
-          }
-        | null;
-
-      if (!attachResponse.ok || !attached?.ok) {
-        throw new Error(attached?.error || "Couldn't attach photo to job.");
+        await uploadDirectly(file);
       }
 
       setCaption("");

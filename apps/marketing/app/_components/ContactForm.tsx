@@ -1,39 +1,79 @@
 "use client";
 
-import { PRIMARY_CTA_LABEL } from "../_content";
+import { useState } from "react";
+import { siteCopy } from "../../content/siteCopy";
+
+type SubmissionState = "idle" | "submitted";
 
 export default function ContactForm() {
+  const [submissionState, setSubmissionState] = useState<SubmissionState>("idle");
+  const formCopy = siteCopy.contact.form;
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (window.gtag) window.gtag("event", "form_submit", { form: "contact" });
-    event.currentTarget.reset();
-    const status = event.currentTarget.querySelector(".form-status");
-    if (status) status.textContent = "Thanks — we’ll reach out shortly.";
+
+    const form = event.currentTarget;
+    if (!form.checkValidity()) {
+      form.reportValidity();
+      return;
+    }
+
+    if (window.gtag) {
+      window.gtag("event", "form_submit", { form: "strategy_call" });
+    }
+
+    form.reset();
+    setSubmissionState("submitted");
   };
 
   return (
-    <form className="contact-form" onSubmit={handleSubmit}>
-      <label>
-        Name
-        <input type="text" name="name" placeholder="Your name" required />
-      </label>
-      <label>
-        Phone number
-        <input type="tel" name="phone" placeholder="(555) 555-5555" required />
-      </label>
-      <label>
-        Email
-        <input type="email" name="email" placeholder="you@company.com" required />
-      </label>
-      <label className="field-message">
-        Biggest challenge
-        <textarea name="challenge" rows={3} placeholder="What is the #1 thing you want to fix right now?" />
-      </label>
-      <button className="cta-button gold" type="submit">
-        {PRIMARY_CTA_LABEL}
+    <form className="contact-form" onSubmit={handleSubmit} noValidate>
+      <div className="contact-form__row">
+        <div className="contact-form__field">
+          <label htmlFor="contact-name">{formCopy.nameLabel}</label>
+          <input id="contact-name" name="name" type="text" autoComplete="name" required minLength={2} />
+        </div>
+
+        <div className="contact-form__field">
+          <label htmlFor="contact-company">{formCopy.companyLabel}</label>
+          <input id="contact-company" name="company" type="text" autoComplete="organization" required minLength={2} />
+        </div>
+      </div>
+
+      <div className="contact-form__row">
+        <div className="contact-form__field">
+          <label htmlFor="contact-email">{formCopy.emailLabel}</label>
+          <input id="contact-email" name="email" type="email" autoComplete="email" required />
+        </div>
+
+        <div className="contact-form__field">
+          <label htmlFor="contact-phone">{formCopy.phoneLabel}</label>
+          <input
+            id="contact-phone"
+            name="phone"
+            type="tel"
+            autoComplete="tel"
+            inputMode="tel"
+            pattern="[0-9+()\-\s]{7,20}"
+            required
+            aria-describedby="contact-phone-help"
+          />
+          <p id="contact-phone-help">Use digits, spaces, or symbols like + ( ) -.</p>
+        </div>
+      </div>
+
+      <div className="contact-form__field">
+        <label htmlFor="contact-challenge">{formCopy.challengeLabel}</label>
+        <textarea id="contact-challenge" name="challenge" rows={5} required minLength={20} />
+      </div>
+
+      <button className="tg-btn tg-btn--primary" type="submit">
+        {formCopy.submitLabel}
       </button>
-      <p className="cta-note">We’ll reach out quickly.</p>
-      <p className="form-status" aria-live="polite"></p>
+
+      <p className="contact-form__status" aria-live="polite">
+        {submissionState === "submitted" ? formCopy.successMessage : ""}
+      </p>
     </form>
   );
 }

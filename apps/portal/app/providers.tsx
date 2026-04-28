@@ -8,7 +8,6 @@ import {
   type PersistedClient,
 } from "@tanstack/react-query-persist-client";
 import { createStore, del, get, set } from "idb-keyval";
-import { SessionProvider } from "next-auth/react";
 import OfflineSyncBootstrap from "./offline-sync-bootstrap";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
@@ -45,18 +44,16 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <SessionProvider>
-      <PersistQueryClientProvider
-        client={queryClient}
-        persistOptions={{
-          persister,
-          maxAge: 1000 * 60 * 60 * 24,
-          buster: "portal-v1",
-        }}
-      >
-        <OfflineSyncBootstrap />
-        {children}
-      </PersistQueryClientProvider>
-    </SessionProvider>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister,
+        maxAge: 1000 * 60 * 60 * 24,
+        buster: "portal-v1",
+      }}
+    >
+      <OfflineSyncBootstrap />
+      {children}
+    </PersistQueryClientProvider>
   );
 }

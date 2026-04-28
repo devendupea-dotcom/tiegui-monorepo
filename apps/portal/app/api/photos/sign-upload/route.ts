@@ -8,7 +8,7 @@ import {
   assertCanMutateLeadJob,
   requireAppApiActor,
 } from "@/lib/app-api-permissions";
-import { requireR2 } from "@/lib/r2";
+import { isR2Configured, requireR2 } from "@/lib/r2";
 import { checkSlidingWindowLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -92,6 +92,13 @@ export async function POST(req: Request) {
     }
 
     await assertCanMutateLeadJob({ actor, orgId: lead.orgId, leadId: lead.id });
+
+    if (!isR2Configured()) {
+      return NextResponse.json(
+        { ok: false, error: "Object storage is unavailable. Upload the photo directly through the portal." },
+        { status: 503 },
+      );
+    }
 
     const { r2, bucket } = requireR2();
 

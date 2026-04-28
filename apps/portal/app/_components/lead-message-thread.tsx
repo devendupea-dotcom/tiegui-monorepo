@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 
 type ThreadMessage = {
   id: string;
@@ -26,16 +27,23 @@ type LeadMessageThreadProps = {
   templates?: ThreadTemplate[];
   senderNumber?: string | null;
   canSend?: boolean;
+  composerNotice?: string | null;
 };
 
 function formatMessageTimestamp(value: string): string {
-  const date = new Date(value);
-  return new Intl.DateTimeFormat("en-US", {
+  return formatDateTimeForDisplay(value, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
+  });
+}
+
+function createClientMutationId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `sms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export default function LeadMessageThread({
@@ -44,11 +52,13 @@ export default function LeadMessageThread({
   templates = [],
   senderNumber = null,
   canSend = true,
+  composerNotice = null,
 }: LeadMessageThreadProps) {
   const [messages, setMessages] = useState<ThreadMessage[]>(initialMessages);
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -69,13 +79,15 @@ export default function LeadMessageThread({
     event.preventDefault();
 
     const body = draft.trim();
-    if (!body || submitting) {
+    if (!body || submitting || submittingRef.current || !senderNumber || !canSend) {
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     setStatus(null);
 
+    const idempotencyKey = createClientMutationId();
     const tempId = `temp-${Date.now()}`;
     const optimisticMessage: ThreadMessage = {
       id: tempId,
@@ -95,21 +107,35 @@ export default function LeadMessageThread({
     try {
       const response = await fetch(`/api/leads/${leadId}/messages`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ body }),
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ body, idempotencyKey }),
       });
 
       const payload = (await response.json()) as {
         ok?: boolean;
         error?: string;
         notice?: string;
+        deliveryState?: "SENT" | "QUEUED" | "FAILED" | "SUPPRESSED" | "NOT_LIVE";
+        liveSend?: boolean;
         message?: Omit<ThreadMessage, "createdAt"> & { createdAt: string | Date };
       };
 
       if (!response.ok || !payload.ok || !payload.message) {
         setMessages((current) => current.filter((message) => message.id !== tempId));
-        setStatus(payload.error || "Could not send message.");
+        setStatus(
+          payload.notice ||
+            payload.error ||
+            (payload.deliveryState === "SUPPRESSED"
+              ? "Message blocked because the contact is opted out."
+              : payload.deliveryState === "NOT_LIVE"
+                ? "Messaging is not live for this workspace yet."
+                : "Could not send message."),
+        );
         setSubmitting(false);
+        submittingRef.current = false;
         return;
       }
 
@@ -124,7 +150,12 @@ export default function LeadMessageThread({
       if (confirmedMessage.status === "FAILED") {
         setStatus(payload.notice || "Message failed to send.");
       } else if (confirmedMessage.status === "QUEUED") {
-        setStatus(payload.notice || "Message queued.");
+        setStatus(
+          payload.notice ||
+            (payload.liveSend
+              ? "Message queued."
+              : "Messaging is not live yet. Message saved as queued."),
+        );
       } else {
         setStatus(payload.notice || "Message sent.");
       }
@@ -133,6 +164,7 @@ export default function LeadMessageThread({
       setStatus("Could not send message.");
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   }
 
@@ -159,50 +191,49 @@ export default function LeadMessageThread({
         )}
       </div>
 
-      {canSend ? (
-        <form className="message-compose" onSubmit={handleSend}>
-          {senderNumber ? (
-            <p className="muted">
-              Sending from <code>{senderNumber}</code>
-            </p>
-          ) : (
-            <p className="muted">No org SMS sender configured yet.</p>
-          )}
-          {templates.length > 0 ? (
-            <div className="template-pills">
-              {templates.map((template) => (
+      <form className="message-compose" onSubmit={handleSend}>
+        {senderNumber ? (
+          <p className="muted">
+            Sending from <code>{senderNumber}</code>
+          </p>
+        ) : (
+          <p className="muted">No org SMS sender configured yet.</p>
+        )}
+        {composerNotice ? <p className="muted">{composerNotice}</p> : null}
+        {templates.length > 0 ? (
+          <div className="template-pills">
+            {templates.map((template) => (
                 <button
                   key={template.id}
                   type="button"
                   className="template-chip"
                   onClick={() => setDraft(template.body)}
-                  disabled={submitting}
+                  disabled={submitting || !senderNumber || !canSend}
                 >
                   {template.name}
                 </button>
               ))}
-            </div>
-          ) : null}
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Type a message"
-            rows={3}
-            maxLength={1600}
-            disabled={submitting || !senderNumber}
-          />
-          <div className="message-compose-actions">
-            <span className="muted">{draft.length}/1600</span>
-            <button
-              className="btn primary"
-              type="submit"
-              disabled={submitting || !draft.trim() || !senderNumber}
-            >
-              Send
-            </button>
           </div>
-        </form>
-      ) : null}
+        ) : null}
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="Type a message"
+          rows={3}
+          maxLength={1600}
+          disabled={submitting || !senderNumber || !canSend}
+        />
+        <div className="message-compose-actions">
+          <span className="muted">{draft.length}/1600</span>
+          <button
+            className="btn primary"
+            type="submit"
+            disabled={submitting || !draft.trim() || !senderNumber || !canSend}
+          >
+            Send
+          </button>
+        </div>
+      </form>
 
       {status ? <p className="form-status">{status}</p> : null}
     </div>

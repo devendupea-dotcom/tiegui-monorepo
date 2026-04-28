@@ -26,8 +26,9 @@ function getLocaleFromAcceptLanguage(headerValue: string | null): PortalLocale {
 }
 
 export default getRequestConfig(async () => {
-  const cookieLocale = normalizeLocale(cookies().get(PORTAL_LOCALE_COOKIE)?.value);
-  const locale = cookieLocale || getLocaleFromAcceptLanguage(headers().get("accept-language"));
+  const [cookieStore, headerStore] = await Promise.all([cookies(), headers()]);
+  const cookieLocale = normalizeLocale(cookieStore.get(PORTAL_LOCALE_COOKIE)?.value);
+  const locale = cookieLocale || getLocaleFromAcceptLanguage(headerStore.get("accept-language"));
 
   const messages =
     locale === "es"

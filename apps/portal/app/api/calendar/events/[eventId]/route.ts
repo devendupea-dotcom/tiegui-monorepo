@@ -19,11 +19,13 @@ import {
 } from "@/lib/calendar/permissions";
 import { localDateFromUtc, parseUtcDateTime } from "@/lib/calendar/dates";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
+import { syncLeadBookingState } from "@/lib/lead-booking";
+import { resolveWorkspaceUserIds } from "@/lib/workspace-users";
 
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { eventId: string };
+  params: Promise<{ eventId: string }>;
 };
 
 type UpdateEventPayload = {
@@ -62,9 +64,6 @@ function parseEventStatus(value: unknown) {
   const allowed: CalendarEventStatus[] = [
     "SCHEDULED",
     "CONFIRMED",
-    "EN_ROUTE",
-    "ON_SITE",
-    "IN_PROGRESS",
     "COMPLETED",
     "CANCELLED",
     "NO_SHOW",
@@ -91,14 +90,11 @@ async function resolveEditableWorkerIds(input: {
   orgId: string;
   requestedWorkerIds: string[];
 }) {
-  const users = await prisma.user.findMany({
-    where: {
-      id: { in: input.requestedWorkerIds },
-      OR: [{ orgId: input.orgId }, { role: "INTERNAL" }],
-    },
-    select: { id: true },
+  const ids = await resolveWorkspaceUserIds({
+    organizationId: input.orgId,
+    requestedUserIds: input.requestedWorkerIds,
+    includeInternal: true,
   });
-  const ids = users.map((item) => item.id);
   if (ids.length !== input.requestedWorkerIds.length) {
     throw new CalendarApiError("One or more workers are invalid for this organization.", 400);
   }
@@ -173,7 +169,8 @@ async function buildConflictResponse(input: {
   );
 }
 
-export async function GET(_req: Request, { params }: RouteContext) {
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const event = await getEventOrThrow(params.eventId);
@@ -192,7 +189,8 @@ export async function GET(_req: Request, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const existing = await getEventOrThrow(params.eventId);
@@ -251,40 +249,61 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       }
     }
 
-    const updated = await prisma.event.update({
-      where: { id: existing.id },
-      data: {
-        leadId: body.leadId !== undefined ? body.leadId : existing.leadId,
-        type: body.type ? normalizeEventType(body.type) : existing.type,
-        status: parseEventStatus(body.status) || existing.status,
-        busy,
-        allDay: body.allDay ?? existing.allDay,
-        title: body.title?.trim() || existing.title,
-        description: body.description !== undefined ? body.description?.trim() || null : existing.description,
-        customerName: body.customerName !== undefined ? body.customerName?.trim() || null : existing.customerName,
-        addressLine: body.addressLine !== undefined ? body.addressLine?.trim() || null : existing.addressLine,
-        startAt: nextStartAt,
-        endAt: nextEndAt,
-        assignedToUserId: nextAssignedUserId,
-        ...(reassigned
-          ? {
-              googleEventId: null,
-              googleCalendarId: null,
-            }
-          : {}),
-        syncStatus: "PENDING",
-        lastSyncedAt: null,
-        workerAssignments: {
-          deleteMany: {},
-          createMany: {
-            data: nextWorkerIds.map((workerUserId) => ({
-              orgId: existing.orgId,
-              workerUserId,
-            })),
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextEvent = await tx.event.update({
+        where: { id: existing.id },
+        data: {
+          leadId: body.leadId !== undefined ? body.leadId : existing.leadId,
+          type: body.type ? normalizeEventType(body.type) : existing.type,
+          status: parseEventStatus(body.status) || existing.status,
+          busy,
+          allDay: body.allDay ?? existing.allDay,
+          title: body.title?.trim() || existing.title,
+          description: body.description !== undefined ? body.description?.trim() || null : existing.description,
+          customerName: body.customerName !== undefined ? body.customerName?.trim() || null : existing.customerName,
+          addressLine: body.addressLine !== undefined ? body.addressLine?.trim() || null : existing.addressLine,
+          startAt: nextStartAt,
+          endAt: nextEndAt,
+          assignedToUserId: nextAssignedUserId,
+          ...(reassigned
+            ? {
+                googleEventId: null,
+                googleCalendarId: null,
+              }
+            : {}),
+          syncStatus: "PENDING",
+          lastSyncedAt: null,
+          workerAssignments: {
+            deleteMany: {},
+            createMany: {
+              data: nextWorkerIds.map((workerUserId) => ({
+                orgId: existing.orgId,
+                workerUserId,
+              })),
+            },
           },
         },
-      },
-      select: calendarEventSelect,
+        select: calendarEventSelect,
+      });
+
+      const linkedJobId = await syncLeadBookingState(tx, {
+        orgId: nextEvent.orgId,
+        leadId: nextEvent.leadId,
+        eventId: nextEvent.id,
+        type: nextEvent.type,
+        status: nextEvent.status,
+        startAt: nextEvent.startAt,
+        endAt: nextEvent.endAt,
+        title: nextEvent.title,
+        customerName: nextEvent.customerName,
+        addressLine: nextEvent.addressLine,
+        createdByUserId: nextEvent.createdByUserId,
+      });
+
+      return {
+        ...nextEvent,
+        jobId: linkedJobId ?? nextEvent.jobId,
+      };
     });
 
     if (reassigned && existing.googleEventId && existing.googleCalendarId) {
@@ -345,7 +364,8 @@ export async function PATCH(req: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(_req: Request, { params }: RouteContext) {
+export async function DELETE(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const existing = await getEventOrThrow(params.eventId);

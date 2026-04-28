@@ -1,10 +1,19 @@
 import { addDays, addMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
+import { Prisma } from "@prisma/client";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "./calendar/availability";
+import { recordOutboundSmsCommunicationEvent } from "./communication-events";
+import {
+  resolveIntakeCallbackSelection,
+  type IntakeCallbackHoldSelection,
+} from "./intake-automation-core";
+import { formatCallbackTime } from "./intake-time";
 import { prisma } from "./prisma";
 import { pickLocalizedTemplate, resolveMessageLocale } from "./message-language";
+import { ensureSmsA2POpenerDisclosure } from "./sms-compliance";
 import { sendOutboundSms } from "./sms";
 import { queueSmsDispatch } from "./sms-dispatch-queue";
+import { listWorkspaceUsers, sortWorkspaceUsersByCalendarRoleThenLabel } from "./workspace-users";
 
 export type IntakeOrganizationSettings = {
   id: string;
@@ -48,7 +57,7 @@ const ADDRESS_PATTERN =
   /\b\d{1,6}\s+[a-z0-9.\-'\s]{2,}\b(st|street|ave|avenue|rd|road|dr|drive|ln|lane|way|blvd|boulevard|ct|court|pl|place|pkwy|parkway)\b/i;
 const CROSS_STREET_PATTERN = /\b[a-z]+(?:\s+[a-z]+)?\s+(?:and|&|y)\s+[a-z]+(?:\s+[a-z]+)?\b/i;
 const ZIP_PATTERN = /\b\d{5}(?:-\d{4})?\b/;
-const CITY_PATTERN = /^[a-zA-ZÀ-ÿ.\-\s]{2,60}$/;
+const CITY_PATTERN = /^[a-zA-Z\u00C0-\u00FF.\-\s]{2,60}$/;
 const COMMON_WORK_LOCATION_COLLISION_TERMS = new Set([
   "cleanup",
   "concrete",
@@ -83,6 +92,8 @@ const COMMON_WORK_LOCATION_COLLISION_TERMS = new Set([
   "windows",
 ]);
 
+type Tx = Prisma.TransactionClient;
+
 export const intakeAutomationDefaults = {
   intro: DEFAULT_INTRO,
   askLocation: DEFAULT_ASK_LOCATION,
@@ -92,29 +103,26 @@ export const intakeAutomationDefaults = {
 } as const;
 
 export const intakeCallbackEventTitle = CALLBACK_EVENT_TITLE;
+export { parsePreferredCallbackAt } from "./intake-time";
 
-type TimeParts = {
-  hour: number;
-  minute: number;
-};
+function buildIntakeCallbackLockKey(leadId: string): string {
+  return `intake-callback:${leadId}`;
+}
+
+async function lockIntakeCallbackMutation(
+  tx: Tx,
+  input: {
+    orgId: string;
+    leadId: string;
+  },
+) {
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${input.orgId}), hashtext(${buildIntakeCallbackLockKey(input.leadId)}))
+  `;
+}
 
 function sanitizeMessageBody(body: string): string {
   return body.replace(/\s+/g, " ").trim();
-}
-
-function formatCallbackTime(
-  value: Date,
-  locale: "EN" | "ES",
-  timeZone?: string,
-): string {
-  return new Intl.DateTimeFormat(locale === "ES" ? "es-US" : "en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    ...(timeZone ? { timeZone } : {}),
-  }).format(value);
 }
 
 function renderCompletionTemplate(
@@ -142,7 +150,16 @@ async function sendAutomationMessage({
 }) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
-    select: { status: true },
+    select: {
+      id: true,
+      status: true,
+      customerId: true,
+      conversationState: {
+        select: {
+          id: true,
+        },
+      },
+    },
   });
 
   if (!lead || lead.status === "DNC") {
@@ -155,14 +172,17 @@ async function sendAutomationMessage({
     toNumberE164,
     body,
   });
+  if (smsResult.suppressed) {
+    return;
+  }
   const resolvedFromNumber = smsResult.resolvedFromNumberE164 || organization.smsFromNumberE164;
   if (!resolvedFromNumber) {
     return;
   }
   const now = new Date();
 
-  await prisma.$transaction([
-    prisma.message.create({
+  await prisma.$transaction(async (tx) => {
+    const message = await tx.message.create({
       data: {
         orgId: organization.id,
         leadId,
@@ -175,15 +195,35 @@ async function sendAutomationMessage({
         providerMessageSid: smsResult.providerMessageSid,
         status: smsResult.status,
       },
-    }),
-    prisma.lead.update({
+      select: {
+        id: true,
+        createdAt: true,
+      },
+    });
+
+    await recordOutboundSmsCommunicationEvent(tx, {
+      orgId: organization.id,
+      leadId,
+      contactId: lead.customerId,
+      conversationId: lead.conversationState?.id || null,
+      messageId: message.id,
+      body,
+      fromNumberE164: resolvedFromNumber,
+      toNumberE164,
+      providerMessageSid: smsResult.providerMessageSid,
+      status: smsResult.status,
+      deliveryNotice: smsResult.notice || null,
+      occurredAt: message.createdAt,
+    });
+
+    await tx.lead.update({
       where: { id: leadId },
       data: {
         lastContactedAt: now,
         lastOutboundAt: now,
       },
-    }),
-  ]);
+    });
+  });
 }
 
 async function queueAutomationReply({
@@ -264,7 +304,7 @@ function looksLikeLocationPhrase(value: string): boolean {
 function looksLikeWorkSummary(value: string): boolean {
   const normalized = sanitizeMessageBody(value);
   if (!normalized) return false;
-  return /[a-zA-ZÀ-ÿ]/.test(normalized);
+  return /[a-zA-Z\u00C0-\u00FF]/.test(normalized);
 }
 
 function parseWorkAndLocation(value: string): {
@@ -315,139 +355,47 @@ function parseWorkAndLocation(value: string): {
   return null;
 }
 
-function parseTimeParts(text: string): TimeParts {
-  const match = text.match(/(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
-  if (!match) {
-    return { hour: 9, minute: 0 };
+async function ensureIntakeCallbackEventTx(
+  tx: Tx,
+  input: {
+    orgId: string;
+    leadId: string;
+    callbackAt: Date;
+    assignedToUserId?: string | null;
+  },
+): Promise<boolean> {
+  const existing = await tx.event.findFirst({
+    where: {
+      orgId: input.orgId,
+      leadId: input.leadId,
+      type: "FOLLOW_UP",
+      title: CALLBACK_EVENT_TITLE,
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    return false;
   }
 
-  let hour = Number(match[1]);
-  const minute = match[2] ? Number(match[2]) : 0;
-  const meridiem = match[3]?.toLowerCase();
+  await tx.event.create({
+    data: {
+      orgId: input.orgId,
+      leadId: input.leadId,
+      type: "FOLLOW_UP",
+      title: CALLBACK_EVENT_TITLE,
+      description: CALLBACK_EVENT_DESCRIPTION,
+      startAt: input.callbackAt,
+      assignedToUserId: input.assignedToUserId || null,
+      workerAssignments: input.assignedToUserId
+        ? {
+            create: [{ orgId: input.orgId, workerUserId: input.assignedToUserId }],
+          }
+        : undefined,
+    },
+  });
 
-  if (Number.isNaN(hour) || Number.isNaN(minute) || minute < 0 || minute > 59) {
-    return { hour: 9, minute: 0 };
-  }
-
-  if (meridiem === "pm" && hour < 12) {
-    hour += 12;
-  } else if (meridiem === "am" && hour === 12) {
-    hour = 0;
-  }
-
-  if (!meridiem && hour >= 1 && hour <= 7) {
-    hour += 12;
-  }
-
-  if (hour < 0 || hour > 23) {
-    return { hour: 9, minute: 0 };
-  }
-
-  return { hour, minute };
-}
-
-function startOfDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-}
-
-function withTime(baseDate: Date, timeParts: TimeParts): Date {
-  return new Date(
-    baseDate.getFullYear(),
-    baseDate.getMonth(),
-    baseDate.getDate(),
-    timeParts.hour,
-    timeParts.minute,
-    0,
-    0,
-  );
-}
-
-function parseWeekdayBase(text: string, now: Date): Date | null {
-  const weekMap: Record<string, number> = {
-    sunday: 0,
-    monday: 1,
-    tuesday: 2,
-    wednesday: 3,
-    thursday: 4,
-    friday: 5,
-    saturday: 6,
-  };
-
-  for (const [name, weekday] of Object.entries(weekMap)) {
-    if (text.includes(name)) {
-      const todayWeekday = now.getDay();
-      let delta = (weekday - todayWeekday + 7) % 7;
-      if (delta === 0) {
-        delta = 7;
-      }
-      const result = startOfDay(now);
-      result.setDate(result.getDate() + delta);
-      return result;
-    }
-  }
-
-  return null;
-}
-
-export function parsePreferredCallbackAt(text: string, now = new Date()): Date | null {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-
-  const timeParts = parseTimeParts(normalized);
-  let baseDate: Date | null = null;
-
-  const isoMatch = normalized.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
-  if (isoMatch) {
-    baseDate = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
-  }
-
-  if (!baseDate) {
-    const usMatch = normalized.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
-    if (usMatch) {
-      const month = Number(usMatch[1]);
-      const day = Number(usMatch[2]);
-      let year = usMatch[3] ? Number(usMatch[3]) : now.getFullYear();
-      if (year < 100) {
-        year += 2000;
-      }
-      baseDate = new Date(year, month - 1, day);
-      if (!usMatch[3] && baseDate < startOfDay(now)) {
-        baseDate = new Date(year + 1, month - 1, day);
-      }
-    }
-  }
-
-  if (!baseDate) {
-    if (normalized.includes("tomorrow")) {
-      baseDate = startOfDay(now);
-      baseDate.setDate(baseDate.getDate() + 1);
-    } else if (normalized.includes("today")) {
-      baseDate = startOfDay(now);
-    } else {
-      baseDate = parseWeekdayBase(normalized, now);
-    }
-  }
-
-  if (!baseDate || Number.isNaN(baseDate.getTime())) {
-    return null;
-  }
-
-  let result = withTime(baseDate, timeParts);
-  if (result <= now) {
-    if (normalized.includes("today")) {
-      result = withTime(new Date(startOfDay(now).getTime() + 24 * 60 * 60 * 1000), timeParts);
-    } else if (!normalized.includes("/") && !normalized.includes("-")) {
-      result = withTime(new Date(startOfDay(baseDate).getTime() + 7 * 24 * 60 * 60 * 1000), timeParts);
-    }
-  }
-
-  if (result <= now) {
-    return null;
-  }
-
-  return result;
+  return true;
 }
 
 export async function ensureIntakeCallbackEvent({
@@ -461,38 +409,19 @@ export async function ensureIntakeCallbackEvent({
   callbackAt: Date;
   assignedToUserId?: string | null;
 }): Promise<boolean> {
-  const existing = await prisma.event.findFirst({
-    where: {
+  return prisma.$transaction(async (tx) => {
+    await lockIntakeCallbackMutation(tx, {
       orgId,
       leadId,
-      type: "FOLLOW_UP",
-      title: CALLBACK_EVENT_TITLE,
-    },
-    select: { id: true },
-  });
+    });
 
-  if (existing) {
-    return false;
-  }
-
-  await prisma.event.create({
-    data: {
+    return ensureIntakeCallbackEventTx(tx, {
       orgId,
       leadId,
-      type: "FOLLOW_UP",
-      title: CALLBACK_EVENT_TITLE,
-      description: CALLBACK_EVENT_DESCRIPTION,
-      startAt: callbackAt,
-      assignedToUserId: assignedToUserId || null,
-      workerAssignments: assignedToUserId
-        ? {
-            create: [{ orgId, workerUserId: assignedToUserId }],
-          }
-        : undefined,
-    },
+      callbackAt,
+      assignedToUserId,
+    });
   });
-
-  return true;
 }
 
 function parseCallbackOptionSelection(text: string): number | null {
@@ -529,35 +458,12 @@ function callbackInvalidChoicePrefix(locale: "EN" | "ES"): string {
 }
 
 async function getIntakeWorkerCandidates(orgId: string) {
-  const workers = await prisma.user.findMany({
-    where: {
-      orgId,
-      calendarAccessRole: { not: "READ_ONLY" },
-    },
-    select: {
-      id: true,
-      calendarAccessRole: true,
-      name: true,
-      email: true,
-    },
-    take: 50,
+  const workers = await listWorkspaceUsers({
+    organizationId: orgId,
+    excludeReadOnly: true,
   });
 
-  const roleRank: Record<string, number> = {
-    OWNER: 0,
-    ADMIN: 1,
-    WORKER: 2,
-    READ_ONLY: 3,
-  };
-
-  return workers.sort((a, b) => {
-    const rankA = roleRank[a.calendarAccessRole] ?? 99;
-    const rankB = roleRank[b.calendarAccessRole] ?? 99;
-    if (rankA !== rankB) return rankA - rankB;
-    const labelA = (a.name || a.email).toLowerCase();
-    const labelB = (b.name || b.email).toLowerCase();
-    return labelA.localeCompare(labelB);
-  });
+  return sortWorkspaceUsersByCalendarRoleThenLabel(workers).slice(0, 50);
 }
 
 async function createIntakeCallbackOptionHolds(input: {
@@ -782,9 +688,10 @@ export async function sendMissedCallIntroAndStartFlow({
     fallbackTemplate: DEFAULT_ASK_LOCATION,
   });
 
-  const openingBody = organization.intakeAutomationEnabled
-    ? `${introBody}\n\n${askLocationBody}`
-    : introBody;
+  const openingBody = ensureSmsA2POpenerDisclosure(
+    organization.intakeAutomationEnabled ? `${introBody}\n\n${askLocationBody}` : introBody,
+    locale === "ES" ? "BILINGUAL" : "EN",
+  );
 
   await sendAutomationMessage({
     organization,
@@ -848,9 +755,10 @@ export async function queueMissedCallIntroForQuietHours({
     fallbackTemplate: DEFAULT_ASK_LOCATION,
   });
 
-  const openingBody = organization.intakeAutomationEnabled
-    ? `${introBody}\n\n${askLocationBody}`
-    : introBody;
+  const openingBody = ensureSmsA2POpenerDisclosure(
+    organization.intakeAutomationEnabled ? `${introBody}\n\n${askLocationBody}` : introBody,
+    locale === "ES" ? "BILINGUAL" : "EN",
+  );
 
   const queued = await queueSmsDispatch({
     orgId: organization.id,
@@ -1041,26 +949,100 @@ export async function advanceLeadIntakeFromInbound({
       return;
     }
 
-    const now = new Date();
-    const activeHolds = await prisma.calendarHold.findMany({
-      where: {
+    const confirmation = await prisma.$transaction(async (tx) => {
+      await lockIntakeCallbackMutation(tx, {
         orgId: lead.orgId,
         leadId: lead.id,
-        source: "SMS_AGENT",
-        status: "ACTIVE",
-        expiresAt: { gt: now },
-      },
-      orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
-      select: {
-        id: true,
-        startAt: true,
-        workerUserId: true,
-      },
-      take: INTAKE_SLOT_OPTION_COUNT,
+      });
+
+      const liveLead = await tx.lead.findUnique({
+        where: { id: lead.id },
+        select: {
+          id: true,
+          orgId: true,
+          intakeStage: true,
+        },
+      });
+
+      if (!liveLead) {
+        return {
+          status: "noop" as const,
+        };
+      }
+
+      const now = new Date();
+      const activeHolds = await tx.calendarHold.findMany({
+        where: {
+          orgId: liveLead.orgId,
+          leadId: liveLead.id,
+          source: "SMS_AGENT",
+          status: "ACTIVE",
+          expiresAt: { gt: now },
+        },
+        orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          startAt: true,
+          workerUserId: true,
+        },
+        take: INTAKE_SLOT_OPTION_COUNT,
+      });
+
+      const resolvedSelection = resolveIntakeCallbackSelection({
+        intakeStage: liveLead.intakeStage,
+        selection,
+        holds: activeHolds,
+      });
+
+      if (resolvedSelection.status !== "confirmed") {
+        return resolvedSelection;
+      }
+
+      const callbackAt = resolvedSelection.hold.startAt;
+
+      await tx.lead.update({
+        where: { id: liveLead.id },
+        data: {
+          nextFollowUpAt: callbackAt,
+          intakePreferredCallbackAt: callbackAt,
+          intakeStage: "COMPLETED",
+        },
+      });
+
+      await ensureIntakeCallbackEventTx(tx, {
+        orgId: liveLead.orgId,
+        leadId: liveLead.id,
+        callbackAt,
+        assignedToUserId: resolvedSelection.hold.workerUserId,
+      });
+
+      await tx.calendarHold.updateMany({
+        where: {
+          orgId: liveLead.orgId,
+          leadId: liveLead.id,
+          source: "SMS_AGENT",
+          status: "ACTIVE",
+        },
+        data: {
+          status: "CANCELLED",
+        },
+      });
+      await tx.calendarHold.update({
+        where: { id: resolvedSelection.hold.id },
+        data: { status: "CONFIRMED" },
+      });
+
+      return {
+        status: "confirmed" as const,
+        callbackAt,
+      };
     });
 
-    const selectedHold = activeHolds[selection - 1] || null;
-    if (!selectedHold) {
+    if (confirmation.status === "noop") {
+      return;
+    }
+
+    if (confirmation.status !== "confirmed") {
       await sendCallbackOptionsMessage({
         organization,
         leadId: lead.id,
@@ -1073,40 +1055,6 @@ export async function advanceLeadIntakeFromInbound({
       return;
     }
 
-    const callbackAt = selectedHold.startAt;
-
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: {
-        nextFollowUpAt: callbackAt,
-        intakePreferredCallbackAt: callbackAt,
-        intakeStage: "COMPLETED",
-      },
-    });
-
-    await ensureIntakeCallbackEvent({
-      orgId: lead.orgId,
-      leadId: lead.id,
-      callbackAt,
-      assignedToUserId: selectedHold.workerUserId,
-    });
-
-    await prisma.calendarHold.updateMany({
-      where: {
-        orgId: lead.orgId,
-        leadId: lead.id,
-        source: "SMS_AGENT",
-        status: "ACTIVE",
-      },
-      data: {
-        status: "CANCELLED",
-      },
-    });
-    await prisma.calendarHold.update({
-      where: { id: selectedHold.id },
-      data: { status: "CONFIRMED" },
-    });
-
     const completionTemplate = pickLocalizedTemplate({
       locale,
       englishTemplate: organization.intakeCompletionBodyEn,
@@ -1117,7 +1065,7 @@ export async function advanceLeadIntakeFromInbound({
     const settings = await getOrgCalendarSettings(lead.orgId);
     const completionBody = renderCompletionTemplate(
       completionTemplate,
-      callbackAt,
+      confirmation.callbackAt,
       locale,
       settings.calendarTimezone,
     );

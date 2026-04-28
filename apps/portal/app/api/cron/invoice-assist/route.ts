@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 
@@ -31,26 +32,6 @@ function clampInt(
   return Math.min(max, Math.max(min, parsed));
 }
 
-function getBearerToken(headerValue: string | null): string | null {
-  if (!headerValue) {
-    return null;
-  }
-  const trimmed = headerValue.trim();
-  if (!trimmed.toLowerCase().startsWith("bearer ")) {
-    return null;
-  }
-  const token = trimmed.slice(7).trim();
-  return token || null;
-}
-
-function getCronSecret(req: Request): string | null {
-  const headerSecret = req.headers.get("x-cron-secret")?.trim();
-  if (headerSecret) {
-    return headerSecret;
-  }
-  return getBearerToken(req.headers.get("authorization"));
-}
-
 function validateCronAuth(req: Request): NextResponse | null {
   const expected = normalizeEnvValue(process.env.CRON_SECRET);
   if (!expected) {
@@ -63,8 +44,7 @@ function validateCronAuth(req: Request): NextResponse | null {
     );
   }
 
-  const provided = getCronSecret(req);
-  if (!provided || provided !== expected) {
+  if (!isValidCronSecret(req, expected)) {
     return NextResponse.json(
       {
         ok: false,
@@ -139,7 +119,7 @@ function buildInvoiceDraft({
   return lines.join("\n");
 }
 
-export async function POST(req: Request) {
+async function handleInvoiceAssistCron(req: Request) {
   const authError = validateCronAuth(req);
   if (authError) {
     return authError;
@@ -163,7 +143,12 @@ export async function POST(req: Request) {
 
   const leads = await prisma.lead.findMany({
     where: {
-      status: "BOOKED",
+      events: {
+        some: {
+          type: { in: ["JOB", "ESTIMATE"] },
+          status: { in: ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] },
+        },
+      },
       invoiceStatus: { not: "SENT" },
       updatedAt: { gte: since },
     },
@@ -272,4 +257,12 @@ export async function POST(req: Request) {
     draftsGenerated,
     remindersCreated,
   });
+}
+
+export async function GET(req: Request) {
+  return handleInvoiceAssistCron(req);
+}
+
+export async function POST(req: Request) {
+  return handleInvoiceAssistCron(req);
 }

@@ -1,0 +1,25 @@
+<svg width="1440" height="960" viewBox="0 0 1440 960" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1440" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#0B1220"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="220" y1="160" x2="1220" y2="840" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E293B"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
+  </defs>
+  <rect width="1440" height="960" fill="url(#bg)"/>
+  <rect x="184" y="120" width="1072" height="720" rx="24" fill="url(#panel)" stroke="#334155"/>
+  <rect x="236" y="190" width="468" height="52" rx="10" fill="#374151"/>
+  <rect x="236" y="276" width="320" height="22" rx="8" fill="#4B5563"/>
+  <rect x="236" y="320" width="388" height="22" rx="8" fill="#4B5563"/>
+  <rect x="236" y="364" width="344" height="22" rx="8" fill="#4B5563"/>
+  <rect x="236" y="442" width="320" height="56" rx="10" fill="#1F2937" stroke="#4B5563"/>
+  <rect x="760" y="190" width="444" height="286" rx="16" fill="#111827" stroke="#334155"/>
+  <rect x="760" y="518" width="212" height="254" rx="16" fill="#111827" stroke="#334155"/>
+  <rect x="992" y="518" width="212" height="254" rx="16" fill="#111827" stroke="#334155"/>
+  <rect x="206" y="62" width="188" height="40" rx="20" fill="#7C2D12"/>
+  <text x="300" y="88" text-anchor="middle" fill="#FDBA74" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">BEFORE</text>
+  <text x="720" y="900" text-anchor="middle" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="600">Disconnected Website + Follow-Up Workflow</text>
+</svg>

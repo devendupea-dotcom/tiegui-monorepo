@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
+import { isValidCronSecret } from "@/lib/cron-auth";
 import {
   ensureIntakeCallbackEvent,
-  sendMissedCallIntroAndStartFlow,
-  type IntakeOrganizationSettings,
 } from "@/lib/intake-automation";
+import { processMissedCallRecovery } from "@/lib/missed-call-recovery";
+import {
+  processDueConversationalFollowUps,
+} from "@/lib/conversational-sms";
 import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { processDueSmsDispatchQueue } from "@/lib/sms-dispatch-queue";
@@ -12,6 +15,7 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_WINDOW_HOURS = 48;
 const DEFAULT_LIMIT = 200;
+const ROUTE = "/api/cron/intake";
 
 function clampInt(
   value: string | null,
@@ -37,39 +41,6 @@ function clampInt(
   return Math.min(max, Math.max(min, parsed));
 }
 
-function getBearerToken(headerValue: string | null): string | null {
-  if (!headerValue) {
-    return null;
-  }
-  const trimmed = headerValue.trim();
-  if (!trimmed.toLowerCase().startsWith("bearer ")) {
-    return null;
-  }
-  const token = trimmed.slice(7).trim();
-  return token || null;
-}
-
-function getOrganizationSettings(call: {
-  org: Omit<IntakeOrganizationSettings, "calendarTimezone"> & {
-    twilioConfig?: { phoneNumber: string } | null;
-    dashboardConfig?: { calendarTimezone: string } | null;
-  };
-}): IntakeOrganizationSettings {
-  return {
-    ...call.org,
-    smsFromNumberE164: call.org.smsFromNumberE164 || call.org.twilioConfig?.phoneNumber || null,
-    calendarTimezone: call.org.dashboardConfig?.calendarTimezone || "America/Los_Angeles",
-  };
-}
-
-function getCronSecret(req: Request): string | null {
-  const headerSecret = req.headers.get("x-cron-secret")?.trim();
-  if (headerSecret) {
-    return headerSecret;
-  }
-  return getBearerToken(req.headers.get("authorization"));
-}
-
 function validateCronAuth(req: Request): NextResponse | null {
   const expected = normalizeEnvValue(process.env.CRON_SECRET);
   if (!expected) {
@@ -82,8 +53,7 @@ function validateCronAuth(req: Request): NextResponse | null {
     );
   }
 
-  const provided = getCronSecret(req);
-  if (!provided || provided !== expected) {
+  if (!isValidCronSecret(req, expected)) {
     return NextResponse.json(
       {
         ok: false,
@@ -96,7 +66,7 @@ function validateCronAuth(req: Request): NextResponse | null {
   return null;
 }
 
-export async function POST(req: Request) {
+async function handleCronIntake(req: Request) {
   const authError = validateCronAuth(req);
   if (authError) {
     return authError;
@@ -115,152 +85,196 @@ export async function POST(req: Request) {
   });
 
   const now = new Date();
+  const cronLog = await prisma.internalCronRunLog.create({
+    data: {
+      route: ROUTE,
+      status: "OK",
+      startedAt: now,
+      metricsJson: {
+        windowHours,
+        limit,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
   const since = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
-  const queueDispatchResult = await processDueSmsDispatchQueue({ maxJobs: limit });
+  try {
+    const queueDispatchResult = await processDueSmsDispatchQueue({ maxJobs: limit });
+    const conversationalFollowUps = await processDueConversationalFollowUps({ maxLeads: limit });
 
-  const missedCalls = await prisma.call.findMany({
-    where: {
-      direction: "INBOUND",
-      status: "MISSED",
-      startedAt: { gte: since },
-      leadId: { not: null },
-      org: {
-        missedCallAutoReplyOn: true,
-        OR: [{ smsFromNumberE164: { not: null } }, { twilioConfig: { isNot: null } }],
-      },
-    },
-    select: {
-      id: true,
-      orgId: true,
-      leadId: true,
-      startedAt: true,
-      org: {
-        select: {
-          id: true,
-          smsFromNumberE164: true,
-          twilioConfig: {
-            select: {
-              phoneNumber: true,
-            },
-          },
-          smsQuietHoursStartMinute: true,
-          smsQuietHoursEndMinute: true,
-          messageLanguage: true,
-          missedCallAutoReplyBody: true,
-          missedCallAutoReplyBodyEn: true,
-          missedCallAutoReplyBodyEs: true,
-          intakeAutomationEnabled: true,
-          intakeAskLocationBody: true,
-          intakeAskLocationBodyEn: true,
-          intakeAskLocationBodyEs: true,
-          intakeAskWorkTypeBody: true,
-          intakeAskWorkTypeBodyEn: true,
-          intakeAskWorkTypeBodyEs: true,
-          intakeAskCallbackBody: true,
-          intakeAskCallbackBodyEn: true,
-          intakeAskCallbackBodyEs: true,
-          intakeCompletionBody: true,
-          intakeCompletionBodyEn: true,
-          intakeCompletionBodyEs: true,
-          dashboardConfig: {
-            select: {
-              calendarTimezone: true,
-            },
-          },
-        },
-      },
-      lead: {
-        select: {
-          id: true,
-          phoneE164: true,
-        },
-      },
-    },
-    orderBy: { startedAt: "desc" },
-    take: limit,
-  });
-
-  let introsSent = 0;
-  let introsSkipped = 0;
-
-  for (const call of missedCalls) {
-    if (!call.leadId || !call.lead?.phoneE164) {
-      introsSkipped += 1;
-      continue;
-    }
-
-    const duplicateWindowStart = new Date(call.startedAt.getTime() - 2 * 60 * 1000);
-    const existingOutbound = await prisma.message.findFirst({
+    const missedCalls = await prisma.call.findMany({
       where: {
-        orgId: call.orgId,
-        leadId: call.leadId,
-        direction: "OUTBOUND",
-        createdAt: { gte: duplicateWindowStart },
+        direction: "INBOUND",
+        status: "MISSED",
+        startedAt: { gte: since },
+        leadId: { not: null },
+        org: {
+          missedCallAutoReplyOn: true,
+          OR: [{ smsFromNumberE164: { not: null } }, { twilioConfig: { isNot: null } }],
+        },
       },
-      select: { id: true },
+      select: {
+        id: true,
+        orgId: true,
+        leadId: true,
+        twilioCallSid: true,
+        startedAt: true,
+        lead: {
+          select: {
+            id: true,
+            phoneE164: true,
+          },
+        },
+      },
+      orderBy: { startedAt: "desc" },
+      take: limit,
     });
 
-    if (existingOutbound) {
-      introsSkipped += 1;
-      continue;
+    let introsSent = 0;
+    let introsSkipped = 0;
+
+    for (const call of missedCalls) {
+      if (!call.leadId || !call.lead?.phoneE164) {
+        introsSkipped += 1;
+        continue;
+      }
+
+      const decision = await processMissedCallRecovery({
+        orgId: call.orgId,
+        leadId: call.lead.id,
+        callId: call.id,
+        callSid: call.twilioCallSid,
+        fromNumberE164: call.lead.phoneE164,
+        occurredAt: call.startedAt,
+        source: "cron",
+      });
+
+      if (decision.action === "send" || decision.action === "queue") {
+        introsSent += 1;
+      } else {
+        introsSkipped += 1;
+      }
     }
 
-    await sendMissedCallIntroAndStartFlow({
-      organization: getOrganizationSettings(call),
-      leadId: call.lead.id,
-      toNumberE164: call.lead.phoneE164,
+    const completedLeads = await prisma.lead.findMany({
+      where: {
+        intakeStage: "COMPLETED",
+        intakePreferredCallbackAt: { not: null },
+        updatedAt: { gte: since },
+        org: { intakeAutomationEnabled: true },
+      },
+      select: {
+        id: true,
+        orgId: true,
+        intakePreferredCallbackAt: true,
+      },
+      orderBy: { updatedAt: "desc" },
+      take: limit,
     });
-    introsSent += 1;
+
+    let callbackEventsCreated = 0;
+    let callbackEventsSkipped = 0;
+    for (const lead of completedLeads) {
+      const callbackAt = lead.intakePreferredCallbackAt;
+      if (!callbackAt) {
+        callbackEventsSkipped += 1;
+        continue;
+      }
+
+      const created = await ensureIntakeCallbackEvent({
+        orgId: lead.orgId,
+        leadId: lead.id,
+        callbackAt,
+      });
+      if (created) {
+        callbackEventsCreated += 1;
+      } else {
+        callbackEventsSkipped += 1;
+      }
+    }
+
+    await prisma.internalCronRunLog.update({
+      where: {
+        id: cronLog.id,
+      },
+      data: {
+        status:
+          queueDispatchResult.failed > 0 || conversationalFollowUps.failed > 0
+            ? "ERROR"
+            : "OK",
+        finishedAt: new Date(),
+        processedCount:
+          missedCalls.length +
+          completedLeads.length +
+          queueDispatchResult.scanned +
+          conversationalFollowUps.scanned,
+        successCount:
+          introsSent +
+          callbackEventsCreated +
+          queueDispatchResult.sent +
+          conversationalFollowUps.sent,
+        failureCount:
+          queueDispatchResult.failed + conversationalFollowUps.failed,
+        metricsJson: {
+          windowHours,
+          limit,
+          missedCallsScanned: missedCalls.length,
+          introsSent,
+          introsSkipped,
+          completedLeadsScanned: completedLeads.length,
+          callbackEventsCreated,
+          callbackEventsSkipped,
+          queuedSmsDispatch: queueDispatchResult,
+          conversationalFollowUps,
+        },
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      processedAt: now.toISOString(),
+      windowHours,
+      limit,
+      missedCallsScanned: missedCalls.length,
+      introsSent,
+      introsSkipped,
+      completedLeadsScanned: completedLeads.length,
+      callbackEventsCreated,
+      callbackEventsSkipped,
+      queuedSmsDispatch: queueDispatchResult,
+      conversationalFollowUps,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Intake cron failed.";
+
+    await prisma.internalCronRunLog.update({
+      where: {
+        id: cronLog.id,
+      },
+      data: {
+        status: "ERROR",
+        finishedAt: new Date(),
+        errorMessage: message,
+      },
+    });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message,
+      },
+      { status: 500 },
+    );
   }
+}
 
-  const completedLeads = await prisma.lead.findMany({
-    where: {
-      intakeStage: "COMPLETED",
-      intakePreferredCallbackAt: { not: null },
-      updatedAt: { gte: since },
-      org: { intakeAutomationEnabled: true },
-    },
-    select: {
-      id: true,
-      orgId: true,
-      intakePreferredCallbackAt: true,
-    },
-    orderBy: { updatedAt: "desc" },
-    take: limit,
-  });
+export async function GET(req: Request) {
+  return handleCronIntake(req);
+}
 
-  let callbackEventsCreated = 0;
-  let callbackEventsSkipped = 0;
-  for (const lead of completedLeads) {
-    const callbackAt = lead.intakePreferredCallbackAt;
-    if (!callbackAt) {
-      callbackEventsSkipped += 1;
-      continue;
-    }
-
-    const created = await ensureIntakeCallbackEvent({
-      orgId: lead.orgId,
-      leadId: lead.id,
-      callbackAt,
-    });
-    if (created) {
-      callbackEventsCreated += 1;
-    } else {
-      callbackEventsSkipped += 1;
-    }
-  }
-
-  return NextResponse.json({
-    ok: true,
-    processedAt: now.toISOString(),
-    windowHours,
-    limit,
-    missedCallsScanned: missedCalls.length,
-    introsSent,
-    introsSkipped,
-    completedLeadsScanned: completedLeads.length,
-    callbackEventsCreated,
-    callbackEventsSkipped,
-    queuedSmsDispatch: queueDispatchResult,
-  });
+export async function POST(req: Request) {
+  return handleCronIntake(req);
 }

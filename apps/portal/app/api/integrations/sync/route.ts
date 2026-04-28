@@ -1,7 +1,7 @@
 import type { IntegrationProvider } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { setIntegrationSyncEnabled } from "@/lib/integrations/account-store";
-import { IntegrationScopeError, resolveIntegrationOrgScope } from "@/lib/integrations/scope";
+import { IntegrationScopeError, resolveIntegrationAdminScope } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ function parseProvider(value: unknown): IntegrationProvider {
 
 export async function POST(req: Request) {
   try {
-    const scope = await resolveIntegrationOrgScope(req);
+    const scope = await resolveIntegrationAdminScope(req);
     const payload = (await req.json().catch(() => ({}))) as { provider?: string; syncEnabled?: boolean };
     const provider = parseProvider(payload.provider);
     const syncEnabled = payload.syncEnabled === true;

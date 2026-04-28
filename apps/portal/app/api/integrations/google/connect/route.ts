@@ -5,18 +5,34 @@ import {
   getGoogleScopes,
   resolveGoogleRedirectUri,
 } from "@/lib/integrations/googleClient";
+import { isGoogleConfigured } from "@/lib/integrations/provider-config";
 import {
   IntegrationScopeError,
-  resolveIntegrationOrgScope,
+  resolveIntegrationAdminScope,
 } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
 
+function buildSettingsUrl(req: Request, input: { orgId: string; internalUser: boolean; error?: string }) {
+  const requestUrl = new URL(req.url);
+  const target = new URL("/app/settings/integrations", requestUrl.origin);
+  if (input.internalUser) {
+    target.searchParams.set("orgId", input.orgId);
+  }
+  if (input.error) {
+    target.searchParams.set("error", input.error);
+  }
+  return target;
+}
+
 export async function GET(req: Request) {
   try {
-    const scope = await resolveIntegrationOrgScope(req);
+    const scope = await resolveIntegrationAdminScope(req);
     if (!scope.user.id) {
       throw new IntegrationScopeError("Unauthorized", 401);
+    }
+    if (!isGoogleConfigured()) {
+      return NextResponse.redirect(buildSettingsUrl(req, { ...scope, error: "google_not_configured" }));
     }
 
     const url = new URL(req.url);

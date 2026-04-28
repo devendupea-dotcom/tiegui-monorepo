@@ -1,25 +1,67 @@
 import type { CalendarAccessRole, Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { AppApiError } from "@/lib/app-api-error";
 import { prisma } from "@/lib/prisma";
 import { isInternalRole } from "@/lib/session";
+import {
+  type AgencyOrgAccessInput,
+  buildAccessibleOrgContexts,
+  selectInternalOrgContext,
+  selectNonInternalOrgContext,
+  type AppApiOrgAccessSource,
+  type AppApiResolvedOrgAccess,
+} from "@/lib/app-api-org-access";
 
-export class AppApiError extends Error {
-  status: number;
-
-  constructor(message: string, status = 400) {
-    super(message);
-    this.status = status;
-  }
-}
+export { AppApiError } from "@/lib/app-api-error";
 
 export type AppApiActor = {
   id: string;
   role: Role;
+  defaultOrgId: string | null;
   orgId: string | null;
   calendarAccessRole: CalendarAccessRole;
   internalUser: boolean;
+  agencyId: string | null;
+  accessSource: AppApiOrgAccessSource | null;
+  accessibleOrgs: AppApiResolvedOrgAccess[];
 };
+
+function trimOrgId(value: string | null | undefined): string | null {
+  const trimmed = (value || "").trim();
+  return trimmed || null;
+}
+
+function applyResolvedOrgAccess(actor: AppApiActor, context: AppApiResolvedOrgAccess) {
+  actor.orgId = context.orgId;
+  actor.calendarAccessRole = context.effectiveOrgRole;
+  actor.agencyId = context.agencyId;
+  actor.accessSource = context.accessSource;
+}
+
+function applyInternalOrgAccess(actor: AppApiActor, orgId: string) {
+  actor.orgId = orgId;
+  actor.calendarAccessRole = "OWNER";
+  actor.agencyId = null;
+  actor.accessSource = "internal";
+}
+
+async function findExistingOrgId(orgId: string): Promise<string | null> {
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: { id: true },
+  });
+  return org?.id || null;
+}
+
+async function findDiscoverableInternalOrgIds(): Promise<string[]> {
+  const rows = await prisma.organization.findMany({
+    select: { id: true },
+    orderBy: { name: "asc" },
+    take: 2,
+  });
+  return rows.map((row) => row.id);
+}
 
 export async function requireAppApiActor(): Promise<AppApiActor> {
   const session = await getServerSession(authOptions);
@@ -35,7 +77,30 @@ export async function requireAppApiActor(): Promise<AppApiActor> {
       id: true,
       role: true,
       orgId: true,
-      calendarAccessRole: true,
+      organizationMemberships: {
+        where: { status: "ACTIVE" },
+        select: {
+          organizationId: true,
+          role: true,
+          organization: {
+            select: {
+              agencyId: true,
+            },
+          },
+        },
+      },
+      agencyMemberships: {
+        where: {
+          status: "ACTIVE",
+          agency: {
+            status: "ACTIVE",
+          },
+        },
+        select: {
+          agencyId: true,
+          role: true,
+        },
+      },
     },
   });
 
@@ -43,12 +108,59 @@ export async function requireAppApiActor(): Promise<AppApiActor> {
     throw new AppApiError("Unauthorized", 401);
   }
 
+  const agencyMemberships = user.agencyMemberships;
+  const agencyAccesses =
+    agencyMemberships.length > 0
+      ? await prisma.organization.findMany({
+          where: {
+            agencyId: {
+              in: agencyMemberships.map((membership) => membership.agencyId),
+            },
+          },
+          select: {
+            id: true,
+            agencyId: true,
+          },
+        })
+      : [];
+
+  const agencyRoleByAgencyId = new Map(
+    agencyMemberships.map((membership) => [membership.agencyId, membership.role] as const),
+  );
+
+  const accessibleOrgs = buildAccessibleOrgContexts({
+    directMemberships: user.organizationMemberships.map((membership) => ({
+      organizationId: membership.organizationId,
+      role: membership.role,
+      agencyId: membership.organization.agencyId,
+    })),
+    agencyAccesses: agencyAccesses
+      .map((organization) => {
+        const agencyRole = organization.agencyId ? agencyRoleByAgencyId.get(organization.agencyId) : null;
+        if (!agencyRole) return null;
+        return {
+          organizationId: organization.id,
+          agencyId: organization.agencyId,
+          agencyRole,
+        };
+      })
+      .filter((value): value is AgencyOrgAccessInput => Boolean(value)),
+  });
+
+  const defaultContext = trimOrgId(user.orgId)
+    ? accessibleOrgs.find((context) => context.orgId === user.orgId) || null
+    : null;
+
   return {
     id: user.id,
     role: user.role,
-    orgId: user.orgId,
-    calendarAccessRole: user.calendarAccessRole,
+    defaultOrgId: user.orgId,
+    orgId: defaultContext?.orgId || null,
+    calendarAccessRole: defaultContext?.effectiveOrgRole || "READ_ONLY",
     internalUser: isInternalRole(user.role),
+    agencyId: defaultContext?.agencyId || null,
+    accessSource: defaultContext?.accessSource || null,
+    accessibleOrgs,
   };
 }
 
@@ -56,57 +168,88 @@ export async function resolveActorOrgId(input: {
   actor: AppApiActor;
   requestedOrgId?: string | null;
 }): Promise<string> {
-  const requestedOrgId = (input.requestedOrgId || "").trim() || null;
-  if (input.actor.internalUser) {
-    if (requestedOrgId) {
-      const org = await prisma.organization.findUnique({
-        where: { id: requestedOrgId },
-        select: { id: true },
-      });
-      if (!org) {
-        throw new AppApiError("Organization not found.", 404);
-      }
-      return requestedOrgId;
-    }
+  const requestedOrgId = trimOrgId(input.requestedOrgId);
 
-    const firstOrg = await prisma.organization.findFirst({
-      select: { id: true },
-      orderBy: { name: "asc" },
+  if (input.actor.internalUser) {
+    const requestedOrgExists = requestedOrgId ? Boolean(await findExistingOrgId(requestedOrgId)) : false;
+    const defaultOrgExists = input.actor.defaultOrgId ? Boolean(await findExistingOrgId(input.actor.defaultOrgId)) : false;
+    const selection = selectInternalOrgContext({
+      requestedOrgId,
+      defaultOrgId: input.actor.defaultOrgId,
+      requestedOrgExists,
+      defaultOrgExists,
+      discoverableOrgIds: await findDiscoverableInternalOrgIds(),
     });
 
-    if (!firstOrg) {
-      throw new AppApiError("No organizations found.", 404);
+    switch (selection.kind) {
+      case "resolved":
+        applyInternalOrgAccess(input.actor, selection.orgId);
+        return selection.orgId;
+      case "not_found":
+        throw new AppApiError("Organization not found.", 404);
+      case "missing_scope":
+        throw new AppApiError("No organizations found.", 404);
+      case "selection_required":
+      default:
+        throw new AppApiError("Organization selection required.", 400);
     }
-
-    return firstOrg.id;
   }
 
-  if (!input.actor.orgId) {
-    throw new AppApiError("Client account is missing org scope.", 400);
+  const selection = selectNonInternalOrgContext({
+    requestedOrgId,
+    defaultOrgId: input.actor.defaultOrgId,
+    accessibleOrgs: input.actor.accessibleOrgs,
+  });
+
+  switch (selection.kind) {
+    case "resolved":
+      applyResolvedOrgAccess(input.actor, selection.context);
+      return selection.context.orgId;
+    case "forbidden":
+      throw new AppApiError("Forbidden", 403);
+    case "selection_required":
+      throw new AppApiError("Organization selection required.", 400);
+    case "missing_scope":
+    default:
+      throw new AppApiError("Client account is missing org scope.", 400);
+  }
+}
+
+function resolveActorOrgAccess(actor: AppApiActor, orgId: string): AppApiResolvedOrgAccess {
+  if (actor.internalUser) {
+    const context: AppApiResolvedOrgAccess = {
+      orgId,
+      effectiveOrgRole: "OWNER",
+      agencyId: null,
+      accessSource: "internal",
+    };
+    applyResolvedOrgAccess(actor, context);
+    return context;
   }
 
-  if (requestedOrgId && requestedOrgId !== input.actor.orgId) {
+  const context = actor.accessibleOrgs.find((item) => item.orgId === orgId);
+  if (!context) {
     throw new AppApiError("Forbidden", 403);
   }
 
-  return input.actor.orgId;
+  applyResolvedOrgAccess(actor, context);
+  return context;
 }
 
-export function canManageAnyOrgJobs(actor: AppApiActor): boolean {
+export function canManageAnyOrgJobs(
+  actor: Pick<AppApiActor, "internalUser" | "calendarAccessRole"> & Record<string, unknown>,
+): boolean {
   if (actor.internalUser) return true;
   return actor.calendarAccessRole === "OWNER" || actor.calendarAccessRole === "ADMIN";
 }
 
 export function assertOrgReadAccess(actor: AppApiActor, orgId: string) {
-  if (actor.internalUser) return;
-  if (!actor.orgId || actor.orgId !== orgId) {
-    throw new AppApiError("Forbidden", 403);
-  }
+  resolveActorOrgAccess(actor, orgId);
 }
 
 export function assertOrgWriteAccess(actor: AppApiActor, orgId: string) {
-  assertOrgReadAccess(actor, orgId);
-  if (!actor.internalUser && actor.calendarAccessRole === "READ_ONLY") {
+  const resolved = resolveActorOrgAccess(actor, orgId);
+  if (!actor.internalUser && resolved.effectiveOrgRole === "READ_ONLY") {
     throw new AppApiError("Read-only users cannot edit this data.", 403);
   }
 }

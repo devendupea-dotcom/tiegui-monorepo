@@ -1,7 +1,13 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { isInternalRole, type AppSessionUser } from "@/lib/session";
+import {
+  AppApiError,
+  type AppApiActor,
+  requireAppApiActor,
+  resolveActorOrgId,
+} from "@/lib/app-api-permissions";
+import { canAdministerIntegrations } from "@/lib/integrations/access";
+import { type AppSessionUser } from "@/lib/session";
 
 export class IntegrationScopeError extends Error {
   status: number;
@@ -19,16 +25,6 @@ function getQueryParam(req: Request, key: string): string | null {
   return trimmed || null;
 }
 
-export function assertOrgAccess(user: Pick<AppSessionUser, "role" | "orgId">, orgId: string) {
-  if (isInternalRole(user.role)) {
-    return;
-  }
-
-  if (!user.orgId || user.orgId !== orgId) {
-    throw new IntegrationScopeError("Forbidden", 403);
-  }
-}
-
 export async function requireIntegrationSessionUser(): Promise<AppSessionUser> {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
@@ -41,49 +37,102 @@ export async function resolveIntegrationOrgScope(req: Request): Promise<{
   orgId: string;
   internalUser: boolean;
   user: AppSessionUser;
+  actor: AppApiActor;
 }> {
   const user = await requireIntegrationSessionUser();
-  const internalUser = isInternalRole(user.role);
-
-  if (!internalUser) {
-    if (!user.orgId) {
-      throw new IntegrationScopeError("Client account is missing org scope.", 400);
-    }
-    return {
-      orgId: user.orgId,
-      internalUser: false,
-      user,
-    };
-  }
-
   const requestedOrgId = getQueryParam(req, "orgId");
-  if (requestedOrgId) {
-    const exists = await prisma.organization.findUnique({
-      where: { id: requestedOrgId },
-      select: { id: true },
+
+  try {
+    const actor = await requireAppApiActor();
+    const orgId = await resolveActorOrgId({
+      actor,
+      requestedOrgId,
     });
-    if (!exists) {
-      throw new IntegrationScopeError("Organization not found.", 404);
-    }
     return {
-      orgId: requestedOrgId,
-      internalUser: true,
+      orgId,
+      internalUser: actor.internalUser,
       user,
+      actor,
     };
+  } catch (error) {
+    if (error instanceof AppApiError) {
+      throw new IntegrationScopeError(error.message, error.status);
+    }
+    throw error;
+  }
+}
+
+export function assertIntegrationAdminActorAccess(
+  actor: Pick<AppApiActor, "internalUser" | "calendarAccessRole">,
+): void {
+  if (canAdministerIntegrations(actor)) return;
+  throw new IntegrationScopeError("Owner or admin access required.", 403);
+}
+
+export async function resolveIntegrationAdminScope(req: Request): Promise<{
+  orgId: string;
+  internalUser: boolean;
+  user: AppSessionUser;
+  actor: AppApiActor;
+}> {
+  const scope = await resolveIntegrationOrgScope(req);
+  assertIntegrationAdminActorAccess(scope.actor);
+  return scope;
+}
+
+export async function assertOrgAccess(
+  user: Pick<AppSessionUser, "id" | "role" | "orgId">,
+  orgId: string,
+): Promise<void> {
+  if (!user.id) {
+    throw new IntegrationScopeError("Unauthorized", 401);
   }
 
-  const firstOrg = await prisma.organization.findFirst({
-    select: { id: true },
-    orderBy: { name: "asc" },
-  });
+  try {
+    const actor = await requireAppApiActor();
+    if (actor.id !== user.id) {
+      throw new IntegrationScopeError("Unauthorized", 401);
+    }
+    await resolveActorOrgId({
+      actor,
+      requestedOrgId: orgId,
+    });
+  } catch (error) {
+    if (error instanceof IntegrationScopeError) {
+      throw error;
+    }
+    if (error instanceof AppApiError) {
+      throw new IntegrationScopeError(error.message, error.status);
+    }
+    throw error;
+  }
+}
 
-  if (!firstOrg) {
-    throw new IntegrationScopeError("No organizations found.", 404);
+export async function assertIntegrationAdminAccess(
+  user: Pick<AppSessionUser, "id" | "role" | "orgId">,
+  orgId: string,
+): Promise<void> {
+  if (!user.id) {
+    throw new IntegrationScopeError("Unauthorized", 401);
   }
 
-  return {
-    orgId: firstOrg.id,
-    internalUser: true,
-    user,
-  };
+  try {
+    const actor = await requireAppApiActor();
+    if (actor.id !== user.id) {
+      throw new IntegrationScopeError("Unauthorized", 401);
+    }
+    await resolveActorOrgId({
+      actor,
+      requestedOrgId: orgId,
+    });
+    assertIntegrationAdminActorAccess(actor);
+  } catch (error) {
+    if (error instanceof IntegrationScopeError) {
+      throw error;
+    }
+    if (error instanceof AppApiError) {
+      throw new IntegrationScopeError(error.message, error.status);
+    }
+    throw error;
+  }
 }

@@ -8,11 +8,7 @@ import { useRouter } from "next/navigation";
 function getFriendlyAuthError(errorCode: string): string {
   switch (errorCode) {
     case "Configuration":
-      return "Sign-in isn’t configured yet. Check SMTP_URL, EMAIL_FROM, NEXTAUTH_SECRET, and DATABASE_URL in Vercel.";
-    case "EmailSignin":
-      return "We couldn’t send the email. Double-check your SMTP credentials and sender settings.";
-    case "Verification":
-      return "That sign-in link is invalid or expired. Request a new one.";
+      return "Sign-in isn’t configured yet. Check NEXTAUTH_SECRET and DATABASE_URL in Vercel.";
     case "AccessDenied":
       return "Access denied.";
     case "CredentialsSignin":
@@ -28,9 +24,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false);
   const [nextPath, setNextPath] = useState("/");
   const [errorCode, setErrorCode] = useState<string | null>(null);
-  const [verify, setVerify] = useState(false);
   const [showRequestAccess, setShowRequestAccess] = useState(false);
   const [requestName, setRequestName] = useState("");
   const [requestCompany, setRequestCompany] = useState("");
@@ -41,16 +39,11 @@ export default function LoginPage() {
     const params = new URLSearchParams(window.location.search);
     setNextPath(params.get("next") || "/");
     setErrorCode(params.get("error"));
-    setVerify(params.has("verify"));
   }, []);
 
   useEffect(() => {
     if (errorCode) setStatus(getFriendlyAuthError(errorCode));
   }, [errorCode]);
-
-  useEffect(() => {
-    if (verify) setStatus("Check your email for a secure sign-in link.");
-  }, [verify]);
 
   const handleRequestAccess = () => {
     const to = "admin@tieguisolutions.com";
@@ -73,36 +66,40 @@ export default function LoginPage() {
 
   const handlePasswordSignIn = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (passwordSubmitting) return;
+
+    const trimmedEmail = email.trim();
+    const nextEmailError = trimmedEmail ? null : "Enter your email.";
+    const nextPasswordError = password ? null : "Enter your password.";
+    setEmailError(nextEmailError);
+    setPasswordError(nextPasswordError);
+    if (nextEmailError || nextPasswordError) {
+      setStatus("Complete the required fields to continue.");
+      return;
+    }
+
+    setPasswordSubmitting(true);
     setStatus("Signing in…");
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-      callbackUrl: nextPath,
-    });
+    try {
+      const result = await signIn("credentials", {
+        email: trimmedEmail,
+        password,
+        redirect: false,
+        callbackUrl: nextPath,
+      });
 
-    if (result?.error) {
-      setStatus(getFriendlyAuthError(result.error));
-      return;
+      if (result?.error) {
+        setStatus(getFriendlyAuthError(result.error));
+        return;
+      }
+
+      router.push(result?.url || nextPath);
+    } catch {
+      setStatus("Sign-in failed. Please try again.");
+    } finally {
+      setPasswordSubmitting(false);
     }
-
-    router.push(result?.url || nextPath);
-  };
-
-  const handleMagicLink = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setStatus("Sending login link...");
-    const result = await signIn("email", {
-      email,
-      redirect: false,
-      callbackUrl: nextPath,
-    });
-    if (result?.error) {
-      setStatus(getFriendlyAuthError(result.error));
-      return;
-    }
-    setStatus("Check your email for a secure sign-in link.");
   };
 
   return (
@@ -116,10 +113,16 @@ export default function LoginPage() {
             <input
               type="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                if (emailError) setEmailError(null);
+              }}
               placeholder="you@business.com"
               required
+              disabled={passwordSubmitting}
+              aria-invalid={Boolean(emailError)}
             />
+            {emailError ? <span className="form-status">{emailError}</span> : null}
           </label>
           <label>
             Password
@@ -127,10 +130,15 @@ export default function LoginPage() {
               <input
                 type={showPassword ? "text" : "password"}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  if (passwordError) setPasswordError(null);
+                }}
                 placeholder="Your password"
                 autoComplete="current-password"
                 required
+                disabled={passwordSubmitting}
+                aria-invalid={Boolean(passwordError)}
               />
               <button
                 type="button"
@@ -138,10 +146,12 @@ export default function LoginPage() {
                 onClick={() => setShowPassword((current) => !current)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
                 aria-pressed={showPassword}
+                disabled={passwordSubmitting}
               >
                 {showPassword ? "Hide" : "Show"}
               </button>
             </div>
+            {passwordError ? <span className="form-status">{passwordError}</span> : null}
           </label>
 
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
@@ -150,25 +160,15 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <button className="btn primary" type="submit">Access Dashboard</button>
+          <button className="btn primary" type="submit" disabled={passwordSubmitting}>
+            {passwordSubmitting ? "Signing in…" : "Access Dashboard"}
+          </button>
           <p className="form-status">
             New here? We’ll send you a temporary password when your account is created — you can change it after your
             first login.
           </p>
           {status && <p className="form-status">{status}</p>}
         </form>
-
-        <div className="auth-divider" />
-
-        <div className="auth-secondary">
-          <p className="auth-secondary-kicker">Prefer passwordless access?</p>
-          <p className="muted">Use a secure sign-in link (magic link).</p>
-          <form onSubmit={handleMagicLink} className="auth-form" style={{ marginTop: 12 }}>
-            <button className="btn secondary" type="submit">Send login link</button>
-          </form>
-        </div>
-
-        <div className="auth-divider" />
 
         <div className="auth-secondary">
           <div className="auth-secondary-head">

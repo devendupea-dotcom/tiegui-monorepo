@@ -1,0 +1,4 @@
+ALTER TABLE "RecurringServicePlan"
+ADD COLUMN IF NOT EXISTS "stripeCustomerId" TEXT,
+ADD COLUMN IF NOT EXISTS "checkoutUrl" TEXT,
+ADD COLUMN IF NOT EXISTS "checkoutExpiresAt" TIMESTAMP(3);

@@ -8,6 +8,7 @@ export type AppSession = Session & {
     | (Session["user"] & {
         id?: string;
         role?: Role;
+        defaultOrgId?: string | null;
         orgId?: string | null;
         mustChangePassword?: boolean;
       })
@@ -36,14 +37,28 @@ export async function requireInternalUser(nextPath: string): Promise<AppSessionU
   return user;
 }
 
-export function requireClientOrgId(user: Pick<AppSessionUser, "role" | "orgId">): string {
-  if (!isInternalRole(user.role) && user.orgId) {
-    return user.orgId;
+export function getDefaultSessionOrgId(user: Pick<AppSessionUser, "defaultOrgId" | "orgId">): string | null {
+  return user.defaultOrgId ?? user.orgId ?? null;
+}
+
+/**
+ * @deprecated Legacy compatibility helper during tenant-access rollout.
+ * Membership-aware org resolution happens server-side in app-api-permissions.ts.
+ */
+export function requireClientOrgId(user: Pick<AppSessionUser, "role" | "defaultOrgId" | "orgId">): string {
+  const defaultOrgId = getDefaultSessionOrgId(user);
+  if (!isInternalRole(user.role) && defaultOrgId) {
+    return defaultOrgId;
   }
 
   throw new Error("Client account is missing org scope.");
 }
 
-export function canAccessOrg(user: Pick<AppSessionUser, "role" | "orgId">, orgId: string): boolean {
-  return isInternalRole(user.role) || user.orgId === orgId;
+/**
+ * @deprecated Legacy compatibility helper during tenant-access rollout.
+ * It only checks the default workspace carried in session and does not replace
+ * server-side membership resolution for multi-org users.
+ */
+export function canAccessOrg(user: Pick<AppSessionUser, "role" | "defaultOrgId" | "orgId">, orgId: string): boolean {
+  return isInternalRole(user.role) || getDefaultSessionOrgId(user) === orgId;
 }

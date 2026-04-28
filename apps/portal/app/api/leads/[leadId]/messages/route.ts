@@ -1,53 +1,91 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isInternalRole } from "@/lib/session";
 import { normalizeE164 } from "@/lib/phone";
-import { sendOutboundSms } from "@/lib/sms";
+import { sendManualLeadSms } from "@/lib/manual-outbound-sms";
+import {
+  normalizeManualSmsIdempotencyKey,
+  runIdempotentManualSmsMutation,
+  type ManualSmsApiResponse,
+} from "@/lib/manual-sms-idempotency";
+import {
+  AppApiError,
+  assertCanMutateLeadJob,
+  assertOrgReadAccess,
+  canManageAnyOrgJobs,
+  requireAppApiActor,
+} from "@/lib/app-api-permissions";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ROUTE = "/api/leads/[leadId]/messages";
 
 type RouteContext = {
-  params: { leadId: string };
+  params: Promise<{ leadId: string }>;
 };
 
-// Twilio inbound webhook plan:
-// 1) Normalize inbound From number to E.164.
-// 2) Resolve orgId from the destination Twilio number.
-// 3) Find lead by { orgId, phoneE164: fromNumber }.
-// 4) If found, create INBOUND Message linked to that lead.
-// 5) If not found, create Lead first, then create linked Message.
-
-async function getScopedLeadOrResponse(leadId: string) {
-  const session = await getServerSession(authOptions);
-  const user = session?.user;
-  if (!user) {
-    return { response: NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 }) };
-  }
-
-  const lead = await prisma.lead.findUnique({
-    where: { id: leadId },
-    select: {
-      id: true,
-      orgId: true,
-      phoneE164: true,
-      status: true,
+async function assertWorkerCanViewLead(input: { actorId: string; orgId: string; leadId: string }) {
+  const allowed = await prisma.lead.findFirst({
+    where: {
+      id: input.leadId,
+      orgId: input.orgId,
+      OR: [
+        { assignedToUserId: input.actorId },
+        { createdByUserId: input.actorId },
+        { events: { some: { assignedToUserId: input.actorId } } },
+        { events: { some: { workerAssignments: { some: { workerUserId: input.actorId } } } } },
+      ],
     },
+    select: { id: true },
   });
 
-  if (!lead) {
-    return { response: NextResponse.json({ ok: false, error: "Lead not found" }, { status: 404 }) };
+  if (!allowed) {
+    throw new AppApiError("Workers can only access assigned jobs.", 403);
   }
-
-  if (!isInternalRole(user.role)) {
-    if (!user.orgId || user.orgId !== lead.orgId) {
-      return { response: NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 }) };
-    }
-  }
-
-  return { lead, user };
 }
 
-export async function GET(_req: Request, { params }: RouteContext) {
+async function getScopedLeadOrResponse(leadId: string) {
+  try {
+    const actor = await requireAppApiActor();
+    const lead = await prisma.lead.findUnique({
+      where: { id: leadId },
+      select: {
+        id: true,
+        orgId: true,
+        phoneE164: true,
+        status: true,
+        customerId: true,
+        conversationState: {
+          select: {
+            id: true,
+          },
+        },
+      },
+    });
+
+    if (!lead) {
+      return { response: NextResponse.json({ ok: false, error: "Lead not found" }, { status: 404 }) };
+    }
+
+    assertOrgReadAccess(actor, lead.orgId);
+
+    if (!actor.internalUser && !canManageAnyOrgJobs(actor) && actor.calendarAccessRole === "WORKER") {
+      await assertWorkerCanViewLead({ actorId: actor.id, orgId: lead.orgId, leadId: lead.id });
+    }
+
+    return { lead, actor };
+  } catch (error) {
+    if (error instanceof AppApiError) {
+      return { response: NextResponse.json({ ok: false, error: error.message }, { status: error.status }) };
+    }
+
+    const message = error instanceof Error ? error.message : "Unauthorized";
+    return { response: NextResponse.json({ ok: false, error: message }, { status: 401 }) };
+  }
+}
+
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   const leadId = params.leadId;
   const scoped = await getScopedLeadOrResponse(leadId);
   if ("response" in scoped) {
@@ -74,23 +112,28 @@ export async function GET(_req: Request, { params }: RouteContext) {
   return NextResponse.json({ ok: true, messages });
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   const leadId = params.leadId;
   const scoped = await getScopedLeadOrResponse(leadId);
   if ("response" in scoped) {
     return scoped.response;
   }
 
+  await assertCanMutateLeadJob({ actor: scoped.actor, orgId: scoped.lead.orgId, leadId: scoped.lead.id });
+
   let body = "";
   let fromNumberE164: string | null = null;
+  let idempotencyKey: string | null = null;
   try {
     const payload = (await req.json()) as {
       body?: unknown;
       fromNumberE164?: unknown;
+      idempotencyKey?: unknown;
     };
     body = typeof payload.body === "string" ? payload.body : "";
-    fromNumberE164 =
-      typeof payload.fromNumberE164 === "string" ? normalizeE164(payload.fromNumberE164) : null;
+    fromNumberE164 = typeof payload.fromNumberE164 === "string" ? normalizeE164(payload.fromNumberE164) : null;
+    idempotencyKey = normalizeManualSmsIdempotencyKey(req, payload.idempotencyKey);
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
   }
@@ -114,91 +157,49 @@ export async function POST(req: Request, { params }: RouteContext) {
     return NextResponse.json({ ok: false, error: "Message must be 1600 characters or less." }, { status: 400 });
   }
 
-  const organization = await prisma.organization.findUnique({
-    where: { id: scoped.lead.orgId },
-    select: {
-      smsFromNumberE164: true,
-      twilioConfig: {
-        select: {
-          phoneNumber: true,
+  const response = await runIdempotentManualSmsMutation({
+    orgId: scoped.lead.orgId,
+    route: ROUTE,
+    scope: "manual-sms:lead-thread",
+    idempotencyKey,
+    run: async (): Promise<ManualSmsApiResponse> => {
+      const result = await sendManualLeadSms({
+        actor: scoped.actor,
+        lead: scoped.lead,
+        body: cleanedBody,
+        fromNumberE164,
+        clientIdempotencyKey: idempotencyKey,
+      });
+
+      if (!result.ok) {
+        return {
+          httpStatus: result.httpStatus,
+          body: {
+            ok: false,
+            error: result.error,
+            notice: result.notice,
+            deliveryState: result.deliveryState,
+            liveSend: result.liveSend,
+            readinessCode: result.readinessCode,
+            failure: result.failure,
+          },
+        };
+      }
+
+      return {
+        httpStatus: 200,
+        body: {
+          ok: true,
+          message: result.message,
+          notice: result.notice,
+          deliveryState: result.deliveryState,
+          liveSend: result.liveSend,
+          readinessCode: result.readinessCode,
+          failure: result.failure,
         },
-      },
+      };
     },
   });
 
-  const resolvedFromNumber =
-    fromNumberE164 ||
-    normalizeE164(organization?.twilioConfig?.phoneNumber || null) ||
-    normalizeE164(organization?.smsFromNumberE164 || null);
-
-  if (!resolvedFromNumber) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "No outbound SMS number is configured for this business yet.",
-      },
-      { status: 400 },
-    );
-  }
-
-  const now = new Date();
-
-  const providerResult = await sendOutboundSms({
-    orgId: scoped.lead.orgId,
-    fromNumberE164: resolvedFromNumber,
-    toNumberE164: scoped.lead.phoneE164,
-    body: cleanedBody,
-  });
-  const finalFromNumber = providerResult.resolvedFromNumberE164 || resolvedFromNumber;
-
-  if (!finalFromNumber) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: providerResult.notice || "No outbound SMS number is configured for this business yet.",
-      },
-      { status: 400 },
-    );
-  }
-
-  const created = await prisma.$transaction(async (tx) => {
-    const message = await tx.message.create({
-      data: {
-        orgId: scoped.lead.orgId,
-        leadId: scoped.lead.id,
-        direction: "OUTBOUND",
-        type: "MANUAL",
-        fromNumberE164: finalFromNumber,
-        toNumberE164: scoped.lead.phoneE164,
-        body: cleanedBody,
-        provider: "TWILIO",
-        providerMessageSid: providerResult.providerMessageSid,
-        status: providerResult.status,
-      },
-      select: {
-        id: true,
-        direction: true,
-        type: true,
-        fromNumberE164: true,
-        toNumberE164: true,
-        body: true,
-        provider: true,
-        providerMessageSid: true,
-        status: true,
-        createdAt: true,
-      },
-    });
-
-    await tx.lead.update({
-      where: { id: scoped.lead.id },
-      data: {
-        lastContactedAt: now,
-        lastOutboundAt: now,
-      },
-    });
-
-    return message;
-  });
-
-  return NextResponse.json({ ok: true, message: created, notice: providerResult.notice });
+  return NextResponse.json(response.body, { status: response.httpStatus });
 }

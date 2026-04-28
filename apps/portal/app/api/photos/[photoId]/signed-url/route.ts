@@ -1,23 +1,24 @@
 import { NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { prisma } from "@/lib/prisma";
 import {
   AppApiError,
   assertOrgReadAccess,
   requireAppApiActor,
 } from "@/lib/app-api-permissions";
-import { requireR2 } from "@/lib/r2";
+import { getPhotoStorageRecord } from "@/lib/photo-storage";
+import { isR2Configured, requireR2 } from "@/lib/r2";
 import { checkSlidingWindowLimit } from "@/lib/rate-limit";
 import { upstashRedis } from "@/lib/upstash";
 
 export const runtime = "nodejs";
 
 type RouteContext = {
-  params: { photoId: string };
+  params: Promise<{ photoId: string }>;
 };
 
-export async function GET(_req: Request, { params }: RouteContext) {
+export async function GET(_req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
 
@@ -43,20 +44,21 @@ export async function GET(_req: Request, { params }: RouteContext) {
       }
     }
 
-    const photo = await prisma.photo.findUnique({
-      where: { id: params.photoId },
-      select: {
-        id: true,
-        orgId: true,
-        key: true,
-      },
-    });
+    const photo = await getPhotoStorageRecord({ photoId: params.photoId });
 
     if (!photo) {
       throw new AppApiError("Photo not found.", 404);
     }
 
     assertOrgReadAccess(actor, photo.orgId);
+
+    if (photo.imageDataUrl) {
+      return NextResponse.json({ ok: true, url: photo.imageDataUrl });
+    }
+
+    if (!isR2Configured()) {
+      return NextResponse.json({ ok: true, url: null });
+    }
 
     const { r2, bucket } = requireR2();
     const url = await getSignedUrl(

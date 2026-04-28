@@ -1,0 +1,2 @@
+ALTER TABLE "Photo"
+  ADD COLUMN IF NOT EXISTS "imageDataUrl" TEXT;

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import type { LeadPriority, LeadSourceType, LeadStatus } from "@prisma/client";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
+import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { prisma } from "@/lib/prisma";
+import { normalizeLeadCity } from "@/lib/lead-location";
 import { normalizeE164 } from "@/lib/phone";
+import { resolveWorkspaceUserIds } from "@/lib/workspace-users";
 import {
   AppApiError,
   assertCanMutateLeadJob,
@@ -11,7 +15,7 @@ import {
 } from "@/lib/app-api-permissions";
 
 type RouteContext = {
-  params: { leadId: string };
+  params: Promise<{ leadId: string }>;
 };
 
 type PatchLeadPayload = {
@@ -21,6 +25,7 @@ type PatchLeadPayload = {
   city?: string | null;
   businessType?: string | null;
   notes?: string | null;
+  estimatedRevenueCents?: number | null;
   status?: string;
   priority?: string;
   nextFollowUpAt?: string | null;
@@ -63,7 +68,8 @@ function parseSourceType(value: unknown): LeadSourceType | null {
   return SOURCE_TYPES.includes(normalized as LeadSourceType) ? (normalized as LeadSourceType) : null;
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const payload = (await req.json().catch(() => null)) as PatchLeadPayload | null;
@@ -113,11 +119,15 @@ export async function PATCH(req: Request, { params }: RouteContext) {
     }
 
     if (payload.city !== undefined) {
-      updateData.city = payload.city?.trim() || null;
+      updateData.city = normalizeLeadCity(payload.city);
     }
 
     if (payload.businessType !== undefined) {
-      updateData.businessType = payload.businessType?.trim() || null;
+      const nextBusinessType = sanitizeLeadBusinessTypeLabel(payload.businessType);
+      if (payload.businessType?.trim() && !nextBusinessType) {
+        throw new AppApiError("Business type looks invalid or polluted.", 400);
+      }
+      updateData.businessType = nextBusinessType;
     }
 
     if (payload.notes !== undefined) {
@@ -127,10 +137,27 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       updateData.notes = payload.notes?.trim() || null;
     }
 
+    if (payload.estimatedRevenueCents !== undefined) {
+      if (payload.estimatedRevenueCents == null) {
+        updateData.estimatedRevenueCents = null;
+      } else if (
+        typeof payload.estimatedRevenueCents !== "number" ||
+        !Number.isFinite(payload.estimatedRevenueCents) ||
+        payload.estimatedRevenueCents < 0
+      ) {
+        throw new AppApiError("estimatedRevenueCents must be a non-negative number.", 400);
+      } else {
+        updateData.estimatedRevenueCents = Math.round(payload.estimatedRevenueCents);
+      }
+    }
+
     if (payload.status !== undefined) {
       const status = parseStatus(payload.status);
       if (!status) {
         throw new AppApiError("Invalid lead status.", 400);
+      }
+      if (status === "BOOKED") {
+        throw new AppApiError("Lead status BOOKED is derived from an active booking and cannot be edited directly.", 409);
       }
       updateData.status = status;
     }
@@ -162,14 +189,12 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
       const assignedToUserId = payload.assignedToUserId || null;
       if (assignedToUserId) {
-        const assignedUser = await prisma.user.findFirst({
-          where: {
-            id: assignedToUserId,
-            OR: [{ orgId: lead.orgId }, { role: "INTERNAL" }],
-          },
-          select: { id: true },
+        const assignedUserIds = await resolveWorkspaceUserIds({
+          organizationId: lead.orgId,
+          requestedUserIds: [assignedToUserId],
+          includeInternal: true,
         });
-        if (!assignedUser) {
+        if (assignedUserIds.length !== 1) {
           throw new AppApiError("Assigned user is invalid for this organization.", 400);
         }
       }
@@ -242,19 +267,53 @@ export async function PATCH(req: Request, { params }: RouteContext) {
         contactName: true,
         businessName: true,
         phoneE164: true,
+        city: true,
+        businessType: true,
         status: true,
         priority: true,
         notes: true,
+        estimatedRevenueCents: true,
         sourceType: true,
         sourceDetail: true,
         attributionLocked: true,
         commissionEligible: true,
         nextFollowUpAt: true,
         updatedAt: true,
+        events: {
+          where: {
+            type: {
+              in: ["JOB", "ESTIMATE"],
+            },
+          },
+          select: {
+            id: true,
+            jobId: true,
+            type: true,
+            status: true,
+            startAt: true,
+            endAt: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          take: 12,
+        },
       },
     });
 
-    return NextResponse.json({ ok: true, lead: updated });
+    const bookingProjection = deriveLeadBookingProjection({
+      leadStatus: updated.status,
+      events: updated.events,
+    });
+    const { events: _events, ...leadResponse } = updated;
+
+    return NextResponse.json({
+      ok: true,
+      lead: {
+        ...leadResponse,
+        status: bookingProjection.derivedLeadStatus,
+        nextFollowUpAt: bookingProjection.hasActiveBooking ? null : updated.nextFollowUpAt,
+      },
+    });
   } catch (error) {
     if (error instanceof AppApiError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });

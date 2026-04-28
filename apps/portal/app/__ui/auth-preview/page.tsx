@@ -47,13 +47,13 @@ function AuthSurfacePreview(props: {
             Helper text sample for contrast, readability, and spacing checks.
           </p>
 
-          <button type="button" className="btn primary">
+          <button type="button" className="btn primary" disabled>
             Primary button
           </button>
-          <a className="btn primary" href="#primary-link-preview">
+          <span className="btn primary" aria-disabled="true">
             Primary link
-          </a>
-          <button type="button" className="btn secondary">
+          </span>
+          <button type="button" className="btn secondary" disabled>
             Secondary button
           </button>
         </form>

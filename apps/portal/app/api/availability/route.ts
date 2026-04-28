@@ -5,6 +5,7 @@ import {
   CalendarApiError,
   assertOrgReadAccess,
   requireCalendarActor,
+  resolveCalendarOrgId,
 } from "@/lib/calendar/permissions";
 
 export const dynamic = "force-dynamic";
@@ -32,11 +33,11 @@ export async function GET(req: Request) {
       throw new CalendarApiError("userId (or workerId) and date are required.", 400);
     }
 
-    const orgId = orgIdFromQuery || actor.orgId;
-    if (!orgId) {
-      throw new CalendarApiError("orgId is required for internal users.", 400);
-    }
-
+    const orgId = await resolveCalendarOrgId({
+      actor,
+      req,
+      requestedOrgId: orgIdFromQuery,
+    });
     assertOrgReadAccess(actor, orgId);
 
     const worker = await prisma.user.findUnique({
