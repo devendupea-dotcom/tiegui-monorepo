@@ -10,6 +10,7 @@ function baseInput(overrides = {}) {
       id: "org_1",
       name: "Velocity Landscapes LLC",
       portalVertical: "CONTRACTOR",
+      package: "MESSAGING_ENABLED",
       messagingLaunchMode: "LIVE_SMS",
       createdAt: new Date("2026-04-01T12:00:00.000Z"),
     },
@@ -85,7 +86,10 @@ test("fully smoked org is ready for a controlled customer slot", () => {
   assert.equal(report.summary.activeOwnerOrAdminCount, 1);
   assert.equal(report.summary.activeWorkerCount, 1);
   assert.equal(report.summary.activeReadOnlyCount, 1);
+  assert.equal(report.summary.package, "MESSAGING_ENABLED");
+  assert.equal(report.summary.packageCanUseLiveSms, true);
   assert.equal(report.summary.billingMode, "manual_limited");
+  assert.equal(item(report, "package-entitlements").status, "ready");
   assert.equal(item(report, "twilio-ready").status, "ready");
   assert.equal(item(report, "stop-start-smoke").status, "ready");
 });
@@ -197,6 +201,7 @@ test("no-SMS mode can launch without Twilio config or SMS smoke", () => {
     baseInput({
       org: {
         ...baseInput().org,
+        package: "PORTAL_ONLY",
         messagingLaunchMode: "NO_SMS",
       },
       twilioConfig: null,
@@ -216,8 +221,11 @@ test("no-SMS mode can launch without Twilio config or SMS smoke", () => {
   );
 
   assert.equal(report.readyForControlledCustomer, true);
+  assert.equal(report.summary.package, "PORTAL_ONLY");
+  assert.equal(report.summary.packageCanUseLiveSms, false);
   assert.equal(report.summary.messagingLaunchMode, "NO_SMS");
   assert.equal(report.summary.twilioStatus, "NOT_CONFIGURED");
+  assert.equal(item(report, "package-entitlements").status, "ready");
   assert.equal(item(report, "twilio-ready").status, "ready");
   assert.equal(item(report, "twilio-ready").blocking, false);
   assert.equal(item(report, "manual-outbound-smoke").status, "manual");
@@ -225,4 +233,22 @@ test("no-SMS mode can launch without Twilio config or SMS smoke", () => {
   assert.equal(item(report, "inbound-smoke").status, "manual");
   assert.equal(item(report, "status-callback-smoke").status, "manual");
   assert.equal(item(report, "stop-start-smoke").status, "manual");
+});
+
+test("portal-only package blocks live SMS launch", () => {
+  const report = buildControlledRolloutReadinessReport(
+    baseInput({
+      org: {
+        ...baseInput().org,
+        package: "PORTAL_ONLY",
+        messagingLaunchMode: "LIVE_SMS",
+      },
+    }),
+  );
+
+  assert.equal(report.readyForControlledCustomer, false);
+  assert.equal(report.summary.package, "PORTAL_ONLY");
+  assert.equal(report.summary.packageCanUseLiveSms, false);
+  assert.equal(item(report, "package-entitlements").status, "blocked");
+  assert.equal(item(report, "package-entitlements").blocking, true);
 });

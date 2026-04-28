@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
+import type { OrganizationPackage } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime, formatLabel, isOverdueFollowUp } from "@/lib/hq";
 import { normalizeE164 } from "@/lib/phone";
@@ -9,6 +10,10 @@ import { requireInternalUser } from "@/lib/session";
 import { getGoogleSyncAlertState } from "@/lib/integrations/google-sync";
 import { getPhotoStorageReadiness } from "@/lib/storage";
 import { loadControlledRolloutReadinessReport } from "@/lib/controlled-rollout-readiness";
+import {
+  getPackageEntitlements,
+  ORGANIZATION_PACKAGE_ORDER,
+} from "@/lib/package-entitlements";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
 import RoundRobinTestCard from "./round-robin-test-card";
 
@@ -111,6 +116,19 @@ async function updateOrgMessagingLaunchModeAction(formData: FormData) {
 
   await requireInternalUser(`/hq/businesses/${orgId}`);
 
+  if (mode === "LIVE_SMS") {
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { package: true },
+    });
+    if (!org) {
+      redirect("/hq/businesses");
+    }
+    if (!getPackageEntitlements(org.package).canUseLiveSms) {
+      redirect(`/hq/businesses/${orgId}?error=package-live-sms`);
+    }
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.organization.update({
       where: { id: orgId },
@@ -155,6 +173,70 @@ async function updateOrgMessagingLaunchModeAction(formData: FormData) {
   revalidatePath(`/app`);
 
   redirect(`/hq/businesses/${orgId}?saved=messaging-mode`);
+}
+
+async function updateOrgPackageAction(formData: FormData) {
+  "use server";
+
+  const orgId = String(formData.get("orgId") || "").trim();
+  const packageValue = String(formData.get("package") || "").trim() as OrganizationPackage;
+
+  if (!orgId) {
+    redirect("/hq/businesses");
+  }
+
+  await requireInternalUser(`/hq/businesses/${orgId}`);
+
+  if (!ORGANIZATION_PACKAGE_ORDER.includes(packageValue)) {
+    redirect(`/hq/businesses/${orgId}?error=invalid-package`);
+  }
+
+  const entitlements = getPackageEntitlements(packageValue);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.organization.update({
+      where: { id: orgId },
+      data: entitlements.requiresNoSmsMode
+        ? {
+            package: packageValue,
+            messagingLaunchMode: "NO_SMS",
+            smsFromNumberE164: null,
+            missedCallAutoReplyOn: false,
+            intakeAutomationEnabled: false,
+            autoReplyEnabled: false,
+            followUpsEnabled: false,
+            autoBookingEnabled: false,
+          }
+        : {
+            package: packageValue,
+          },
+    });
+
+    if (entitlements.requiresNoSmsMode) {
+      await tx.organizationMessagingSettings.upsert({
+        where: { orgId },
+        create: {
+          orgId,
+          autoReplyEnabled: false,
+          followUpsEnabled: false,
+          autoBookingEnabled: false,
+          dispatchSmsEnabled: false,
+        },
+        update: {
+          autoReplyEnabled: false,
+          followUpsEnabled: false,
+          autoBookingEnabled: false,
+          dispatchSmsEnabled: false,
+        },
+      });
+    }
+  });
+
+  revalidatePath(`/hq/businesses/${orgId}`);
+  revalidatePath(`/hq/messaging`);
+  revalidatePath(`/app`);
+
+  redirect(`/hq/businesses/${orgId}?saved=package`);
 }
 
 async function createSmsTemplateAction(formData: FormData) {
@@ -469,6 +551,12 @@ async function OverviewTab({ orgId }: { orgId: string }) {
                 Customer launch gate for controlled rollout slots #2-#5. This is separate from broad self-serve production approval.
               </p>
               <p className="muted">
+                Package: <strong>{rolloutReadiness.summary.packageLabel}</strong>
+                {rolloutReadiness.summary.packageManagedSetupIncluded
+                  ? " · managed setup"
+                  : ""}
+              </p>
+              <p className="muted">
                 Messaging mode:{" "}
                 <strong>
                   {rolloutReadiness.summary.messagingLaunchMode === "NO_SMS"
@@ -504,6 +592,12 @@ async function OverviewTab({ orgId }: { orgId: string }) {
               </p>
             </article>
             <article className="kpi-card">
+              <h3>Package</h3>
+              <p className="kpi-value" style={{ fontSize: "1.2rem" }}>
+                {rolloutReadiness.summary.packageLabel}
+              </p>
+            </article>
+            <article className="kpi-card">
               <h3>Failed SMS</h3>
               <p className="kpi-value">{rolloutReadiness.summary.failedSms30d}</p>
             </article>
@@ -522,13 +616,44 @@ async function OverviewTab({ orgId }: { orgId: string }) {
           </div>
 
           <div className="quick-links" style={{ marginTop: 12 }}>
+            <form action={updateOrgPackageAction}>
+              <input type="hidden" name="orgId" value={orgId} />
+              <label className="sr-only" htmlFor="organization-package">
+                Launch package
+              </label>
+              <select
+                id="organization-package"
+                name="package"
+                defaultValue={rolloutReadiness.summary.package}
+              >
+                {ORGANIZATION_PACKAGE_ORDER.map((packageValue) => {
+                  const packageInfo = getPackageEntitlements(packageValue);
+                  return (
+                    <option key={packageValue} value={packageValue}>
+                      {packageInfo.shortLabel}
+                    </option>
+                  );
+                })}
+              </select>
+              <button className="btn secondary" type="submit">
+                Set Package
+              </button>
+            </form>
             <form action={updateOrgMessagingLaunchModeAction}>
               <input type="hidden" name="orgId" value={orgId} />
               <input type="hidden" name="messagingLaunchMode" value="LIVE_SMS" />
               <button
                 className="btn secondary"
                 type="submit"
-                disabled={rolloutReadiness.summary.messagingLaunchMode === "LIVE_SMS"}
+                disabled={
+                  rolloutReadiness.summary.messagingLaunchMode === "LIVE_SMS" ||
+                  !rolloutReadiness.summary.packageCanUseLiveSms
+                }
+                title={
+                  rolloutReadiness.summary.packageCanUseLiveSms
+                    ? undefined
+                    : "This package does not include the SMS/Twilio module."
+                }
               >
                 Use Live SMS
               </button>
@@ -559,6 +684,13 @@ async function OverviewTab({ orgId }: { orgId: string }) {
               </Link>
             ) : null}
           </div>
+          {!rolloutReadiness.summary.packageCanUseLiveSms ? (
+            <p className="muted" style={{ marginTop: 10 }}>
+              This package is portal-only. It can launch with CRM, scheduling,
+              estimates, invoices, files, and website intake, but not live SMS
+              until the org moves to a messaging-enabled package.
+            </p>
+          ) : null}
 
           <ul className="template-list" style={{ marginTop: 12 }}>
             {rolloutReadiness.items.map((item) => (

@@ -1,10 +1,15 @@
 import type {
   CalendarAccessRole,
   MembershipStatus,
+  OrganizationPackage,
   SmsConsentStatus,
   TwilioConfigStatus,
 } from "@prisma/client";
 import { normalizeEnvValue } from "@/lib/env";
+import {
+  getPackageEntitlements,
+  getPackageMessagingMismatch,
+} from "@/lib/package-entitlements";
 import { prisma } from "@/lib/prisma";
 import { parseSmsComplianceKeyword } from "@/lib/sms-compliance";
 import {
@@ -29,6 +34,7 @@ export type ControlledRolloutReadinessInput = {
     id: string;
     name: string;
     portalVertical?: string | null;
+    package?: OrganizationPackage | null;
     messagingLaunchMode?: ControlledMessagingLaunchMode | null;
     createdAt: Date;
   };
@@ -99,6 +105,10 @@ export type ControlledRolloutReadinessReport = {
     activeOwnerOrAdminCount: number;
     activeWorkerCount: number;
     activeReadOnlyCount: number;
+    package: OrganizationPackage;
+    packageLabel: string;
+    packageCanUseLiveSms: boolean;
+    packageManagedSetupIncluded: boolean;
     messagingLaunchMode: ControlledMessagingLaunchMode;
     twilioStatus: TwilioConfigStatus | "NOT_CONFIGURED";
     websiteLeadSourceActiveCount: number;
@@ -198,9 +208,15 @@ export function buildControlledRolloutReadinessReport(
   ]);
   const activeWorkerCount = activeRoleCount(input.memberships, ["WORKER"]);
   const activeReadOnlyCount = activeRoleCount(input.memberships, ["READ_ONLY"]);
+  const organizationPackage = input.org.package || "MESSAGING_ENABLED";
+  const packageEntitlements = getPackageEntitlements(organizationPackage);
   const messagingLaunchMode: ControlledMessagingLaunchMode =
     input.org.messagingLaunchMode || "LIVE_SMS";
   const noSmsMode = messagingLaunchMode === "NO_SMS";
+  const packageMismatch = getPackageMessagingMismatch({
+    package: organizationPackage,
+    messagingLaunchMode,
+  });
   const twilio = resolveTwilioMessagingReadiness({
     twilioConfig: input.twilioConfig
       ? {
@@ -274,6 +290,22 @@ export function buildControlledRolloutReadinessReport(
           : `${input.legacyUsersWithoutMembership} legacy user(s) still rely on orgId without an active membership.`,
       action:
         "Keep workers as WORKER, observers as READ_ONLY, and avoid broad agency/internal access for customer staff.",
+    }),
+    item({
+      key: "package-entitlements",
+      label: "Launch package",
+      status: packageMismatch ? "blocked" : "ready",
+      blocking: Boolean(packageMismatch),
+      detail:
+        packageMismatch ||
+        `${packageEntitlements.label}: ${packageEntitlements.description}`,
+      action: packageMismatch
+        ? "Set this org to No SMS or move it to Messaging Enabled/Managed before launch."
+        : packageEntitlements.requiresNoSmsMode
+          ? "Keep this org in No SMS mode unless the customer moves into the messaging module."
+          : packageEntitlements.managedSetupIncluded
+            ? "Run the managed setup checklist and launch monitoring before marking the customer ready."
+            : "Live SMS can be enabled only after the Twilio readiness smoke passes.",
     }),
     item({
       key: "twilio-ready",
@@ -454,6 +486,10 @@ export function buildControlledRolloutReadinessReport(
       activeOwnerOrAdminCount,
       activeWorkerCount,
       activeReadOnlyCount,
+      package: organizationPackage,
+      packageLabel: packageEntitlements.shortLabel,
+      packageCanUseLiveSms: packageEntitlements.canUseLiveSms,
+      packageManagedSetupIncluded: packageEntitlements.managedSetupIncluded,
       messagingLaunchMode,
       twilioStatus: input.twilioConfig?.status || "NOT_CONFIGURED",
       websiteLeadSourceActiveCount: input.websiteLeadSources.active,
@@ -494,6 +530,7 @@ export async function loadControlledRolloutReadinessReport(input: {
         id: true,
         name: true,
         portalVertical: true,
+        package: true,
         messagingLaunchMode: true,
         createdAt: true,
         twilioConfig: {
@@ -641,6 +678,7 @@ export async function loadControlledRolloutReadinessReport(input: {
       id: org.id,
       name: org.name,
       portalVertical: org.portalVertical,
+      package: org.package,
       messagingLaunchMode: org.messagingLaunchMode,
       createdAt: org.createdAt,
     },

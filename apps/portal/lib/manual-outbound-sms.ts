@@ -11,6 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
 import { recoverUnmatchedOutboundSmsStatusCallbacks } from "@/lib/sms-status-reconciliation";
 import { maskSid } from "@/lib/twilio-config-crypto";
+import { getPackageEntitlements } from "@/lib/package-entitlements";
 import {
   canComposeManualSms,
   getTwilioMessagingComposeNotice,
@@ -91,6 +92,7 @@ export async function sendManualLeadSms(input: {
   const organization = await prisma.organization.findUnique({
     where: { id: input.lead.orgId },
     select: {
+      package: true,
       smsFromNumberE164: true,
       messagingLaunchMode: true,
       twilioConfig: {
@@ -105,15 +107,21 @@ export async function sendManualLeadSms(input: {
   const readiness = resolveTwilioMessagingReadiness({
     twilioConfig: organization?.twilioConfig || null,
   });
+  const packageEntitlements = getPackageEntitlements(organization?.package);
 
-  if (organization?.messagingLaunchMode === "NO_SMS") {
+  if (
+    organization?.messagingLaunchMode === "NO_SMS" ||
+    !packageEntitlements.canUseLiveSms
+  ) {
     return {
       ok: false,
       httpStatus: 409,
-      error:
-        "SMS is disabled for this business. Leads, jobs, estimates, invoices, files, and internal notes can still be used without Twilio.",
-      notice:
-        "SMS is disabled for this business. Enable Live SMS only when the customer opts into Twilio.",
+      error: !packageEntitlements.canUseLiveSms
+        ? "SMS is not included in this business package. Leads, jobs, estimates, invoices, files, and internal notes can still be used without Twilio."
+        : "SMS is disabled for this business. Leads, jobs, estimates, invoices, files, and internal notes can still be used without Twilio.",
+      notice: !packageEntitlements.canUseLiveSms
+        ? "Move this org to a messaging-enabled package before enabling live SMS."
+        : "SMS is disabled for this business. Enable Live SMS only when the customer opts into Twilio.",
       deliveryState: "NOT_LIVE",
       liveSend: false,
       readinessCode: readiness.code,
