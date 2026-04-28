@@ -2,19 +2,10 @@ import { type StripeConnectionStatus } from "@prisma/client";
 import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 
-const STRIPE_OAUTH_AUTHORIZE_URL = "https://connect.stripe.com/oauth/authorize";
-const STRIPE_OAUTH_TOKEN_URL = "https://connect.stripe.com/oauth/token";
 const STRIPE_OAUTH_DEAUTHORIZE_URL = "https://connect.stripe.com/oauth/deauthorize";
 const STRIPE_API_BASE_URL = "https://api.stripe.com/v1";
-const STRIPE_DEFAULT_SCOPE = "read_write";
 
 type JsonObject = Record<string, unknown>;
-
-export type StripeOAuthConnection = {
-  stripeAccountId: string;
-  livemode: boolean;
-  scope: string;
-};
 
 export type StripeAccountSummary = {
   stripeAccountId: string;
@@ -36,12 +27,8 @@ function getStripeSecretKey(): string {
   return value;
 }
 
-function getStripeConnectClientId(): string {
-  const value = normalizeEnvValue(process.env.STRIPE_CONNECT_CLIENT_ID);
-  if (!value) {
-    throw new Error("STRIPE_CONNECT_CLIENT_ID is required.");
-  }
-  return value;
+function getStripeConnectClientId(): string | null {
+  return normalizeEnvValue(process.env.STRIPE_CONNECT_CLIENT_ID) || null;
 }
 
 function getBasicAuthHeader(): string {
@@ -100,53 +87,120 @@ async function requestStripeForm(url: string, params: URLSearchParams, fallback:
 }
 
 export function isStripeConfigured(): boolean {
-  return Boolean(
-    normalizeEnvValue(process.env.STRIPE_SECRET_KEY) &&
-      normalizeEnvValue(process.env.STRIPE_CONNECT_CLIENT_ID),
+  return Boolean(normalizeEnvValue(process.env.STRIPE_SECRET_KEY));
+}
+
+function mapStripeAccountSummaryPayload(payload: JsonObject, fallbackStripeAccountId?: string): StripeAccountSummary {
+  const businessProfile = getObject(payload.business_profile);
+  const settings = getObject(payload.settings);
+  const dashboard = getObject(settings?.dashboard);
+
+  return {
+    stripeAccountId: getString(payload.id) || fallbackStripeAccountId || "",
+    email: getString(payload.email) || getString(businessProfile?.support_email),
+    displayName:
+      getString(businessProfile?.name) ||
+      getString(dashboard?.display_name) ||
+      getString(payload.display_name),
+    country: getString(payload.country),
+    defaultCurrency: getString(payload.default_currency),
+    livemode: getBoolean(payload.livemode),
+    chargesEnabled: getBoolean(payload.charges_enabled),
+    payoutsEnabled: getBoolean(payload.payouts_enabled),
+    detailsSubmitted: getBoolean(payload.details_submitted),
+  };
+}
+
+function withOrgQuery(baseUrl: string, origin: string, orgId: string): string {
+  const url = new URL(baseUrl, origin);
+  url.searchParams.set("orgId", orgId);
+  return url.toString();
+}
+
+export function resolveStripeRedirectUri(origin: string, orgId: string): string {
+  return withOrgQuery(
+    normalizeEnvValue(process.env.STRIPE_REDIRECT_URI) || "/api/integrations/stripe/callback",
+    origin,
+    orgId,
   );
 }
 
-export function resolveStripeRedirectUri(origin: string): string {
-  return normalizeEnvValue(process.env.STRIPE_REDIRECT_URI) || `${origin}/api/integrations/stripe/callback`;
+export function resolveStripeRefreshUri(origin: string, orgId: string): string {
+  return withOrgQuery("/api/integrations/stripe/connect?resume=1", origin, orgId);
 }
 
-export function buildStripeAuthorizeUrl(input: {
-  state: string;
-  redirectUri: string;
-}) {
-  const params = new URLSearchParams({
-    client_id: getStripeConnectClientId(),
-    response_type: "code",
-    scope: STRIPE_DEFAULT_SCOPE,
-    state: input.state,
-    redirect_uri: input.redirectUri,
-  });
-
-  return `${STRIPE_OAUTH_AUTHORIZE_URL}?${params.toString()}`;
-}
-
-export async function exchangeStripeCodeForConnection(input: {
-  code: string;
-}): Promise<StripeOAuthConnection> {
+async function createStripeStandardAccount(): Promise<StripeAccountSummary> {
   const payload = await requestStripeForm(
-    STRIPE_OAUTH_TOKEN_URL,
+    `${STRIPE_API_BASE_URL}/accounts`,
     new URLSearchParams({
-      code: input.code,
-      grant_type: "authorization_code",
+      type: "standard",
+      "capabilities[card_payments][requested]": "true",
     }),
-    "Stripe account connection failed.",
+    "Stripe account creation failed.",
   );
 
-  const stripeAccountId = getString(payload.stripe_user_id);
+  const stripeAccountId = getString(payload.id);
   if (!stripeAccountId) {
     throw new Error("Stripe did not return a connected account id.");
   }
 
-  return {
+  return mapStripeAccountSummaryPayload(payload, stripeAccountId);
+}
+
+async function createStripeAccountLink(input: {
+  stripeAccountId: string;
+  returnUrl: string;
+  refreshUrl: string;
+}): Promise<string> {
+  const payload = await requestStripeForm(
+    `${STRIPE_API_BASE_URL}/account_links`,
+    new URLSearchParams({
+      account: input.stripeAccountId,
+      type: "account_onboarding",
+      return_url: input.returnUrl,
+      refresh_url: input.refreshUrl,
+    }),
+    "Stripe onboarding link failed.",
+  );
+
+  const url = getString(payload.url);
+  if (!url) {
+    throw new Error("Stripe did not return an onboarding link.");
+  }
+
+  return url;
+}
+
+export async function createStripeOnboardingUrl(input: {
+  orgId: string;
+  origin: string;
+}): Promise<string> {
+  const existing = await prisma.organizationStripeConnection.findUnique({
+    where: { orgId: input.orgId },
+    select: {
+      stripeAccountId: true,
+      status: true,
+    },
+  });
+
+  let stripeAccountId =
+    existing && existing.status !== "DISCONNECTED" ? existing.stripeAccountId : null;
+
+  if (!stripeAccountId) {
+    const summary = await createStripeStandardAccount();
+    stripeAccountId = summary.stripeAccountId;
+    await saveOrganizationStripeConnection({
+      orgId: input.orgId,
+      summary,
+      connectedAt: new Date(),
+    });
+  }
+
+  return createStripeAccountLink({
     stripeAccountId,
-    livemode: getBoolean(payload.livemode),
-    scope: getString(payload.scope) || STRIPE_DEFAULT_SCOPE,
-  };
+    returnUrl: resolveStripeRedirectUri(input.origin, input.orgId),
+    refreshUrl: resolveStripeRefreshUri(input.origin, input.orgId),
+  });
 }
 
 export async function fetchStripeAccountSummary(input: {
@@ -165,24 +219,7 @@ export async function fetchStripeAccountSummary(input: {
     throw new Error(getStripeErrorMessage(payload, `Stripe account lookup failed (${response.status}).`));
   }
 
-  const businessProfile = getObject(payload?.business_profile);
-  const settings = getObject(payload?.settings);
-  const dashboard = getObject(settings?.dashboard);
-
-  return {
-    stripeAccountId: getString(payload?.id) || input.stripeAccountId,
-    email: getString(payload?.email) || getString(businessProfile?.support_email),
-    displayName:
-      getString(businessProfile?.name) ||
-      getString(dashboard?.display_name) ||
-      getString(payload?.display_name),
-    country: getString(payload?.country),
-    defaultCurrency: getString(payload?.default_currency),
-    livemode: getBoolean(payload?.livemode),
-    chargesEnabled: getBoolean(payload?.charges_enabled),
-    payoutsEnabled: getBoolean(payload?.payouts_enabled),
-    detailsSubmitted: getBoolean(payload?.details_submitted),
-  };
+  return mapStripeAccountSummaryPayload(payload || {}, input.stripeAccountId);
 }
 
 export function deriveStripeConnectionStatus(input: {
@@ -322,22 +359,25 @@ export async function disconnectOrganizationStripeConnection(input: {
     return null;
   }
 
-  try {
-    await requestStripeForm(
-      STRIPE_OAUTH_DEAUTHORIZE_URL,
-      new URLSearchParams({
-        client_id: getStripeConnectClientId(),
-        stripe_user_id: existing.stripeAccountId,
-      }),
-      "Stripe account disconnect failed.",
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Stripe account disconnect failed.";
-    await setStripeConnectionLastError({
-      orgId: input.orgId,
-      error: message,
-    });
-    throw error;
+  const stripeConnectClientId = getStripeConnectClientId();
+  if (stripeConnectClientId) {
+    try {
+      await requestStripeForm(
+        STRIPE_OAUTH_DEAUTHORIZE_URL,
+        new URLSearchParams({
+          client_id: stripeConnectClientId,
+          stripe_user_id: existing.stripeAccountId,
+        }),
+        "Stripe account disconnect failed.",
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Stripe account disconnect failed.";
+      await setStripeConnectionLastError({
+        orgId: input.orgId,
+        error: message,
+      });
+      throw error;
+    }
   }
 
   return prisma.organizationStripeConnection.update({

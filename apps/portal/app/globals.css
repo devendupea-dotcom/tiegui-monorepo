@@ -1730,6 +1730,10 @@ textarea {
   align-items: start;
 }
 
+.job-records-grid--list-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .job-records-list {
   display: grid;
   gap: 10px;
@@ -2178,6 +2182,50 @@ textarea {
   grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+}
+
+.estimate-module-grid--list-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.revenue-workspace-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(8, 22, 44, 0.58);
+  backdrop-filter: blur(4px);
+}
+
+.revenue-workspace-modal {
+  width: min(1180px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  border: 1px solid var(--surface-card-border);
+  border-radius: 16px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+
+.revenue-workspace-modal-header {
+  position: sticky;
+  top: -18px;
+  z-index: 2;
+  margin: -18px -18px 16px;
+  padding: 18px;
+  background: color-mix(in srgb, var(--surface-card) 96%, transparent);
+  border-bottom: 1px solid var(--surface-card-border);
+  backdrop-filter: blur(12px);
+}
+
+.revenue-workspace-modal input,
+.revenue-workspace-modal select,
+.revenue-workspace-modal textarea {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .estimate-module-list {
@@ -3128,6 +3176,22 @@ textarea {
 
   .estimate-module-grid {
     grid-template-columns: 1fr;
+  }
+
+  .revenue-workspace-backdrop {
+    padding: 10px;
+  }
+
+  .revenue-workspace-modal {
+    max-height: calc(100dvh - 20px);
+    border-radius: 14px;
+    padding: 14px;
+  }
+
+  .revenue-workspace-modal-header {
+    top: -14px;
+    margin: -14px -14px 14px;
+    padding: 14px;
   }
 
   .dispatch-summary-grid {

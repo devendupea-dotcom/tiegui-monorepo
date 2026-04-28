@@ -129,7 +129,6 @@ That should include:
 Required for live billing:
 
 - `STRIPE_SECRET_KEY`
-- `STRIPE_CONNECT_CLIENT_ID`
 - `STRIPE_WEBHOOK_SECRET`
 - optional `STRIPE_REDIRECT_URI`
 

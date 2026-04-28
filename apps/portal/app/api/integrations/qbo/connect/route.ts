@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createIntegrationOAuthState } from "@/lib/integrations/oauth-state";
 import { buildQboAuthorizeUrl, resolveQboRedirectUri } from "@/lib/integrations/qboClient";
 import { isQboConfigured } from "@/lib/integrations/provider-config";
-import { IntegrationScopeError, resolveIntegrationOrgScope } from "@/lib/integrations/scope";
+import { IntegrationScopeError, resolveIntegrationAdminScope } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +20,7 @@ function buildSettingsUrl(req: Request, input: { orgId: string; internalUser: bo
 
 export async function GET(req: Request) {
   try {
-    const scope = await resolveIntegrationOrgScope(req);
+    const scope = await resolveIntegrationAdminScope(req);
     if (!isQboConfigured()) {
       return NextResponse.redirect(buildSettingsUrl(req, { ...scope, error: "qbo_not_configured" }));
     }

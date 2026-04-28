@@ -12,6 +12,8 @@ type AppNavMessageKey = keyof typeof enMessages.appNav;
 type NavLink = {
   href: string;
   labelKey: AppNavMessageKey;
+  builderLabelKey?: AppNavMessageKey;
+  builderOnly?: boolean;
   icon: ReactNode;
 };
 
@@ -20,7 +22,7 @@ type NavSection = {
   links: NavLink[];
 };
 
-const navSections = [
+const navSections: NavSection[] = [
   {
     labelKey: "commandSection",
     links: [
@@ -45,6 +47,7 @@ const navSections = [
       {
         href: "/app/jobs",
         labelKey: "jobs",
+        builderLabelKey: "buyers",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9 6V4h6v2M4 8h16v11H4zM4 12h16" />
@@ -54,6 +57,7 @@ const navSections = [
       {
         href: "/app/jobs/records",
         labelKey: "jobRecords",
+        builderLabelKey: "buildProjects",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />
@@ -63,6 +67,7 @@ const navSections = [
       {
         href: "/app/dispatch",
         labelKey: "dispatch",
+        builderLabelKey: "buildSchedule",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M5 5h14v5H5zM5 14h6v5H5zM13 14h6v5h-6zM9 10v4M15 10v4" />
@@ -72,6 +77,7 @@ const navSections = [
       {
         href: "/app/calendar",
         labelKey: "calendar",
+        builderLabelKey: "timeline",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 3v3M17 3v3M5 6h14a2 2 0 0 1 2 2v11H3V8a2 2 0 0 1 2-2Zm-2 6h4v4h-4z" />
@@ -86,6 +92,7 @@ const navSections = [
       {
         href: "/app/estimates",
         labelKey: "estimates",
+        builderLabelKey: "changeOrders",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4" />
@@ -95,6 +102,7 @@ const navSections = [
       {
         href: "/app/invoices",
         labelKey: "invoices",
+        builderLabelKey: "payments",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 3h10l3 3v15H4V3h3zm3 0v4h4V3M8 12h8M8 16h8" />
@@ -104,6 +112,7 @@ const navSections = [
       {
         href: "/app/materials",
         labelKey: "materials",
+        builderLabelKey: "selections",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 7h16M6 7V5h12v2M6 7l1 12h10l1-12M10 11v4M14 11v4" />
@@ -148,6 +157,16 @@ const navSections = [
     labelKey: "workspaceSection",
     links: [
       {
+        href: "/app/builder",
+        labelKey: "builderPortal",
+        builderOnly: true,
+        icon: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 11 12 4l8 7v9H4zM9 20v-6h6v6M7 11h10" />
+          </svg>
+        ),
+      },
+      {
         href: "/app/settings",
         labelKey: "settings",
         icon: (
@@ -158,7 +177,7 @@ const navSections = [
       },
     ],
   },
-] satisfies NavSection[];
+];
 
 function withPortalQuery(
   path: string,
@@ -181,10 +200,12 @@ function withPortalQuery(
 
 type ClientPortalNavProps = {
   calendarAccessRole: CalendarAccessRole;
+  portalVertical?: string | null;
 };
 
 export default function ClientPortalNav({
   calendarAccessRole,
+  portalVertical,
 }: ClientPortalNavProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -193,6 +214,7 @@ export default function ClientPortalNav({
   const mobileMode = searchParams.get("mobile") === "1";
   const workerScoped =
     calendarAccessRole === "WORKER" || calendarAccessRole === "READ_ONLY";
+  const builderWorkspace = portalVertical === "HOMEBUILDER";
 
   return (
     <nav className="app-nav" aria-label={t("navigationLabel")}>
@@ -206,7 +228,9 @@ export default function ClientPortalNav({
             )}
           </p>
           <div className="app-nav-section-links">
-            {section.links.map((link) => {
+            {section.links
+              .filter((link) => builderWorkspace || !link.builderOnly)
+              .map((link) => {
               const active =
                 link.href === "/app"
                   ? pathname === "/app"
@@ -217,22 +241,27 @@ export default function ClientPortalNav({
                     : pathname === link.href ||
                       pathname.startsWith(`${link.href}/`);
 
+              const labelKey =
+                builderWorkspace && link.builderLabelKey
+                  ? link.builderLabelKey
+                  : link.labelKey;
+
               return (
                 <Link
                   key={link.href}
                   href={withPortalQuery(link.href, orgId, mobileMode)}
                   prefetch={false}
                   className={`app-nav-link ${active ? "active" : ""}`}
-                  aria-label={t(link.labelKey)}
+                  aria-label={t(labelKey)}
                 >
                   <span
                     className="app-nav-icon"
                     role="img"
-                    aria-label={`${t(link.labelKey)} icon`}
+                    aria-label={`${t(labelKey)} icon`}
                   >
                     {link.icon}
                   </span>
-                  <span className="app-nav-label">{t(link.labelKey)}</span>
+                  <span className="app-nav-label">{t(labelKey)}</span>
                 </Link>
               );
             })}

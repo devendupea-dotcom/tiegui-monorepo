@@ -134,6 +134,7 @@ type EstimateManagerCopy = {
     subtitle: string;
     emptySubtitle: string;
     openFullPage: string;
+    closeWorkspace: string;
     loading: string;
     emptyTitle: string;
     emptyBody: string;
@@ -247,6 +248,7 @@ type EstimateManagerCopy = {
     sending: string;
     scheduleJob: string;
     scheduleJobDraftInvoice: string;
+    createInvoiceDraft: string;
     scheduling: string;
     archive: string;
     archiving: string;
@@ -293,8 +295,10 @@ type EstimateManagerCopy = {
     followUpWarmTitle: string;
     getReviewTitle: string;
     createCustomerViewTitle: string;
+    invoiceApprovedJobTitle: string;
     createEstimateDetail: string;
     moveApprovedDetail: string;
+    invoiceApprovedJobDetail: string;
     reviseResendDetail: string;
     followUpWarmDetail: string;
     getReviewDetail: string;
@@ -404,6 +408,7 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
         emptySubtitle:
           "Selecciona un estimado para dar forma al alcance, precio y siguiente paso.",
         openFullPage: "Abrir pagina completa",
+        closeWorkspace: "Cerrar espacio",
         loading: "Cargando estimado...",
         emptyTitle: "No hay estimado seleccionado.",
         emptyBody: "Elige un estimado de la lista o crea uno nuevo.",
@@ -525,6 +530,7 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
         sending: "Enviando...",
         scheduleJob: "Agendar trabajo",
         scheduleJobDraftInvoice: "Agendar trabajo + factura borrador",
+        createInvoiceDraft: "Crear factura borrador",
         scheduling: "Agendando...",
         archive: "Archivar estimado",
         archiving: "Archivando...",
@@ -574,10 +580,13 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
         followUpWarmTitle: "Da seguimiento mientras el estimado esta caliente",
         getReviewTitle: "Logra que el cliente lo revise",
         createCustomerViewTitle: "Crea la vista del cliente",
+        invoiceApprovedJobTitle: "Crea la factura para el trabajo agendado",
         createEstimateDetail:
           "Empieza un nuevo estimado, valora el alcance y dejalo listo para el cliente.",
         moveApprovedDetail:
           "Crea el trabajo, envialo a despacho o prepara la factura borrador.",
+        invoiceApprovedJobDetail:
+          "El trabajo ya esta en operaciones. Crea la factura borrador cuando estes listo para cobrar.",
         reviseResendDetail:
           "Revisa la nota del cliente, ajusta el estimado y envia un enlace nuevo.",
         followUpWarmDetail:
@@ -682,6 +691,7 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
       emptySubtitle:
         "Select an estimate to shape its scope, pricing, and next step.",
       openFullPage: "Open Full Page",
+      closeWorkspace: "Close Workspace",
       loading: "Loading estimate...",
       emptyTitle: "No estimate selected.",
       emptyBody: "Choose an estimate from the list or create a new one.",
@@ -803,6 +813,7 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
       sending: "Sending...",
       scheduleJob: "Schedule Job",
       scheduleJobDraftInvoice: "Schedule Job + Draft Invoice",
+      createInvoiceDraft: "Create Draft Invoice",
       scheduling: "Scheduling...",
       archive: "Archive Estimate",
       archiving: "Archiving...",
@@ -852,10 +863,13 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
       followUpWarmTitle: "Follow up while the estimate is warm",
       getReviewTitle: "Get the customer to review it",
       createCustomerViewTitle: "Create the customer view",
+      invoiceApprovedJobTitle: "Create the invoice for the scheduled job",
       createEstimateDetail:
         "Start a new estimate, price the scope, and get it customer-ready.",
       moveApprovedDetail:
         "Create the job, send it to dispatch, or spin up the invoice draft.",
+      invoiceApprovedJobDetail:
+        "The job is already in operations. Create the invoice draft when you are ready to collect.",
       reviseResendDetail:
         "Review the customer note, adjust the estimate, and send a fresh link.",
       followUpWarmDetail:
@@ -1074,6 +1088,25 @@ function buildDispatchPath(input: {
   return `/app/dispatch?${params.toString()}`;
 }
 
+function buildInvoicePath(input: {
+  invoiceId: string;
+  orgId: string;
+  internalUser: boolean;
+  mobileMode: boolean;
+}) {
+  const params = new URLSearchParams();
+  if (input.internalUser) {
+    params.set("orgId", input.orgId);
+  }
+  if (input.mobileMode) {
+    params.set("mobile", "1");
+  }
+  const query = params.toString();
+  return query
+    ? `/app/invoices/${input.invoiceId}?${query}`
+    : `/app/invoices/${input.invoiceId}`;
+}
+
 function formatWorkflowTimestamp(
   value: string | null,
   locale: string,
@@ -1195,6 +1228,9 @@ export default function EstimateManager({
   const [estimates, setEstimates] = useState<EstimateListItem[]>([]);
   const [selectedEstimateId, setSelectedEstimateId] = useState<string | null>(
     initialEstimateId,
+  );
+  const [workspaceOpen, setWorkspaceOpen] = useState(
+    Boolean(initialEstimateId || initialCreate),
   );
   const [selectedEstimate, setSelectedEstimate] =
     useState<EstimateDetail | null>(null);
@@ -1398,6 +1434,34 @@ export default function EstimateManager({
     [internalUser, mobileMode, orgId, router],
   );
 
+  const closeWorkspace = useCallback(() => {
+    setWorkspaceOpen(false);
+    if (
+      selectedEstimateId &&
+      pathname === `/app/estimates/${selectedEstimateId}`
+    ) {
+      updatePath(null);
+    }
+  }, [pathname, selectedEstimateId, updatePath]);
+
+  useEffect(() => {
+    if (!workspaceOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeWorkspace();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeWorkspace, workspaceOpen]);
+
   const handleCreateEstimate = useCallback(async () => {
     if (!canManage) {
       setError(copy.messages.readOnlyCreate);
@@ -1428,6 +1492,7 @@ export default function EstimateManager({
       }
 
       setSelectedEstimateId(payload.estimate.id);
+      setWorkspaceOpen(true);
       setSelectedEstimate(payload.estimate);
       setForm(estimateToForm(payload.estimate));
       setNotice(copy.messages.created(payload.estimate.estimateNumber));
@@ -1754,6 +1819,7 @@ export default function EstimateManager({
       setError(copy.messages.positiveTotalBeforeInvoice);
       return;
     }
+    const createJob = !selectedEstimate?.job?.id;
     setConverting(true);
     setError(null);
     setNotice(null);
@@ -1767,7 +1833,7 @@ export default function EstimateManager({
             "content-type": "application/json",
           },
           body: JSON.stringify({
-            createJob: true,
+            createJob,
             createInvoice,
             dispatchDate: getDispatchTodayDateKey(),
           }),
@@ -1782,6 +1848,17 @@ export default function EstimateManager({
 
       setSelectedEstimate(payload.estimate);
       setForm(estimateToForm(payload.estimate));
+      if (payload.invoiceId) {
+        router.push(
+          buildInvoicePath({
+            invoiceId: payload.invoiceId,
+            orgId,
+            internalUser,
+            mobileMode,
+          }),
+        );
+        return;
+      }
       if (payload.jobId && payload.dispatchDate) {
         router.push(
           buildDispatchPath({
@@ -1953,11 +2030,28 @@ export default function EstimateManager({
 
   function selectEstimate(nextEstimateId: string) {
     setSelectedEstimateId(nextEstimateId);
+    setWorkspaceOpen(true);
     setNotice(null);
     setError(null);
     updatePath(nextEstimateId);
   }
 
+  const hasLinkedJob = Boolean(selectedEstimate?.job?.id);
+  const hasLinkedInvoice = Boolean(
+    selectedEstimate && selectedEstimate.invoiceCount > 0,
+  );
+  const canInvoiceFromLegacyConvertedEstimate = Boolean(
+    selectedEstimate?.status === "CONVERTED" &&
+      hasLinkedJob &&
+      !hasLinkedInvoice,
+  );
+  const shouldPromptInvoiceForScheduledEstimate = Boolean(
+    selectedEstimate &&
+      hasLinkedJob &&
+      !hasLinkedInvoice &&
+      (selectedEstimate.status === "APPROVED" ||
+        canInvoiceFromLegacyConvertedEstimate),
+  );
   const savedCustomerFacingIssues = selectedEstimate
     ? getEstimateCustomerFacingIssuesLocalized({
         title: selectedEstimate.title,
@@ -2030,6 +2124,8 @@ export default function EstimateManager({
     ? copy.nextStep.createEstimateTitle
     : draftCustomerFacingIssues.length > 0
       ? copy.nextStep.finishBasicsTitle
+      : shouldPromptInvoiceForScheduledEstimate
+        ? copy.nextStep.invoiceApprovedJobTitle
       : selectedEstimate.status === "APPROVED"
         ? copy.nextStep.moveApprovedTitle
         : selectedEstimate.status === "DECLINED"
@@ -2043,6 +2139,8 @@ export default function EstimateManager({
     ? copy.nextStep.createEstimateDetail
     : draftCustomerFacingIssues.length > 0
       ? draftCustomerFacingIssues.join(" ")
+      : shouldPromptInvoiceForScheduledEstimate
+        ? copy.nextStep.invoiceApprovedJobDetail
       : selectedEstimate.status === "APPROVED"
         ? copy.nextStep.moveApprovedDetail
         : selectedEstimate.status === "DECLINED"
@@ -2057,9 +2155,15 @@ export default function EstimateManager({
     ["DRAFT", "SENT", "VIEWED", "EXPIRED"].includes(selectedEstimate.status) &&
     savedCustomerFacingIssues.length === 0,
   );
-  const canConvert = selectedEstimate?.status === "APPROVED";
+  const canScheduleJob = Boolean(
+    selectedEstimate?.status === "APPROVED" && !hasLinkedJob,
+  );
   const canConvertToInvoice = Boolean(
-    canConvert && selectedEstimate && selectedEstimate.total > 0,
+    selectedEstimate &&
+      selectedEstimate.total > 0 &&
+      !hasLinkedInvoice &&
+      (selectedEstimate.status === "APPROVED" ||
+        canInvoiceFromLegacyConvertedEstimate),
   );
   const canGenerateShare = Boolean(
     selectedEstimate &&
@@ -2117,7 +2221,7 @@ export default function EstimateManager({
         ) : null}
       </section>
 
-      <div className="estimate-module-grid">
+      <div className="estimate-module-grid estimate-module-grid--list-only">
         <section
           className="card"
           id="estimate-workspace"
@@ -2207,627 +2311,685 @@ export default function EstimateManager({
             </div>
           )}
         </section>
+      </div>
 
-        <section className="card">
-          <div className="invoice-header-row">
-            <div className="stack-cell">
-              <h3>
-                {selectedEstimate
-                  ? copy.workspace.titleWithNumber(
-                      selectedEstimate.estimateNumber,
-                    )
-                  : copy.workspace.title}
-              </h3>
-              <p className="muted">
-                {selectedEstimate
-                  ? copy.workspace.subtitle
-                  : copy.workspace.emptySubtitle}
-              </p>
-            </div>
-            {selectedEstimate &&
-            pathname !== `/app/estimates/${selectedEstimate.id}` ? (
-              <div className="portal-empty-actions">
-                <Link
-                  className="btn secondary"
-                  href={buildPath({
-                    estimateId: selectedEstimate.id,
-                    orgId,
-                    internalUser,
-                    mobileMode,
-                    focus: "editor",
-                  })}
-                >
-                  {copy.workspace.openFullPage}
-                </Link>
+      {workspaceOpen ? (
+        <div
+          className="revenue-workspace-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeWorkspace();
+            }
+          }}
+        >
+          <section
+            className="revenue-workspace-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="estimate-workspace-modal-title"
+          >
+            <div className="invoice-header-row revenue-workspace-modal-header">
+              <div className="stack-cell">
+                <h3 id="estimate-workspace-modal-title">
+                  {selectedEstimate
+                    ? copy.workspace.titleWithNumber(
+                        selectedEstimate.estimateNumber,
+                      )
+                    : copy.workspace.title}
+                </h3>
+                <p className="muted">
+                  {selectedEstimate
+                    ? copy.workspace.subtitle
+                    : copy.workspace.emptySubtitle}
+                </p>
               </div>
-            ) : null}
-          </div>
+              {selectedEstimate &&
+              pathname !== `/app/estimates/${selectedEstimate.id}` ? (
+                <div className="portal-empty-actions">
+                  <Link
+                    className="btn secondary"
+                    href={buildPath({
+                      estimateId: selectedEstimate.id,
+                      orgId,
+                      internalUser,
+                      mobileMode,
+                      focus: "editor",
+                    })}
+                  >
+                    {copy.workspace.openFullPage}
+                  </Link>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={closeWorkspace}
+                  >
+                    {copy.workspace.closeWorkspace}
+                  </button>
+                </div>
+              ) : (
+                <div className="portal-empty-actions">
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={closeWorkspace}
+                  >
+                    {copy.workspace.closeWorkspace}
+                  </button>
+                </div>
+              )}
+            </div>
 
-          {loadingDetail ? (
-            <div className="portal-empty-state estimate-module-empty">
-              <strong>{copy.workspace.loading}</strong>
-            </div>
-          ) : !selectedEstimate ? (
-            <div className="portal-empty-state estimate-module-empty">
-              <strong>{copy.workspace.emptyTitle}</strong>
-              <p className="muted">{copy.workspace.emptyBody}</p>
-            </div>
-          ) : (
-            <>
-              <section className="estimate-module-section">
-                <div className="estimate-proposal-grid">
-                  <article className="estimate-proposal-card">
-                    <span className="estimate-share-eyebrow">
-                      {copy.cards.projectSummary}
-                    </span>
-                    <strong>{form.title || copy.cards.addEstimateTitle}</strong>
-                    <span>
-                      {form.customerName ||
-                        linkedLead?.label ||
-                        copy.cards.attachCustomerOrLead}
-                    </span>
-                    <span className="muted">
-                      {form.siteAddress || copy.cards.addSiteAddress}
-                    </span>
-                    <div className="estimate-proposal-status-inline">
-                      <span className="badge">
-                        {form.projectType || copy.cards.projectType}
+            {loadingDetail ? (
+              <div className="portal-empty-state estimate-module-empty">
+                <strong>{copy.workspace.loading}</strong>
+              </div>
+            ) : !selectedEstimate ? (
+              <div className="portal-empty-state estimate-module-empty">
+                <strong>{copy.workspace.emptyTitle}</strong>
+                <p className="muted">{copy.workspace.emptyBody}</p>
+              </div>
+            ) : (
+              <>
+                <section className="estimate-module-section">
+                  <div className="estimate-proposal-grid">
+                    <article className="estimate-proposal-card">
+                      <span className="estimate-share-eyebrow">
+                        {copy.cards.projectSummary}
                       </span>
-                      {form.validUntil ? (
+                      <strong>
+                        {form.title || copy.cards.addEstimateTitle}
+                      </strong>
+                      <span>
+                        {form.customerName ||
+                          linkedLead?.label ||
+                          copy.cards.attachCustomerOrLead}
+                      </span>
+                      <span className="muted">
+                        {form.siteAddress || copy.cards.addSiteAddress}
+                      </span>
+                      <div className="estimate-proposal-status-inline">
                         <span className="badge">
-                          {copy.cards.validUntil}{" "}
-                          {formatDateForDisplay(
-                            `${form.validUntil}T12:00:00.000Z`,
-                            { locale: displayLocale },
-                          )}
+                          {form.projectType || copy.cards.projectType}
+                        </span>
+                        {form.validUntil ? (
+                          <span className="badge">
+                            {copy.cards.validUntil}{" "}
+                            {formatDateForDisplay(
+                              `${form.validUntil}T12:00:00.000Z`,
+                              { locale: displayLocale },
+                            )}
+                          </span>
+                        ) : null}
+                      </div>
+                    </article>
+
+                    <article className="estimate-proposal-card">
+                      <span className="estimate-share-eyebrow">
+                        {copy.cards.customerReady}
+                      </span>
+                      <strong>{customerReadyLabel}</strong>
+                      <span>{reviewStatusLabel}</span>
+                      <span className="muted">{reviewStatusDetail}</span>
+                      {draftCustomerFacingIssues.length > 0 ? (
+                        <ul className="estimate-proposal-issue-list">
+                          {draftCustomerFacingIssues.map((issue) => (
+                            <li key={issue}>{issue}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className="muted">{copy.cards.readyBody}</span>
+                      )}
+                      {readinessChanged ? (
+                        <span className="muted">
+                          {copy.cards.refreshCustomerView}
                         </span>
                       ) : null}
-                    </div>
-                  </article>
+                    </article>
 
-                  <article className="estimate-proposal-card">
-                    <span className="estimate-share-eyebrow">
-                      {copy.cards.customerReady}
-                    </span>
-                    <strong>{customerReadyLabel}</strong>
-                    <span>{reviewStatusLabel}</span>
-                    <span className="muted">{reviewStatusDetail}</span>
-                    {draftCustomerFacingIssues.length > 0 ? (
-                      <ul className="estimate-proposal-issue-list">
-                        {draftCustomerFacingIssues.map((issue) => (
-                          <li key={issue}>{issue}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <span className="muted">{copy.cards.readyBody}</span>
-                    )}
-                    {readinessChanged ? (
-                      <span className="muted">
-                        {copy.cards.refreshCustomerView}
+                    <article className="estimate-proposal-card">
+                      <span className="estimate-share-eyebrow">
+                        {copy.cards.nextStep}
                       </span>
-                    ) : null}
-                  </article>
-
-                  <article className="estimate-proposal-card">
-                    <span className="estimate-share-eyebrow">
-                      {copy.cards.nextStep}
-                    </span>
-                    <strong>{nextStepTitle}</strong>
-                    <span className="muted">{nextStepDetail}</span>
-                    <div className="estimate-proposal-status-inline">
-                      <span className="badge">
-                        {formatShareStateLabelLocalized(
-                          selectedEstimate.latestShareLink?.state,
-                          copy,
-                        )}
-                      </span>
-                      <span className="badge">
-                        {formatEstimateStatusLabelLocalized(
-                          selectedEstimate.status,
-                          statusT,
-                        )}
-                      </span>
-                    </div>
-                  </article>
-                </div>
-              </section>
-
-              <section className="estimate-module-section">
-                <div className="invoice-header-row">
-                  <div className="stack-cell">
-                    <h4>{copy.form.projectSummaryTitle}</h4>
-                    <p className="muted">{copy.form.projectSummaryBody}</p>
-                  </div>
-                </div>
-
-                <form
-                  className="auth-form"
-                  style={{ marginTop: 14 }}
-                  onSubmit={(event) => event.preventDefault()}
-                >
-                  <div className="grid two-col">
-                    <label>
-                      {copy.form.estimateTitle}
-                      <input
-                        ref={titleInputRef}
-                        value={form.title}
-                        onChange={(event) =>
-                          updateForm("title", event.currentTarget.value)
-                        }
-                        placeholder={copy.form.estimateTitlePlaceholder}
-                      />
-                    </label>
-                    <label>
-                      {copy.form.estimateStatus}
-                      <select
-                        value={form.status}
-                        onChange={(event) => {
-                          const nextStatus = event.currentTarget
-                            .value as EstimateFormState["status"];
-                          if (
-                            !canTransitionEstimateStatus(
-                              selectedEstimate.status,
-                              nextStatus,
-                            )
-                          ) {
-                            setError(
-                              copy.messages.invalidStatusTransition(
-                                formatEstimateStatusLabelLocalized(
-                                  selectedEstimate.status,
-                                  statusT,
-                                ),
-                                formatEstimateStatusLabelLocalized(
-                                  nextStatus,
-                                  statusT,
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-                          setError(null);
-                          updateForm("status", nextStatus);
-                        }}
-                      >
-                        {estimateStatusOptions.map((status) => (
-                          <option key={status} value={status}>
-                            {formatEstimateStatusLabelLocalized(
-                              status,
-                              statusT,
-                            )}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="grid two-col">
-                    <label>
-                      {copy.form.lead}
-                      <select
-                        value={form.leadId}
-                        onChange={(event) =>
-                          updateLead(event.currentTarget.value)
-                        }
-                      >
-                        <option value="">{copy.form.noLeadAttached}</option>
-                        {leadOptions.map((lead) => (
-                          <option key={lead.id} value={lead.id}>
-                            {lead.label} · {lead.phoneE164}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      {copy.form.customerName}
-                      <input
-                        value={form.customerName}
-                        onChange={(event) =>
-                          updateForm("customerName", event.currentTarget.value)
-                        }
-                        placeholder={copy.form.customerNamePlaceholder}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="grid two-col">
-                    <label>
-                      {copy.form.siteAddress}
-                      <input
-                        value={form.siteAddress}
-                        onChange={(event) =>
-                          updateForm("siteAddress", event.currentTarget.value)
-                        }
-                        onBlur={() => {
-                          const zipCode = extractZipCode(form.siteAddress);
-                          const shouldAutoLookup =
-                            Boolean(zipCode) &&
-                            ((!form.taxCalculatedAt &&
-                              /^0(?:\.0+)?$/.test(
-                                (form.taxRatePercent || "0").trim() || "0",
-                              )) ||
-                              (form.taxRateSource === "WA_DOR" &&
-                                form.taxZipCode !== zipCode));
-                          if (shouldAutoLookup) {
-                            void handleLookupTaxRate({ silent: true });
-                          }
-                        }}
-                        placeholder={copy.form.siteAddressPlaceholder}
-                      />
-                    </label>
-                    <label>
-                      {copy.form.projectType}
-                      <input
-                        value={form.projectType}
-                        onChange={(event) =>
-                          updateForm("projectType", event.currentTarget.value)
-                        }
-                        placeholder={copy.form.projectTypePlaceholder}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="grid two-col">
-                    <label>
-                      {copy.form.taxRate}
-                      <div
-                        className="inline"
-                        style={{
-                          alignItems: "center",
-                          gap: 10,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <input
-                          value={form.taxRatePercent}
-                          onChange={(event) =>
-                            setManualTaxRate(event.currentTarget.value)
-                          }
-                          style={{ flex: "1 1 180px" }}
-                        />
-                        <button
-                          className="btn secondary"
-                          type="button"
-                          disabled={lookingUpTax || !form.siteAddress.trim()}
-                          onClick={() => void handleLookupTaxRate()}
-                        >
-                          {lookingUpTax
-                            ? copy.form.lookingUp
-                            : copy.form.autoFromZip}
-                        </button>
+                      <strong>{nextStepTitle}</strong>
+                      <span className="muted">{nextStepDetail}</span>
+                      <div className="estimate-proposal-status-inline">
+                        <span className="badge">
+                          {formatShareStateLabelLocalized(
+                            selectedEstimate.latestShareLink?.state,
+                            copy,
+                          )}
+                        </span>
+                        <span className="badge">
+                          {formatEstimateStatusLabelLocalized(
+                            selectedEstimate.status,
+                            statusT,
+                          )}
+                        </span>
                       </div>
-                      <span className="muted">
-                        {form.taxRateSource === "WA_DOR" && form.taxZipCode
-                          ? copy.form.autoTaxFrom(
-                              form.taxZipCode,
-                              form.taxJurisdiction,
+                    </article>
+                  </div>
+                </section>
+
+                <section className="estimate-module-section">
+                  <div className="invoice-header-row">
+                    <div className="stack-cell">
+                      <h4>{copy.form.projectSummaryTitle}</h4>
+                      <p className="muted">{copy.form.projectSummaryBody}</p>
+                    </div>
+                  </div>
+
+                  <form
+                    className="auth-form"
+                    style={{ marginTop: 14 }}
+                    onSubmit={(event) => event.preventDefault()}
+                  >
+                    <div className="grid two-col">
+                      <label>
+                        {copy.form.estimateTitle}
+                        <input
+                          ref={titleInputRef}
+                          value={form.title}
+                          onChange={(event) =>
+                            updateForm("title", event.currentTarget.value)
+                          }
+                          placeholder={copy.form.estimateTitlePlaceholder}
+                        />
+                      </label>
+                      <label>
+                        {copy.form.estimateStatus}
+                        <select
+                          value={form.status}
+                          onChange={(event) => {
+                            const nextStatus = event.currentTarget
+                              .value as EstimateFormState["status"];
+                            if (
+                              !canTransitionEstimateStatus(
+                                selectedEstimate.status,
+                                nextStatus,
+                              )
+                            ) {
+                              setError(
+                                copy.messages.invalidStatusTransition(
+                                  formatEstimateStatusLabelLocalized(
+                                    selectedEstimate.status,
+                                    statusT,
+                                  ),
+                                  formatEstimateStatusLabelLocalized(
+                                    nextStatus,
+                                    statusT,
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            setError(null);
+                            updateForm("status", nextStatus);
+                          }}
+                        >
+                          {estimateStatusOptions.map((status) => (
+                            <option key={status} value={status}>
+                              {formatEstimateStatusLabelLocalized(
+                                status,
+                                statusT,
+                              )}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="grid two-col">
+                      <label>
+                        {copy.form.lead}
+                        <select
+                          value={form.leadId}
+                          onChange={(event) =>
+                            updateLead(event.currentTarget.value)
+                          }
+                        >
+                          <option value="">{copy.form.noLeadAttached}</option>
+                          {leadOptions.map((lead) => (
+                            <option key={lead.id} value={lead.id}>
+                              {lead.label} · {lead.phoneE164}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        {copy.form.customerName}
+                        <input
+                          value={form.customerName}
+                          onChange={(event) =>
+                            updateForm(
+                              "customerName",
+                              event.currentTarget.value,
                             )
-                          : copy.form.autoTaxBody}
-                      </span>
-                    </label>
+                          }
+                          placeholder={copy.form.customerNamePlaceholder}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid two-col">
+                      <label>
+                        {copy.form.siteAddress}
+                        <input
+                          value={form.siteAddress}
+                          onChange={(event) =>
+                            updateForm("siteAddress", event.currentTarget.value)
+                          }
+                          onBlur={() => {
+                            const zipCode = extractZipCode(form.siteAddress);
+                            const shouldAutoLookup =
+                              Boolean(zipCode) &&
+                              ((!form.taxCalculatedAt &&
+                                /^0(?:\.0+)?$/.test(
+                                  (form.taxRatePercent || "0").trim() || "0",
+                                )) ||
+                                (form.taxRateSource === "WA_DOR" &&
+                                  form.taxZipCode !== zipCode));
+                            if (shouldAutoLookup) {
+                              void handleLookupTaxRate({ silent: true });
+                            }
+                          }}
+                          placeholder={copy.form.siteAddressPlaceholder}
+                        />
+                      </label>
+                      <label>
+                        {copy.form.projectType}
+                        <input
+                          value={form.projectType}
+                          onChange={(event) =>
+                            updateForm("projectType", event.currentTarget.value)
+                          }
+                          placeholder={copy.form.projectTypePlaceholder}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid two-col">
+                      <label>
+                        {copy.form.taxRate}
+                        <div
+                          className="inline"
+                          style={{
+                            alignItems: "center",
+                            gap: 10,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <input
+                            value={form.taxRatePercent}
+                            onChange={(event) =>
+                              setManualTaxRate(event.currentTarget.value)
+                            }
+                            style={{ flex: "1 1 180px" }}
+                          />
+                          <button
+                            className="btn secondary"
+                            type="button"
+                            disabled={lookingUpTax || !form.siteAddress.trim()}
+                            onClick={() => void handleLookupTaxRate()}
+                          >
+                            {lookingUpTax
+                              ? copy.form.lookingUp
+                              : copy.form.autoFromZip}
+                          </button>
+                        </div>
+                        <span className="muted">
+                          {form.taxRateSource === "WA_DOR" && form.taxZipCode
+                            ? copy.form.autoTaxFrom(
+                                form.taxZipCode,
+                                form.taxJurisdiction,
+                              )
+                            : copy.form.autoTaxBody}
+                        </span>
+                      </label>
+                      <label>
+                        {copy.form.validUntil}
+                        <input
+                          type="date"
+                          value={form.validUntil}
+                          onChange={(event) =>
+                            updateForm("validUntil", event.currentTarget.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
                     <label>
-                      {copy.form.validUntil}
-                      <input
-                        type="date"
-                        value={form.validUntil}
+                      {copy.form.projectSummaryField}
+                      <textarea
+                        value={form.description}
                         onChange={(event) =>
-                          updateForm("validUntil", event.currentTarget.value)
+                          updateForm("description", event.currentTarget.value)
                         }
+                        rows={3}
+                        placeholder={copy.form.projectSummaryPlaceholder}
                       />
                     </label>
-                  </div>
 
-                  <label>
-                    {copy.form.projectSummaryField}
-                    <textarea
-                      value={form.description}
-                      onChange={(event) =>
-                        updateForm("description", event.currentTarget.value)
-                      }
-                      rows={3}
-                      placeholder={copy.form.projectSummaryPlaceholder}
-                    />
-                  </label>
-
-                  <label>
-                    {copy.form.internalNotes}
-                    <textarea
-                      value={form.notes}
-                      onChange={(event) =>
-                        updateForm("notes", event.currentTarget.value)
-                      }
-                      rows={4}
-                      placeholder={copy.form.internalNotesPlaceholder}
-                    />
-                  </label>
-
-                  <label>
-                    {copy.form.customerTerms}
-                    <textarea
-                      value={form.terms}
-                      onChange={(event) =>
-                        updateForm("terms", event.currentTarget.value)
-                      }
-                      rows={4}
-                      placeholder={copy.form.customerTermsPlaceholder}
-                    />
-                  </label>
-                </form>
-              </section>
-
-              <EstimatePhotosPanel
-                estimateId={selectedEstimate.id}
-                savedLeadId={selectedEstimate.lead?.id || null}
-                pendingLeadId={form.leadId || null}
-                canManage={canManage}
-              />
-
-              <section className="estimate-module-section">
-                <div className="invoice-header-row">
-                  <div className="stack-cell">
-                    <h4>{copy.scope.title}</h4>
-                    <p className="muted">{copy.scope.body}</p>
-                  </div>
-                  <div className="portal-empty-actions">
-                    <select
-                      defaultValue=""
-                      onChange={(event) => {
-                        if (event.currentTarget.value) {
-                          addCatalogMaterial(event.currentTarget.value);
-                          event.currentTarget.value = "";
+                    <label>
+                      {copy.form.internalNotes}
+                      <textarea
+                        value={form.notes}
+                        onChange={(event) =>
+                          updateForm("notes", event.currentTarget.value)
                         }
-                      }}
-                    >
-                      <option value="">{copy.scope.addCatalogMaterial}</option>
-                      {materials.map((material) => (
-                        <option key={material.id} value={material.id}>
-                          {material.category} · {material.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      onClick={addCustomMaterial}
-                    >
-                      {copy.scope.addCustom}
-                    </button>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      onClick={addLaborLine}
-                    >
-                      {copy.scope.addLabor}
-                    </button>
-                  </div>
-                </div>
+                        rows={4}
+                        placeholder={copy.form.internalNotesPlaceholder}
+                      />
+                    </label>
 
-                {form.lineItems.length === 0 ? (
-                  <div className="portal-empty-state estimate-module-empty">
-                    <strong>{copy.scope.emptyTitle}</strong>
-                    <p className="muted">{copy.scope.emptyBody}</p>
-                  </div>
-                ) : (
-                  <div className="estimate-scope-editor">
-                    {form.lineItems.map((line, index) => (
-                      <article
-                        className="estimate-scope-editor-card"
-                        key={line.id}
+                    <label>
+                      {copy.form.customerTerms}
+                      <textarea
+                        value={form.terms}
+                        onChange={(event) =>
+                          updateForm("terms", event.currentTarget.value)
+                        }
+                        rows={4}
+                        placeholder={copy.form.customerTermsPlaceholder}
+                      />
+                    </label>
+                  </form>
+                </section>
+
+                <EstimatePhotosPanel
+                  estimateId={selectedEstimate.id}
+                  savedLeadId={selectedEstimate.lead?.id || null}
+                  pendingLeadId={form.leadId || null}
+                  canManage={canManage}
+                />
+
+                <section className="estimate-module-section">
+                  <div className="invoice-header-row">
+                    <div className="stack-cell">
+                      <h4>{copy.scope.title}</h4>
+                      <p className="muted">{copy.scope.body}</p>
+                    </div>
+                    <div className="portal-empty-actions">
+                      <select
+                        defaultValue=""
+                        onChange={(event) => {
+                          if (event.currentTarget.value) {
+                            addCatalogMaterial(event.currentTarget.value);
+                            event.currentTarget.value = "";
+                          }
+                        }}
                       >
-                        <div className="estimate-scope-editor-card-header">
-                          <div className="stack-cell">
-                            <span className="estimate-share-eyebrow">
-                              {copy.scope.item(index + 1)}
-                            </span>
+                        <option value="">
+                          {copy.scope.addCatalogMaterial}
+                        </option>
+                        {materials.map((material) => (
+                          <option key={material.id} value={material.id}>
+                            {material.category} · {material.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={addCustomMaterial}
+                      >
+                        {copy.scope.addCustom}
+                      </button>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={addLaborLine}
+                      >
+                        {copy.scope.addLabor}
+                      </button>
+                    </div>
+                  </div>
+
+                  {form.lineItems.length === 0 ? (
+                    <div className="portal-empty-state estimate-module-empty">
+                      <strong>{copy.scope.emptyTitle}</strong>
+                      <p className="muted">{copy.scope.emptyBody}</p>
+                    </div>
+                  ) : (
+                    <div className="estimate-scope-editor">
+                      {form.lineItems.map((line, index) => (
+                        <article
+                          className="estimate-scope-editor-card"
+                          key={line.id}
+                        >
+                          <div className="estimate-scope-editor-card-header">
+                            <div className="stack-cell">
+                              <span className="estimate-share-eyebrow">
+                                {copy.scope.item(index + 1)}
+                              </span>
+                              <label>
+                                {copy.scope.itemName}
+                                <input
+                                  value={line.name}
+                                  onChange={(event) =>
+                                    updateLine(line.id, {
+                                      name: event.currentTarget.value,
+                                    })
+                                  }
+                                  placeholder={copy.scope.itemNamePlaceholder}
+                                />
+                              </label>
+                            </div>
+                            <div className="estimate-scope-editor-total">
+                              <span className="muted">
+                                {formatEstimateItemTypeLabelLocalized(
+                                  line.type,
+                                  copy,
+                                )}
+                              </span>
+                              <strong>
+                                {formatEstimateCurrency(line.total)}
+                              </strong>
+                            </div>
+                          </div>
+
+                          <label>
+                            {copy.scope.detail}
+                            <textarea
+                              value={line.description}
+                              onChange={(event) =>
+                                updateLine(line.id, {
+                                  description: event.currentTarget.value,
+                                })
+                              }
+                              rows={2}
+                              placeholder={copy.scope.detailPlaceholder}
+                            />
+                          </label>
+
+                          <div className="estimate-scope-editor-fields">
                             <label>
-                              {copy.scope.itemName}
-                              <input
-                                value={line.name}
+                              {copy.scope.type}
+                              <select
+                                value={line.type}
                                 onChange={(event) =>
                                   updateLine(line.id, {
-                                    name: event.currentTarget.value,
+                                    type: event.currentTarget
+                                      .value as EstimateItemRow["type"],
                                   })
                                 }
-                                placeholder={copy.scope.itemNamePlaceholder}
+                              >
+                                <option value="MATERIAL">
+                                  {copy.scope.catalogMaterial}
+                                </option>
+                                <option value="CUSTOM_MATERIAL">
+                                  {copy.scope.customScope}
+                                </option>
+                                <option value="LABOR">
+                                  {copy.scope.labor}
+                                </option>
+                              </select>
+                            </label>
+                            <label>
+                              {copy.scope.quantity}
+                              <input
+                                value={line.quantity}
+                                onChange={(event) =>
+                                  updateLine(line.id, {
+                                    quantity: event.currentTarget.value,
+                                  })
+                                }
+                              />
+                            </label>
+                            <label>
+                              {copy.scope.unit}
+                              <input
+                                value={line.unit}
+                                onChange={(event) =>
+                                  updateLine(line.id, {
+                                    unit: event.currentTarget.value,
+                                  })
+                                }
+                              />
+                            </label>
+                            <label>
+                              {copy.scope.unitPrice}
+                              <input
+                                value={line.unitPrice}
+                                onChange={(event) =>
+                                  updateLine(line.id, {
+                                    unitPrice: event.currentTarget.value,
+                                  })
+                                }
                               />
                             </label>
                           </div>
-                          <div className="estimate-scope-editor-total">
-                            <span className="muted">
-                              {formatEstimateItemTypeLabelLocalized(
-                                line.type,
-                                copy,
-                              )}
-                            </span>
-                            <strong>
-                              {formatEstimateCurrency(line.total)}
-                            </strong>
-                          </div>
-                        </div>
 
-                        <label>
-                          {copy.scope.detail}
-                          <textarea
-                            value={line.description}
-                            onChange={(event) =>
-                              updateLine(line.id, {
-                                description: event.currentTarget.value,
-                              })
-                            }
-                            rows={2}
-                            placeholder={copy.scope.detailPlaceholder}
-                          />
-                        </label>
-
-                        <div className="estimate-scope-editor-fields">
-                          <label>
-                            {copy.scope.type}
-                            <select
-                              value={line.type}
-                              onChange={(event) =>
-                                updateLine(line.id, {
-                                  type: event.currentTarget
-                                    .value as EstimateItemRow["type"],
-                                })
-                              }
+                          <div className="estimate-module-line-actions">
+                            <button
+                              className="btn secondary"
+                              type="button"
+                              onClick={() => moveLine(line.id, -1)}
+                              disabled={index === 0}
                             >
-                              <option value="MATERIAL">
-                                {copy.scope.catalogMaterial}
-                              </option>
-                              <option value="CUSTOM_MATERIAL">
-                                {copy.scope.customScope}
-                              </option>
-                              <option value="LABOR">{copy.scope.labor}</option>
-                            </select>
-                          </label>
-                          <label>
-                            {copy.scope.quantity}
-                            <input
-                              value={line.quantity}
-                              onChange={(event) =>
-                                updateLine(line.id, {
-                                  quantity: event.currentTarget.value,
-                                })
-                              }
-                            />
-                          </label>
-                          <label>
-                            {copy.scope.unit}
-                            <input
-                              value={line.unit}
-                              onChange={(event) =>
-                                updateLine(line.id, {
-                                  unit: event.currentTarget.value,
-                                })
-                              }
-                            />
-                          </label>
-                          <label>
-                            {copy.scope.unitPrice}
-                            <input
-                              value={line.unitPrice}
-                              onChange={(event) =>
-                                updateLine(line.id, {
-                                  unitPrice: event.currentTarget.value,
-                                })
-                              }
-                            />
-                          </label>
-                        </div>
+                              {copy.scope.moveUp}
+                            </button>
+                            <button
+                              className="btn secondary"
+                              type="button"
+                              onClick={() => moveLine(line.id, 1)}
+                              disabled={index === form.lineItems.length - 1}
+                            >
+                              {copy.scope.moveDown}
+                            </button>
+                            <button
+                              className="btn secondary"
+                              type="button"
+                              onClick={() => removeLine(line.id)}
+                            >
+                              {copy.scope.remove}
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
 
-                        <div className="estimate-module-line-actions">
-                          <button
-                            className="btn secondary"
-                            type="button"
-                            onClick={() => moveLine(line.id, -1)}
-                            disabled={index === 0}
-                          >
-                            {copy.scope.moveUp}
-                          </button>
-                          <button
-                            className="btn secondary"
-                            type="button"
-                            onClick={() => moveLine(line.id, 1)}
-                            disabled={index === form.lineItems.length - 1}
-                          >
-                            {copy.scope.moveDown}
-                          </button>
-                          <button
-                            className="btn secondary"
-                            type="button"
-                            onClick={() => removeLine(line.id)}
-                          >
-                            {copy.scope.remove}
-                          </button>
-                        </div>
-                      </article>
-                    ))}
+                <section className="estimate-module-section">
+                  <div className="invoice-header-row">
+                    <div className="stack-cell">
+                      <h4>{copy.pricing.title}</h4>
+                      <p className="muted">{copy.pricing.body}</p>
+                    </div>
                   </div>
-                )}
-              </section>
 
-              <section className="estimate-module-section">
-                <div className="invoice-header-row">
-                  <div className="stack-cell">
-                    <h4>{copy.pricing.title}</h4>
-                    <p className="muted">{copy.pricing.body}</p>
+                  <div className="estimate-summary-grid">
+                    <article className="card estimate-summary-card">
+                      <span className="muted">{copy.pricing.subtotal}</span>
+                      <strong>{formatEstimateCurrency(totals.subtotal)}</strong>
+                    </article>
+                    <article className="card estimate-summary-card">
+                      <span className="muted">{copy.pricing.tax}</span>
+                      <strong>{formatEstimateCurrency(totals.tax)}</strong>
+                    </article>
+                    <article className="card estimate-summary-card estimate-summary-card--final">
+                      <span className="muted">{copy.pricing.total}</span>
+                      <strong>{formatEstimateCurrency(totals.total)}</strong>
+                    </article>
                   </div>
-                </div>
+                </section>
 
-                <div className="estimate-summary-grid">
-                  <article className="card estimate-summary-card">
-                    <span className="muted">{copy.pricing.subtotal}</span>
-                    <strong>{formatEstimateCurrency(totals.subtotal)}</strong>
-                  </article>
-                  <article className="card estimate-summary-card">
-                    <span className="muted">{copy.pricing.tax}</span>
-                    <strong>{formatEstimateCurrency(totals.tax)}</strong>
-                  </article>
-                  <article className="card estimate-summary-card estimate-summary-card--final">
-                    <span className="muted">{copy.pricing.total}</span>
-                    <strong>{formatEstimateCurrency(totals.total)}</strong>
-                  </article>
-                </div>
-              </section>
-
-              <section className="estimate-module-section">
-                <div className="invoice-header-row">
-                  <div className="stack-cell">
-                    <h4>{copy.share.title}</h4>
-                    <p className="muted">{copy.share.body}</p>
+                <section className="estimate-module-section">
+                  <div className="invoice-header-row">
+                    <div className="stack-cell">
+                      <h4>{copy.share.title}</h4>
+                      <p className="muted">{copy.share.body}</p>
+                    </div>
                   </div>
-                </div>
 
-                <div
-                  className="estimate-share-internal-card"
-                  style={{ marginTop: 12 }}
-                >
                   <div
-                    className="estimate-proposal-status-inline"
-                    style={{ marginBottom: 12 }}
+                    className="estimate-share-internal-card"
+                    style={{ marginTop: 12 }}
                   >
-                    <span className="badge">{customerReadyLabel}</span>
-                    <span className="badge">{reviewStatusLabel}</span>
-                    <span className="muted">{reviewStatusDetail}</span>
-                  </div>
+                    <div
+                      className="estimate-proposal-status-inline"
+                      style={{ marginBottom: 12 }}
+                    >
+                      <span className="badge">{customerReadyLabel}</span>
+                      <span className="badge">{reviewStatusLabel}</span>
+                      <span className="muted">{reviewStatusDetail}</span>
+                    </div>
 
-                  <div className="grid two-col" style={{ marginTop: 0 }}>
-                    <label>
-                      {copy.share.recipientName}
-                      <input
-                        value={shareRecipientName}
-                        onChange={(event) =>
-                          setShareRecipientName(event.currentTarget.value)
-                        }
-                        placeholder={copy.share.recipientNamePlaceholder}
-                      />
-                    </label>
-                    <label>
-                      {copy.share.recipientEmail}
-                      <input
-                        type="email"
-                        value={shareRecipientEmail}
-                        onChange={(event) =>
-                          setShareRecipientEmail(event.currentTarget.value)
-                        }
-                        placeholder={copy.share.recipientEmailPlaceholder}
-                      />
-                    </label>
-                  </div>
+                    <div className="grid two-col" style={{ marginTop: 0 }}>
+                      <label>
+                        {copy.share.recipientName}
+                        <input
+                          value={shareRecipientName}
+                          onChange={(event) =>
+                            setShareRecipientName(event.currentTarget.value)
+                          }
+                          placeholder={copy.share.recipientNamePlaceholder}
+                        />
+                      </label>
+                      <label>
+                        {copy.share.recipientEmail}
+                        <input
+                          type="email"
+                          value={shareRecipientEmail}
+                          onChange={(event) =>
+                            setShareRecipientEmail(event.currentTarget.value)
+                          }
+                          placeholder={copy.share.recipientEmailPlaceholder}
+                        />
+                      </label>
+                    </div>
 
-                  <div className="estimate-share-inline-meta">
-                    <span className="badge">
-                      {selectedEstimate.latestShareLink
-                        ? formatShareStateLabelLocalized(
-                            selectedEstimate.latestShareLink.state,
-                            copy,
-                          )
-                        : copy.share.noLink}
-                    </span>
-                    <span className="muted">
-                      {selectedEstimate.sharedAt
-                        ? copy.share.lastShared(
+                    <div className="estimate-share-inline-meta">
+                      <span className="badge">
+                        {selectedEstimate.latestShareLink
+                          ? formatShareStateLabelLocalized(
+                              selectedEstimate.latestShareLink.state,
+                              copy,
+                            )
+                          : copy.share.noLink}
+                      </span>
+                      <span className="muted">
+                        {selectedEstimate.sharedAt
+                          ? copy.share.lastShared(
+                              formatDateTimeForDisplay(
+                                selectedEstimate.sharedAt,
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                },
+                                { locale: displayLocale },
+                              ),
+                            )
+                          : copy.share.noLinkBody}
+                      </span>
+                      {selectedEstimate.shareExpiresAt ? (
+                        <span className="muted">
+                          {copy.share.expires(
                             formatDateTimeForDisplay(
-                              selectedEstimate.sharedAt,
+                              selectedEstimate.shareExpiresAt,
                               {
                                 month: "short",
                                 day: "numeric",
@@ -2837,250 +2999,14 @@ export default function EstimateManager({
                               },
                               { locale: displayLocale },
                             ),
-                          )
-                        : copy.share.noLinkBody}
-                    </span>
-                    {selectedEstimate.shareExpiresAt ? (
-                      <span className="muted">
-                        {copy.share.expires(
-                          formatDateTimeForDisplay(
-                            selectedEstimate.shareExpiresAt,
-                            {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            },
-                            { locale: displayLocale },
-                          ),
-                        )}
-                      </span>
-                    ) : null}
-                    {selectedEstimate.customerViewedAt ? (
-                      <span className="muted">
-                        {copy.share.customerViewed(
-                          formatDateTimeForDisplay(
-                            selectedEstimate.customerViewedAt,
-                            {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            },
-                            { locale: displayLocale },
-                          ),
-                        )}
-                      </span>
-                    ) : null}
-                    {selectedEstimate.customerDecisionAt ? (
-                      <span className="muted">
-                        {copy.share.customerDecision(
-                          formatDateTimeForDisplay(
-                            selectedEstimate.customerDecisionAt,
-                            {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            },
-                            { locale: displayLocale },
-                          ),
-                          selectedEstimate.customerDecisionName,
-                        )}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  {selectedEstimate.latestShareLink?.recipientName ||
-                  selectedEstimate.latestShareLink?.recipientEmail ||
-                  selectedEstimate.latestShareLink?.recipientPhoneE164 ? (
-                    <p className="muted" style={{ marginTop: 8 }}>
-                      {copy.share.latestRecipient}
-                      {[
-                        selectedEstimate.latestShareLink.recipientName,
-                        selectedEstimate.latestShareLink.recipientEmail,
-                        selectedEstimate.latestShareLink.recipientPhoneE164,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
-                  ) : null}
-
-                  {latestShareUrl ? (
-                    <div
-                      className="estimate-share-link-box"
-                      style={{ marginTop: 12 }}
-                    >
-                      <label>
-                        {copy.share.secureLink}
-                        <input
-                          value={latestShareUrl}
-                          readOnly
-                          onFocus={(event) => event.currentTarget.select()}
-                        />
-                      </label>
-                      <div className="portal-empty-actions">
-                        <button
-                          className="btn secondary"
-                          type="button"
-                          disabled={copyingShare}
-                          onClick={() => void handleCopyShareLink()}
-                        >
-                          {copyingShare
-                            ? copy.share.copying
-                            : copy.share.copyLink}
-                        </button>
-                      </div>
-                    </div>
-                  ) : selectedEstimate.latestShareLink ? (
-                    <p className="muted" style={{ marginTop: 12 }}>
-                      {copy.share.rawUrlMissing}
-                    </p>
-                  ) : null}
-
-                  <div
-                    className="portal-empty-actions"
-                    style={{ marginTop: 12 }}
-                  >
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      disabled={!canManage || !canGenerateShare || sharing}
-                      onClick={() => void handleGenerateShareLink()}
-                    >
-                      {sharing
-                        ? copy.share.generating
-                        : selectedEstimate.latestShareLink
-                          ? copy.share.refreshShareLink
-                          : copy.share.createShareLink}
-                    </button>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      disabled={!canManage || !canRevokeShare || revokingShare}
-                      onClick={() => void handleRevokeShareLink()}
-                    >
-                      {revokingShare
-                        ? copy.share.revoking
-                        : copy.share.revokeShareLink}
-                    </button>
-                    {previewShareUrl ? (
-                      <a
-                        className="btn secondary"
-                        href={previewShareUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {copy.share.openCustomerView}
-                      </a>
-                    ) : null}
-                  </div>
-                  {customerFacingIssueText ? (
-                    <p className="form-status" style={{ marginTop: 12 }}>
-                      {copy.share.beforeSending} {customerFacingIssueText}
-                    </p>
-                  ) : null}
-                  {readinessChanged ? (
-                    <p className="muted" style={{ marginTop: 12 }}>
-                      {copy.share.unsavedEdits}
-                    </p>
-                  ) : null}
-                </div>
-              </section>
-
-              <section className="estimate-module-section">
-                <div className="invoice-header-row">
-                  <div className="stack-cell">
-                    <h4>{copy.cards.nextStep}</h4>
-                    <p className="muted">{nextStepDetail}</p>
-                  </div>
-                </div>
-
-                <div className="portal-empty-actions" style={{ marginTop: 12 }}>
-                  <button
-                    className="btn primary"
-                    type="button"
-                    disabled={!canManage || saving}
-                    onClick={() => void handleSaveEstimate()}
-                  >
-                    {saving ? copy.actions.saving : copy.actions.save}
-                  </button>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    disabled={!canManage || !canSend || sending}
-                    onClick={() => void handleSendEstimate()}
-                  >
-                    {sending ? copy.actions.sending : copy.actions.send}
-                  </button>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    disabled={!canManage || !canConvert || converting}
-                    onClick={() => void handleConvertEstimate(false)}
-                  >
-                    {converting
-                      ? copy.actions.scheduling
-                      : copy.actions.scheduleJob}
-                  </button>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    disabled={!canManage || !canConvertToInvoice || converting}
-                    onClick={() => void handleConvertEstimate(true)}
-                  >
-                    {converting
-                      ? copy.actions.scheduling
-                      : copy.actions.scheduleJobDraftInvoice}
-                  </button>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    disabled={!canManage || archiving}
-                    onClick={() => void handleArchiveEstimate()}
-                  >
-                    {archiving ? copy.actions.archiving : copy.actions.archive}
-                  </button>
-                </div>
-                {selectedEstimate && selectedEstimate.total <= 0 ? (
-                  <p className="form-status" style={{ marginTop: 12 }}>
-                    {copy.actions.positiveTotalWarning}
-                  </p>
-                ) : null}
-              </section>
-
-              <section className="estimate-module-section">
-                <div className="invoice-header-row">
-                  <div className="stack-cell">
-                    <h4>{copy.activity.title}</h4>
-                  </div>
-                </div>
-                {selectedEstimate.activities.length === 0 ? (
-                  <div
-                    className="portal-empty-state estimate-module-empty"
-                    style={{ marginTop: 12 }}
-                  >
-                    <strong>{copy.activity.emptyTitle}</strong>
-                  </div>
-                ) : (
-                  <ul className="timeline" style={{ marginTop: 12 }}>
-                    {selectedEstimate.activities.map((activity) => (
-                      <li key={activity.id} className="timeline-item">
-                        <span className="timeline-dot" />
-                        <div className="timeline-content">
-                          <strong>
-                            {describeEstimateActivityTypeLocalized(
-                              activity.type,
-                              copy,
-                            )}
-                          </strong>
-                          <span className="muted">{activity.actorName}</span>
-                          <span className="muted">
-                            {formatDateTimeForDisplay(
-                              activity.createdAt,
+                          )}
+                        </span>
+                      ) : null}
+                      {selectedEstimate.customerViewedAt ? (
+                        <span className="muted">
+                          {copy.share.customerViewed(
+                            formatDateTimeForDisplay(
+                              selectedEstimate.customerViewedAt,
                               {
                                 month: "short",
                                 day: "numeric",
@@ -3089,18 +3015,249 @@ export default function EstimateManager({
                                 minute: "2-digit",
                               },
                               { locale: displayLocale },
-                            )}
-                          </span>
+                            ),
+                          )}
+                        </span>
+                      ) : null}
+                      {selectedEstimate.customerDecisionAt ? (
+                        <span className="muted">
+                          {copy.share.customerDecision(
+                            formatDateTimeForDisplay(
+                              selectedEstimate.customerDecisionAt,
+                              {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              },
+                              { locale: displayLocale },
+                            ),
+                            selectedEstimate.customerDecisionName,
+                          )}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {selectedEstimate.latestShareLink?.recipientName ||
+                    selectedEstimate.latestShareLink?.recipientEmail ||
+                    selectedEstimate.latestShareLink?.recipientPhoneE164 ? (
+                      <p className="muted" style={{ marginTop: 8 }}>
+                        {copy.share.latestRecipient}
+                        {[
+                          selectedEstimate.latestShareLink.recipientName,
+                          selectedEstimate.latestShareLink.recipientEmail,
+                          selectedEstimate.latestShareLink.recipientPhoneE164,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    ) : null}
+
+                    {latestShareUrl ? (
+                      <div
+                        className="estimate-share-link-box"
+                        style={{ marginTop: 12 }}
+                      >
+                        <label>
+                          {copy.share.secureLink}
+                          <input
+                            value={latestShareUrl}
+                            readOnly
+                            onFocus={(event) => event.currentTarget.select()}
+                          />
+                        </label>
+                        <div className="portal-empty-actions">
+                          <button
+                            className="btn secondary"
+                            type="button"
+                            disabled={copyingShare}
+                            onClick={() => void handleCopyShareLink()}
+                          >
+                            {copyingShare
+                              ? copy.share.copying
+                              : copy.share.copyLink}
+                          </button>
                         </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            </>
-          )}
-        </section>
-      </div>
+                      </div>
+                    ) : selectedEstimate.latestShareLink ? (
+                      <p className="muted" style={{ marginTop: 12 }}>
+                        {copy.share.rawUrlMissing}
+                      </p>
+                    ) : null}
+
+                    <div
+                      className="portal-empty-actions"
+                      style={{ marginTop: 12 }}
+                    >
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        disabled={!canManage || !canGenerateShare || sharing}
+                        onClick={() => void handleGenerateShareLink()}
+                      >
+                        {sharing
+                          ? copy.share.generating
+                          : selectedEstimate.latestShareLink
+                            ? copy.share.refreshShareLink
+                            : copy.share.createShareLink}
+                      </button>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        disabled={
+                          !canManage || !canRevokeShare || revokingShare
+                        }
+                        onClick={() => void handleRevokeShareLink()}
+                      >
+                        {revokingShare
+                          ? copy.share.revoking
+                          : copy.share.revokeShareLink}
+                      </button>
+                      {previewShareUrl ? (
+                        <a
+                          className="btn secondary"
+                          href={previewShareUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {copy.share.openCustomerView}
+                        </a>
+                      ) : null}
+                    </div>
+                    {customerFacingIssueText ? (
+                      <p className="form-status" style={{ marginTop: 12 }}>
+                        {copy.share.beforeSending} {customerFacingIssueText}
+                      </p>
+                    ) : null}
+                    {readinessChanged ? (
+                      <p className="muted" style={{ marginTop: 12 }}>
+                        {copy.share.unsavedEdits}
+                      </p>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="estimate-module-section">
+                  <div className="invoice-header-row">
+                    <div className="stack-cell">
+                      <h4>{copy.cards.nextStep}</h4>
+                      <p className="muted">{nextStepDetail}</p>
+                    </div>
+                  </div>
+
+                  <div
+                    className="portal-empty-actions"
+                    style={{ marginTop: 12 }}
+                  >
+                    <button
+                      className="btn primary"
+                      type="button"
+                      disabled={!canManage || saving}
+                      onClick={() => void handleSaveEstimate()}
+                    >
+                      {saving ? copy.actions.saving : copy.actions.save}
+                    </button>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      disabled={!canManage || !canSend || sending}
+                      onClick={() => void handleSendEstimate()}
+                    >
+                      {sending ? copy.actions.sending : copy.actions.send}
+                    </button>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      disabled={!canManage || !canScheduleJob || converting}
+                      onClick={() => void handleConvertEstimate(false)}
+                    >
+                      {converting
+                        ? copy.actions.scheduling
+                        : copy.actions.scheduleJob}
+                    </button>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      disabled={
+                        !canManage || !canConvertToInvoice || converting
+                      }
+                      onClick={() => void handleConvertEstimate(true)}
+                    >
+                      {converting
+                        ? copy.actions.scheduling
+                        : hasLinkedJob
+                          ? copy.actions.createInvoiceDraft
+                          : copy.actions.scheduleJobDraftInvoice}
+                    </button>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      disabled={!canManage || archiving}
+                      onClick={() => void handleArchiveEstimate()}
+                    >
+                      {archiving
+                        ? copy.actions.archiving
+                        : copy.actions.archive}
+                    </button>
+                  </div>
+                  {selectedEstimate && selectedEstimate.total <= 0 ? (
+                    <p className="form-status" style={{ marginTop: 12 }}>
+                      {copy.actions.positiveTotalWarning}
+                    </p>
+                  ) : null}
+                </section>
+
+                <section className="estimate-module-section">
+                  <div className="invoice-header-row">
+                    <div className="stack-cell">
+                      <h4>{copy.activity.title}</h4>
+                    </div>
+                  </div>
+                  {selectedEstimate.activities.length === 0 ? (
+                    <div
+                      className="portal-empty-state estimate-module-empty"
+                      style={{ marginTop: 12 }}
+                    >
+                      <strong>{copy.activity.emptyTitle}</strong>
+                    </div>
+                  ) : (
+                    <ul className="timeline" style={{ marginTop: 12 }}>
+                      {selectedEstimate.activities.map((activity) => (
+                        <li key={activity.id} className="timeline-item">
+                          <span className="timeline-dot" />
+                          <div className="timeline-content">
+                            <strong>
+                              {describeEstimateActivityTypeLocalized(
+                                activity.type,
+                                copy,
+                              )}
+                            </strong>
+                            <span className="muted">{activity.actorName}</span>
+                            <span className="muted">
+                              {formatDateTimeForDisplay(
+                                activity.createdAt,
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                },
+                                { locale: displayLocale },
+                              )}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </>
+            )}
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

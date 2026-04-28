@@ -5,7 +5,7 @@ import {
   exchangeOutlookCodeForTokens,
   getOutlookProfile,
 } from "@/lib/integrations/outlookClient";
-import { assertOrgAccess, requireIntegrationSessionUser } from "@/lib/integrations/scope";
+import { assertIntegrationAdminAccess, requireIntegrationSessionUser } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,7 @@ export async function GET(req: Request) {
 
   try {
     const user = await requireIntegrationSessionUser();
-    await assertOrgAccess(user, oauthState.orgId);
+    await assertIntegrationAdminAccess(user, oauthState.orgId);
 
     const token = await exchangeOutlookCodeForTokens({
       code,

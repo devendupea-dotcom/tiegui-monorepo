@@ -18,6 +18,7 @@ export type ContractorWorkflowActionKind =
   | "finish_estimate"
   | "revise_estimate"
   | "schedule_job"
+  | "create_invoice"
   | "open_operational_job"
   | "open_schedule"
   | "open_invoices"
@@ -172,14 +173,23 @@ export function resolveContractorWorkflow(input: ContractorWorkflowInput): Contr
   }
 
   if (input.hasScheduledJob && !input.hasLatestInvoice) {
+    const canCreateInvoiceFromEstimate =
+      input.latestEstimateStatus === "APPROVED" ||
+      input.latestEstimateStatus === "CONVERTED";
+    const nextAction: ContractorWorkflowAction = canCreateInvoiceFromEstimate
+      ? { kind: "create_invoice", label: "Create Invoice" }
+      : input.hasOperationalJob
+        ? { kind: "open_operational_job", label: "Open Operational Job" }
+        : { kind: "open_schedule", label: "Open Schedule" };
+
     return buildStage(
       "job_scheduled",
-      "Job scheduled",
-      "The work is booked. Keep operations moving and invoice when the work is done.",
+      canCreateInvoiceFromEstimate ? "Ready to invoice" : "Job scheduled",
+      canCreateInvoiceFromEstimate
+        ? "The job is scheduled. Create the invoice draft from the approved estimate when you are ready to collect."
+        : "The work is booked. Keep operations moving and invoice when the work is done.",
       "active",
-      input.hasOperationalJob
-        ? { kind: "open_operational_job", label: "Open Operational Job" }
-        : { kind: "open_schedule", label: "Open Schedule" },
+      nextAction,
     );
   }
 
@@ -230,6 +240,8 @@ export function resolveContractorWorkflowActionTarget(
       return input.phoneHref ? { href: input.phoneHref, external: true } : { href: input.messagesHref };
     case "create_estimate":
       return { href: input.createEstimateHref };
+    case "create_invoice":
+      return { href: input.latestEstimateHref || input.invoiceHref };
     case "finish_estimate":
     case "revise_estimate":
       return { href: input.latestEstimateHref || input.createEstimateHref };

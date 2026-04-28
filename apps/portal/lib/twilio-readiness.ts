@@ -77,15 +77,15 @@ export function getTwilioMessagingComposeNotice(
 ): string | null {
   switch (code) {
     case "SEND_DISABLED":
-      return "Messaging is not live in this deployment yet. Messages sent here will be saved as queued until sending is enabled.";
+      return "Queue-only mode: replies are saved, but customers will not receive live SMS until sending is enabled.";
     case "PENDING_A2P":
-      return "Messaging is not live yet. Twilio registration is still pending.";
+      return "SMS is not live yet because Twilio A2P registration is still pending.";
     case "PAUSED":
       return "Messaging is paused for this workspace until Twilio is reactivated.";
     case "TOKEN_KEY_MISSING":
-      return "Messaging is blocked because the Twilio token encryption key is missing.";
+      return "Messaging is blocked because this deployment cannot read Twilio credentials.";
     case "NOT_CONFIGURED":
-      return "Messaging is not configured for this workspace yet.";
+      return "Messaging is not configured for this workspace yet. Calls and manual notes still work.";
     default:
       return null;
   }

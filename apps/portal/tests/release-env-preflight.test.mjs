@@ -17,7 +17,6 @@ const baseEnv = {
   UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
   UPSTASH_REDIS_REST_TOKEN: "test-upstash-token",
   STRIPE_SECRET_KEY: "sk_test_123",
-  STRIPE_CONNECT_CLIENT_ID: "ca_test_123",
   STRIPE_WEBHOOK_SECRET: "whsec_test_123",
   TWILIO_TOKEN_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   TWILIO_SEND_ENABLED: "true",
@@ -110,14 +109,12 @@ test("release env preflight blocks partial rate-limit backend env pairs", async 
 test("release env preflight blocks malformed Stripe and Twilio secrets", async () => {
   const result = await runPreflight({
     STRIPE_SECRET_KEY: "not-a-stripe-secret",
-    STRIPE_CONNECT_CLIENT_ID: "not-a-connect-client-id",
     STRIPE_WEBHOOK_SECRET: "not-a-webhook-secret",
     TWILIO_TOKEN_ENCRYPTION_KEY: "too-short",
   });
 
   assert.equal(result.code, 1);
   assert.match(result.stdout, /FAIL Stripe secret shape/);
-  assert.match(result.stdout, /FAIL Stripe Connect client id shape/);
   assert.match(result.stdout, /FAIL Stripe webhook secret shape/);
   assert.match(result.stdout, /FAIL Twilio token encryption key shape/);
 });

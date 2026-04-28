@@ -267,7 +267,6 @@ export async function GET(req: Request) {
     stripe: {
       ok: Boolean(
         envSnapshot.STRIPE_SECRET_KEY &&
-        envSnapshot.STRIPE_CONNECT_CLIENT_ID &&
         envSnapshot.STRIPE_WEBHOOK_SECRET,
       ),
       env: {

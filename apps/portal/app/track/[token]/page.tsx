@@ -26,7 +26,7 @@ export default async function JobTrackingPage(
           <header className="estimate-share-header">
             <div className="estimate-share-brand">
               <div className="stack-cell">
-                <span className="estimate-share-eyebrow">Project Tracking</span>
+                <span className="estimate-share-eyebrow">{tracking.trackingEyebrow}</span>
                 <h1>{tracking.contractor.name}</h1>
                 {tracking.contractor.website ? (
                   <a href={tracking.contractor.website} target="_blank" rel="noreferrer">
@@ -50,7 +50,7 @@ export default async function JobTrackingPage(
               <span className="muted">Status: {tracking.currentStatusLabel}</span>
             </article>
             <article className="estimate-share-panel">
-              <span className="muted">Schedule</span>
+              <span className="muted">{tracking.scheduleLabel}</span>
               <strong>{tracking.scheduledDate || "Scheduling in progress"}</strong>
               <span>{tracking.scheduledWindow}</span>
               <span className="muted">{tracking.assignedCrewName ? `Assigned crew: ${tracking.assignedCrewName}` : "Crew assignment pending"}</span>
@@ -66,8 +66,8 @@ export default async function JobTrackingPage(
           <section className="estimate-share-section">
             <div className="dispatch-panel-head">
               <div>
-                <h2>Progress</h2>
-                <p className="muted">This updates from your contractor&apos;s live dispatch workflow.</p>
+                <h2>{tracking.progressTitle}</h2>
+                <p className="muted">{tracking.progressDescription}</p>
               </div>
             </div>
 
@@ -89,7 +89,7 @@ export default async function JobTrackingPage(
             <div className="dispatch-panel-head">
               <div>
                 <h2>Timeline</h2>
-                <p className="muted">Recent updates from scheduling, status changes, and customer dispatch messages.</p>
+                <p className="muted">{tracking.timelineDescription}</p>
               </div>
             </div>
 

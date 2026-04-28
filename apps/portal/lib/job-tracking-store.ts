@@ -13,9 +13,11 @@ import {
   isDispatchStatusValue,
 } from "@/lib/dispatch";
 import {
+  buildBuilderTrackingProgressSteps,
   buildJobTrackingProgressSteps,
   createJobTrackingToken,
   describeJobTrackingStatusChange,
+  formatBuilderTrackingStatusLabel,
   formatOperationalJobStatusLabel,
   formatJobTrackingStatusLabel,
   type CustomerJobTrackingDetail,
@@ -78,6 +80,7 @@ const publicTrackingInclude = {
           phone: true,
           email: true,
           website: true,
+          portalVertical: true,
           dashboardConfig: {
             select: {
               calendarTimezone: true,
@@ -678,6 +681,8 @@ export async function getJobTrackingByToken(
     .slice(0, 16);
 
   const status = dispatchStatusFromDb(record.job.dispatchStatus);
+  const vertical = record.job.org.portalVertical === "HOMEBUILDER" ? "HOMEBUILDER" : "CONTRACTOR";
+  const builderTracking = vertical === "HOMEBUILDER";
   const estimateTitle =
     record.job.linkedEstimate?.title ||
     record.job.sourceEstimate?.title ||
@@ -685,11 +690,23 @@ export async function getJobTrackingByToken(
 
   return {
     jobId: record.job.id,
-    trackingTitle: estimateTitle || record.job.serviceType || "Project update",
+    trackingTitle: estimateTitle || record.job.serviceType || (builderTracking ? "Home project update" : "Project update"),
     customerName: record.job.customerName,
     address: record.job.address,
     currentStatus: status,
-    currentStatusLabel: formatJobTrackingStatusLabel(status),
+    currentStatusLabel: builderTracking
+      ? formatBuilderTrackingStatusLabel(status)
+      : formatJobTrackingStatusLabel(status),
+    vertical,
+    trackingEyebrow: builderTracking ? "Home Project Tracking" : "Project Tracking",
+    scheduleLabel: builderTracking ? "Next milestone" : "Schedule",
+    progressTitle: builderTracking ? "Build Journey" : "Progress",
+    progressDescription: builderTracking
+      ? "This follows the major phases Endeavor shares with buyers as the home moves from planning toward move-in."
+      : "This updates from your contractor's live dispatch workflow.",
+    timelineDescription: builderTracking
+      ? "Recent shared updates from planning, scheduling, customer communication, and field progress."
+      : "Recent updates from scheduling, status changes, and customer dispatch messages.",
     scheduledDate: bookingProjection.scheduledDate
       ? formatTrackingDate(bookingProjection.scheduledDate)
       : null,
@@ -701,7 +718,9 @@ export async function getJobTrackingByToken(
       email: record.job.org.email || "",
       website: record.job.org.website || "",
     },
-    progressSteps: buildJobTrackingProgressSteps(status),
+    progressSteps: builderTracking
+      ? buildBuilderTrackingProgressSteps(status)
+      : buildJobTrackingProgressSteps(status),
     timeline: timeline.map((item) => ({
       ...item,
       detail: item.detail,

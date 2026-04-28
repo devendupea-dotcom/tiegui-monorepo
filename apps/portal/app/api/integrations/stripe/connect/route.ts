@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
-import { createIntegrationOAuthState } from "@/lib/integrations/oauth-state";
 import { isStripeConfigured } from "@/lib/integrations/provider-config";
 import {
-  buildStripeAuthorizeUrl,
-  resolveStripeRedirectUri,
+  createStripeOnboardingUrl,
 } from "@/lib/integrations/stripe-connect";
 import {
   IntegrationScopeError,
-  resolveIntegrationOrgScope,
+  resolveIntegrationAdminScope,
 } from "@/lib/integrations/scope";
 import { getBaseUrlFromRequest } from "@/lib/urls";
 
@@ -26,7 +24,7 @@ function buildSettingsUrl(req: Request, input: { orgId: string; internalUser: bo
 
 export async function GET(req: Request) {
   try {
-    const scope = await resolveIntegrationOrgScope(req);
+    const scope = await resolveIntegrationAdminScope(req);
     if (!scope.user.id) {
       throw new IntegrationScopeError("Unauthorized", 401);
     }
@@ -34,20 +32,12 @@ export async function GET(req: Request) {
       return NextResponse.redirect(buildSettingsUrl(req, { ...scope, error: "stripe_not_configured" }));
     }
 
-    const origin = getBaseUrlFromRequest(req);
-    const redirectUri = resolveStripeRedirectUri(origin);
-    const state = await createIntegrationOAuthState({
+    const onboardingUrl = await createStripeOnboardingUrl({
       orgId: scope.orgId,
-      provider: "STRIPE",
-      redirectUri,
+      origin: getBaseUrlFromRequest(req),
     });
 
-    return NextResponse.redirect(
-      buildStripeAuthorizeUrl({
-        state,
-        redirectUri,
-      }),
-    );
+    return NextResponse.redirect(onboardingUrl);
   } catch (error) {
     if (error instanceof IntegrationScopeError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });

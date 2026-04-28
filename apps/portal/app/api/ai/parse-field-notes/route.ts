@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { normalizeEnvValue } from "@/lib/env";
 import {
@@ -415,9 +416,11 @@ export async function POST(req: Request) {
     try {
       parsed = JSON.parse(extractJsonBody(rawText));
     } catch (error) {
+      const outputHash = createHash("sha256").update(rawText).digest("hex").slice(0, 16);
       console.error("Field notes parser returned invalid JSON.", {
-        rawText,
-        error,
+        outputLength: rawText.length,
+        outputHash,
+        error: error instanceof Error ? error.message : "unknown",
       });
       throw new AppApiError("The AI response could not be organized into structured data. Try another photo.", 502);
     }

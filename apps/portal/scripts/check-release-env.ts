@@ -186,7 +186,6 @@ function buildChecks(): CheckResult[] {
     getRateLimitBackendCheck(),
     required("Stripe billing", [
       "STRIPE_SECRET_KEY",
-      "STRIPE_CONNECT_CLIENT_ID",
       "STRIPE_WEBHOOK_SECRET",
     ]),
     required("Twilio runtime flags", [
@@ -221,15 +220,6 @@ function buildChecks(): CheckResult[] {
       "STRIPE_WEBHOOK_SECRET",
       (value) => value.startsWith("whsec_"),
       "a value that starts with whsec_",
-    ),
-  );
-
-  checks.push(
-    requiredShape(
-      "Stripe Connect client id shape",
-      "STRIPE_CONNECT_CLIENT_ID",
-      (value) => value.startsWith("ca_"),
-      "a value that starts with ca_",
     ),
   );
 

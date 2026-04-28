@@ -7,9 +7,11 @@ import {
   buildEstimateListWhere,
   buildExistingLineFallback,
   buildInvoiceLineDescription,
+  canConvertEstimateForTargets,
   mergeJobNotes,
   normalizeEstimateItemRows,
   normalizeEstimatePayloadCore,
+  resolveEstimateStatusAfterConversion,
   resolveActivityTypeForStatus,
 } from "../lib/estimates-store-core.ts";
 
@@ -202,6 +204,11 @@ test("conversion/list helper outputs stay compact and stable", () => {
   assert.equal(resolveActivityTypeForStatus("APPROVED"), "APPROVED");
   assert.equal(buildInvoiceLineDescription({ name: "Paint", description: "Blue accent wall" }), "Paint - Blue accent wall");
   assert.equal(mergeJobNotes(" First note ", "Second note", "First note"), "First note\n\nSecond note");
+  assert.equal(canConvertEstimateForTargets("APPROVED", { createInvoice: false }), true);
+  assert.equal(canConvertEstimateForTargets("CONVERTED", { createInvoice: true }), true);
+  assert.equal(canConvertEstimateForTargets("CONVERTED", { createInvoice: false }), false);
+  assert.equal(resolveEstimateStatusAfterConversion({ currentStatus: "APPROVED", createInvoice: false }), "APPROVED");
+  assert.equal(resolveEstimateStatusAfterConversion({ currentStatus: "APPROVED", createInvoice: true }), "CONVERTED");
   assert.deepEqual(
     buildEstimateActivityMetadata({
       status: "SENT",

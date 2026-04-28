@@ -264,7 +264,6 @@ Phase 1 integrations readiness UI, only if those providers should connect in sta
 Billing + collections readiness, if Stripe pay links or recurring billing should work in staging:
 
 - `STRIPE_SECRET_KEY`
-- `STRIPE_CONNECT_CLIENT_ID`
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_REDIRECT_URI` optional
 
@@ -276,7 +275,84 @@ Production rate limiting:
 - Or Vercel KV REST env names:
   - `KV_REST_API_URL`
   - `KV_REST_API_TOKEN`
-- Preview/production release preflight accepts either complete pair and fails if neither pair, or only a partial pair, is present. Vercel KV integrations may inject the `KV_REST_API_*` names automatically.
+- Preview/production release preflight accepts either pair and fails if neither pair is present.
+
+Public website lead intake, if enabled:
+
+- INTERNAL users manage sources at `/hq/orgs/[orgId]/website-leads`.
+- Create one active `WebsiteLeadSource` per external website or form integration.
+- The source id maps to the organization. Public callers must not send or choose `orgId`.
+- Source secrets are encrypted/hashed in the database. Plaintext is shown only immediately after creation or rotation.
+- If `allowedOrigin` is set, it must be an origin such as `https://velocitylandscapes.com`, not a path like `/contact`.
+- Browser `Origin`/`Referer` is checked when present, but HMAC signing is the real authentication layer.
+- Signed requests to `POST /api/public/website-leads` must include:
+  - `Content-Type: application/json`
+  - `X-TieGui-Source-Id`
+  - `X-TieGui-Timestamp`
+  - `X-TieGui-Signature`
+  - `X-TieGui-Idempotency-Key`
+- Signature base string: `<timestamp>.<sourceId>.<raw JSON body>`, signed with HMAC-SHA256 using the source secret.
+- Generate signatures server-side. Never expose the source secret in browser JavaScript.
+- Reusing the same idempotency key and same body returns the original lead result. Reusing the same key with a different body returns `409`.
+- Disabling a source leaves receipts intact and makes future public intake requests for that source fail.
+- Rotating a source preserves the source id but requires the external website to update its server-side secret.
+- The legacy global `WEBSITE_LEAD_WEBHOOK_SECRET` + caller-supplied `orgId` path is disabled.
+
+Server-side signing example:
+
+```ts
+import { createHmac, randomUUID } from "node:crypto";
+
+const sourceId = process.env.TIEGUI_WEBSITE_LEAD_SOURCE_ID!;
+const sourceSecret = process.env.TIEGUI_WEBSITE_LEAD_SECRET!;
+const rawBody = JSON.stringify({
+  name: "Cesar Homeowner",
+  phone: "+12065550100",
+  email: "cesar@example.com",
+  reason: "Custom outdoor living project",
+  message: "Looking for design help and an estimate.",
+  smsOptIn: true,
+  attribution: { utm_source: "google", utm_medium: "cpc" },
+});
+const timestamp = new Date().toISOString();
+const signature = createHmac("sha256", sourceSecret)
+  .update(`${timestamp}.${sourceId}.${rawBody}`, "utf8")
+  .digest("hex");
+
+await fetch("https://app.tieguisolutions.com/api/public/website-leads", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "X-TieGui-Source-Id": sourceId,
+    "X-TieGui-Timestamp": timestamp,
+    "X-TieGui-Signature": signature,
+    "X-TieGui-Idempotency-Key": randomUUID(),
+  },
+  body: rawBody,
+});
+```
+
+Website lead staging smoke:
+
+```bash
+BASE_URL=https://<portal-preview-or-staging-url> \
+WEBSITE_LEAD_SMOKE_SOURCE_ID=<source-id> \
+WEBSITE_LEAD_SMOKE_SECRET=<one-time-secret> \
+VERCEL_AUTOMATION_BYPASS_SECRET=<optional-preview-bypass> \
+npm run smoke:website-leads --workspace=portal
+```
+
+Add `WEBSITE_LEAD_SMOKE_EXPECT_ORIGIN_REJECTION=1` only when the source has `allowedOrigin` configured.
+
+To create a disposable smoke source directly against a configured database:
+
+```bash
+BASE_URL=http://127.0.0.1:3001 \
+CREATE_WEBSITE_LEAD_SMOKE_SOURCE=1 \
+WEBSITE_LEAD_SMOKE_ORG_ID=<org-id> \
+NEXTAUTH_SECRET=<local-secret-used-for-integration-token-encryption> \
+npm run smoke:website-leads --workspace=portal
+```
 
 Phase 1 core-only release did not require Twilio activation. For the current customer go-live path,
 run `npm run check:release-env --workspace=portal` and treat billing, collections cron, and Twilio
@@ -400,6 +476,7 @@ Required env vars in `apps/portal/.env.local`:
 TWILIO_TOKEN_ENCRYPTION_KEY=... # base64-encoded 32-byte key
 TWILIO_SEND_ENABLED=false
 TWILIO_VALIDATE_SIGNATURE=false
+TWILIO_ALLOW_UNSIGNED_WEBHOOKS=true # local/test only; never set this in production
 TWILIO_SMS_COST_ESTIMATE_CENTS=1
 CRON_SECRET=...
 TWILIO_VOICE_AFTER_CALL_URL=... # optional override; defaults to /api/webhooks/twilio/after-call
@@ -416,6 +493,7 @@ Behavior:
 - `TWILIO_SEND_ENABLED=false`: outbound messages are saved in CRM and marked `QUEUED`.
 - `TWILIO_SEND_ENABLED=true`: outbound messages are sent to Twilio and message status/SID are stored.
 - `TWILIO_VALIDATE_SIGNATURE=true`: inbound webhooks require a valid `X-Twilio-Signature` using the org's token.
+- `TWILIO_ALLOW_UNSIGNED_WEBHOOKS=true`: local/test-only bypass for unsigned webhook payloads. Production rejects unsigned traffic unless `TWILIO_VALIDATE_SIGNATURE=true`.
 - `CRON_SECRET`: protects internal cron endpoints (use `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret`).
 
 Twilio webhook URLs:
@@ -457,7 +535,7 @@ STOP/quiet-hours behavior:
 
 Local testing notes:
 
-1. Set `TWILIO_VALIDATE_SIGNATURE=false` for local webhook testing.
+1. Set `TWILIO_VALIDATE_SIGNATURE=false` and `TWILIO_ALLOW_UNSIGNED_WEBHOOKS=true` for local webhook testing.
 2. Run portal and post form-data test payloads:
    - `curl -X POST http://localhost:3001/api/webhooks/twilio/voice -d "AccountSid=ACsubaccount123&CallSid=CA123&From=+12065550199&To=+12065550100&Direction=inbound&CallStatus=ringing"`
    - `curl -X POST http://localhost:3001/api/webhooks/twilio/after-call -d "AccountSid=ACsubaccount123&CallSid=CA123&From=+12065550199&To=+12065550100&Direction=inbound&DialCallStatus=no-answer&CallStatus=completed"`

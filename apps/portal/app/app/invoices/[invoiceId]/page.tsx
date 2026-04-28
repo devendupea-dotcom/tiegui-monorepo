@@ -978,7 +978,7 @@ export default async function InvoiceDetailPage(props: RouteParams) {
             <p className="muted" style={{ marginTop: 6 }}>
               {onlinePaymentReady
                 ? "Online card payments are ready. Send the invoice email to include a hosted Stripe pay link, or generate one here to share manually."
-                : "Payment collection is still tracked manually in this workspace. Until Stripe is fully ready, sending the invoice emails a PDF only."}
+                : "Manual collection is ready. Send or download the invoice, collect by cash/check/card/transfer, then record the payment here. Stripe-hosted pay links can be turned on later."}
             </p>
             <div className="quick-meta">
               <span
@@ -995,9 +995,9 @@ export default async function InvoiceDetailPage(props: RouteParams) {
                 Balance {formatCurrency(invoice.balanceDue)}
               </span>
               <span
-                className={`badge ${onlinePaymentReady ? "status-paid" : "status-overdue"}`}
+                className={`badge ${onlinePaymentReady ? "status-paid" : ""}`}
               >
-                Online pay {onlinePaymentReady ? "ready" : "not ready"}
+                {onlinePaymentReady ? "Online pay ready" : "Manual collection ready"}
               </span>
               {checkoutNeedsAttention ? (
                 <span className="badge status-overdue">Payment follow-up needed</span>
@@ -1406,18 +1406,15 @@ export default async function InvoiceDetailPage(props: RouteParams) {
         <article className="card">
           <h2>Online Payment Link</h2>
           <p className="muted" style={{ marginTop: 6 }}>
-            Create a hosted Stripe card checkout for the current balance due.
-            The webhook will record successful payments into this invoice automatically.
+            Optional Stripe-hosted checkout for customers who want to pay by
+            card online. If Stripe is not enabled, use manual payment recording
+            on the right.
           </p>
           {!onlinePaymentReady ? (
             <p className="form-status" style={{ marginTop: 12 }}>
-              {!webhookConfigured
-                ? "STRIPE_WEBHOOK_SECRET is missing, so online invoice payments are blocked."
-                : invoice.org.stripeConnection?.status !== "ACTIVE"
-                  ? "Stripe must be connected and fully active before you can collect invoice payments online."
-                  : invoice.balanceDue.lte(0)
-                    ? "This invoice has no remaining balance to collect online."
-                    : "Online invoice payments are not ready yet."}
+              {invoice.balanceDue.lte(0)
+                ? "This invoice is paid, so there is no remaining online balance to collect."
+                : "Online pay links are off for this workspace right now. Manual collection is the live path."}
             </p>
           ) : null}
 
@@ -1546,8 +1543,8 @@ export default async function InvoiceDetailPage(props: RouteParams) {
         <article className="card">
           <h2>Record Manual Payment</h2>
           <p className="muted" style={{ marginTop: 6 }}>
-            Use this for cash, check, bank transfer, or any offline collection
-            that didn&apos;t run through the Stripe pay link.
+            The fastest live path for contractors: record cash, check, card
+            terminal, Zelle, ACH, or bank transfer after the customer pays.
           </p>
           <form
             action={recordPaymentAction}

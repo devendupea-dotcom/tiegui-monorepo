@@ -5,12 +5,14 @@ import { hashToken } from "./tokens";
 export { formatOperationalJobStatusLabel } from "./job-tracking-format";
 
 export const jobTrackingProgressKeys = ["scheduled", "on_the_way", "on_site", "completed"] as const;
+export const builderTrackingProgressKeys = ["planning", "factory_build", "delivery_setup", "move_in"] as const;
 
 export type JobTrackingProgressKey = (typeof jobTrackingProgressKeys)[number];
+export type BuilderTrackingProgressKey = (typeof builderTrackingProgressKeys)[number];
 export type JobTrackingProgressState = "complete" | "current" | "upcoming";
 
 export type JobTrackingProgressStep = {
-  key: JobTrackingProgressKey;
+  key: JobTrackingProgressKey | BuilderTrackingProgressKey;
   label: string;
   state: JobTrackingProgressState;
 };
@@ -30,6 +32,12 @@ export type CustomerJobTrackingDetail = {
   address: string;
   currentStatus: DispatchStatusValue;
   currentStatusLabel: string;
+  vertical: "CONTRACTOR" | "HOMEBUILDER";
+  trackingEyebrow: string;
+  scheduleLabel: string;
+  progressTitle: string;
+  progressDescription: string;
+  timelineDescription: string;
   scheduledDate: string | null;
   scheduledWindow: string;
   assignedCrewName: string | null;
@@ -48,6 +56,13 @@ const jobTrackingProgressLabels: Record<JobTrackingProgressKey, string> = {
   on_the_way: "On the Way",
   on_site: "In Progress",
   completed: "Completed",
+};
+
+const builderTrackingProgressLabels: Record<BuilderTrackingProgressKey, string> = {
+  planning: "Planning",
+  factory_build: "Factory Build",
+  delivery_setup: "Delivery + Setup",
+  move_in: "Move-In",
 };
 
 export function createJobTrackingToken(): { token: string; tokenHash: string } {
@@ -85,8 +100,44 @@ export function buildJobTrackingProgressSteps(status: DispatchStatusValue): JobT
   });
 }
 
+function normalizeBuilderProgressKey(status: DispatchStatusValue): BuilderTrackingProgressKey {
+  if (status === "on_site") return "delivery_setup";
+  if (status === "completed") return "move_in";
+  if (status === "on_the_way") return "factory_build";
+  return "planning";
+}
+
+export function buildBuilderTrackingProgressSteps(status: DispatchStatusValue): JobTrackingProgressStep[] {
+  const currentKey = normalizeBuilderProgressKey(status);
+  const currentIndex = builderTrackingProgressKeys.indexOf(currentKey);
+
+  return builderTrackingProgressKeys.map((key, index) => {
+    let state: JobTrackingProgressState = "upcoming";
+    if (index < currentIndex) {
+      state = "complete";
+    } else if (index === currentIndex) {
+      state = "current";
+    }
+
+    return {
+      key,
+      label: builderTrackingProgressLabels[key],
+      state,
+    };
+  });
+}
+
 export function formatJobTrackingStatusLabel(status: DispatchStatusValue): string {
   return formatDispatchStatusLabel(status);
+}
+
+export function formatBuilderTrackingStatusLabel(status: DispatchStatusValue): string {
+  if (status === "on_the_way") return "Factory build / delivery coordination";
+  if (status === "on_site") return "Setup in progress";
+  if (status === "completed") return "Move-in ready";
+  if (status === "rescheduled") return "Timeline updated";
+  if (status === "canceled") return "Paused";
+  return "Planning";
 }
 
 export function describeJobTrackingStatusChange(input: {
