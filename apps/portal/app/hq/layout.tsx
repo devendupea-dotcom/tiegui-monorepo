@@ -10,6 +10,7 @@ import PortalActionFeedback from "../_components/portal-action-feedback";
 const links = [
   { href: "/hq", label: "Command Center" },
   { href: "/hq/inbox", label: "Inbox" },
+  { href: "/hq/messaging", label: "SMS Trust" },
   { href: "/hq/calendar", label: "Calendar" },
   { href: "/hq/businesses", label: "Businesses" },
   { href: "/hq/integrations/google/health", label: "Sync Health" },
