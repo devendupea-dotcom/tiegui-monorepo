@@ -8,6 +8,7 @@ import { intakeAutomationDefaults } from "@/lib/intake-automation";
 import { requireInternalUser } from "@/lib/session";
 import { getGoogleSyncAlertState } from "@/lib/integrations/google-sync";
 import { getPhotoStorageReadiness } from "@/lib/storage";
+import { loadControlledRolloutReadinessReport } from "@/lib/controlled-rollout-readiness";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
 import RoundRobinTestCard from "./round-robin-test-card";
 
@@ -230,7 +231,18 @@ async function OverviewTab({ orgId }: { orgId: string }) {
   const start30 = new Date(now);
   start30.setDate(start30.getDate() - 30);
 
-  const [leadsCount, bookedCount, dueCount, callsCount, messagesCount, eventsCount, organization, settings, cronState] = await Promise.all([
+  const [
+    leadsCount,
+    bookedCount,
+    dueCount,
+    callsCount,
+    messagesCount,
+    eventsCount,
+    organization,
+    settings,
+    cronState,
+    rolloutReadiness,
+  ] = await Promise.all([
     prisma.lead.count({ where: { orgId } }),
     prisma.event.findMany({
       where: {
@@ -277,6 +289,7 @@ async function OverviewTab({ orgId }: { orgId: string }) {
       errorRateWindowMinutes: 60,
       dedupeWindowMinutes: 10,
     }),
+    loadControlledRolloutReadinessReport({ orgId, now }),
   ]);
 
   const photoStorage = getPhotoStorageReadiness();
@@ -385,6 +398,111 @@ async function OverviewTab({ orgId }: { orgId: string }) {
         </article>
         <RoundRobinTestCard orgId={orgId} />
       </section>
+
+      {rolloutReadiness ? (
+        <section className={`card${rolloutReadiness.readyForControlledCustomer ? "" : " tone-panel danger"}`}>
+          <div className="thread-top">
+            <div>
+              <h2>Controlled Rollout Readiness</h2>
+              <p className="muted">
+                Customer launch gate for controlled rollout slots #2-#5. This is separate from broad self-serve production approval.
+              </p>
+              <p className="muted">
+                Messaging mode:{" "}
+                <strong>
+                  Live SMS / Twilio
+                </strong>
+              </p>
+            </div>
+            <span
+              className={`badge status-${
+                rolloutReadiness.readyForControlledCustomer ? "success" : "error"
+              }`}
+            >
+              {rolloutReadiness.readyForControlledCustomer ? "Ready" : "Blocked"}
+            </span>
+          </div>
+
+          <div className="grid" style={{ marginTop: 12 }}>
+            <article className="kpi-card">
+              <h3>Blockers</h3>
+              <p className="kpi-value">{rolloutReadiness.blockingCount}</p>
+            </article>
+            <article className="kpi-card">
+              <h3>Manual Items</h3>
+              <p className="kpi-value">{rolloutReadiness.manualCount}</p>
+            </article>
+            <article className="kpi-card">
+              <h3>Messaging</h3>
+              <p className="kpi-value" style={{ fontSize: "1.4rem" }}>
+                {rolloutReadiness.summary.twilioStatus}
+              </p>
+            </article>
+            <article className="kpi-card">
+              <h3>Failed SMS</h3>
+              <p className="kpi-value">{rolloutReadiness.summary.failedSms30d}</p>
+            </article>
+            <article className="kpi-card">
+              <h3>Unmatched</h3>
+              <p className="kpi-value">{rolloutReadiness.summary.unmatchedCallbacks30d}</p>
+            </article>
+            <article className="kpi-card">
+              <h3>Billing</h3>
+              <p className="kpi-value" style={{ fontSize: "1.4rem" }}>
+                {rolloutReadiness.summary.billingMode === "stripe_connected"
+                  ? "Stripe"
+                  : "Manual"}
+              </p>
+            </article>
+          </div>
+
+          <div className="quick-links" style={{ marginTop: 12 }}>
+            <Link className="btn secondary" href={rolloutReadiness.links.hqMessaging}>
+              Open /hq/messaging
+            </Link>
+            <Link className="btn secondary" href={rolloutReadiness.links.twilio}>
+              Open Twilio
+            </Link>
+            <Link className="btn secondary" href={rolloutReadiness.links.websiteLeadSources}>
+              Website Sources
+            </Link>
+            {rolloutReadiness.links.smsDebug ? (
+              <Link className="btn secondary" href={rolloutReadiness.links.smsDebug}>
+                SMS Debug
+              </Link>
+            ) : null}
+          </div>
+
+          <ul className="template-list" style={{ marginTop: 12 }}>
+            {rolloutReadiness.items.map((item) => (
+              <li key={item.key} className="template-item">
+                <div className="thread-top">
+                  <strong>{item.label}</strong>
+                  <span
+                    className={`badge status-${
+                      item.status === "ready"
+                        ? "success"
+                        : item.status === "manual"
+                          ? "running"
+                          : "error"
+                    }`}
+                  >
+                    {item.status === "ready"
+                      ? "Ready"
+                      : item.status === "manual"
+                        ? "Manual"
+                        : "Blocked"}
+                  </span>
+                </div>
+                <p className="muted">{item.detail}</p>
+                <p className="muted">
+                  <strong>Next:</strong> {item.action}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="card">
         <h2>Go-Live Hardening Checklist</h2>
