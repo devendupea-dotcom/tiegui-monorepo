@@ -3,6 +3,7 @@ import { addMinutes } from "date-fns";
 import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
 import { prisma } from "@/lib/prisma";
 import { getQueuedSmsSkipReason, getRecentHardSmsFailureForAutomation } from "@/lib/sms-automation-guards";
+import { getSmsConsentState } from "@/lib/sms-consent";
 import { sendOutboundSms } from "@/lib/sms";
 import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 
@@ -282,9 +283,15 @@ export async function processDueSmsDispatchQueue(input?: {
       continue;
     }
 
+    const smsConsent = await getSmsConsentState({
+      orgId: liveJob.orgId,
+      phoneE164: liveJob.toNumberE164,
+    });
+
     const skipReason = getQueuedSmsSkipReason({
       jobCreatedAt: liveJob.createdAt,
       leadStatus: liveJob.lead.status,
+      smsConsentStatus: smsConsent.status,
       leadLastInboundAt: liveJob.lead.lastInboundAt,
       messageType: liveJob.messageType,
       recentHardSmsFailure: getRecentHardSmsFailureForAutomation(liveJob.lead.communicationEvents),
@@ -293,7 +300,10 @@ export async function processDueSmsDispatchQueue(input?: {
     });
 
     if (skipReason) {
-      if (liveJob.lead.status === "DNC") {
+      if (
+        smsConsent.status === "OPTED_OUT" ||
+        (smsConsent.status !== "OPTED_IN" && liveJob.lead.status === "DNC")
+      ) {
         skippedOptOut += 1;
       } else {
         skippedStale += 1;

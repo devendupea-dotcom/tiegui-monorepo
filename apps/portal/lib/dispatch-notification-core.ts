@@ -1,4 +1,4 @@
-import type { JobEventType, Prisma } from "@prisma/client";
+import type { JobEventType, Prisma, SmsConsentStatus } from "@prisma/client";
 import {
   bookingEventTypes,
   deriveJobBookingProjection,
@@ -280,6 +280,7 @@ export function buildDispatchCustomerNotificationReadiness(input: {
   settings: DispatchNotificationSettings;
   job: DispatchCustomerNotificationJobRecord;
   candidate: DispatchCustomerNotificationCandidate;
+  smsConsentStatus?: SmsConsentStatus | null;
 }): DispatchCustomerNotificationReadiness {
   const toNumberE164 = normalizeE164(input.job.phone || null);
   const timeZone = getDispatchNotificationTimeZone(input.job);
@@ -303,6 +304,10 @@ export function buildDispatchCustomerNotificationReadiness(input: {
       })
     : null;
 
+  const optedOut =
+    input.smsConsentStatus === "OPTED_OUT" ||
+    (input.smsConsentStatus !== "OPTED_IN" && input.job.lead?.status === "DNC");
+
   const blockedReason = describeDispatchNotificationBlockedReason({
     smsEnabled: input.settings.smsEnabled,
     canSend: input.settings.canSend,
@@ -312,7 +317,7 @@ export function buildDispatchCustomerNotificationReadiness(input: {
     ),
     hasCustomerPhone: Boolean(toNumberE164),
     hasScheduledDate: hasUsableSchedule,
-    optedOut: input.job.lead?.status === "DNC",
+    optedOut,
     withinSendWindow: isWithinSmsSendWindow({
       at: new Date(),
       timeZone,

@@ -12,6 +12,7 @@ import {
   type MissedCallRecoveryDecision,
   type RecoveryCandidate,
 } from "@/lib/missed-call-recovery-core";
+import { getSmsConsentState } from "@/lib/sms-consent";
 import { isWithinSmsSendWindow, nextSmsSendWindowStartUtc } from "@/lib/sms-quiet-hours";
 
 function decisionSummary(decision: MissedCallRecoveryDecision) {
@@ -168,7 +169,7 @@ const processMissedCallRecoveryImpl = createMissedCallRecoveryRunner({
         };
       }
 
-      const [lead, organization, hasAnsweredEvent, recentOutbound] = await Promise.all([
+      const [lead, organization, hasAnsweredEvent, recentOutbound, smsConsent] = await Promise.all([
         tx.lead.findUnique({
           where: { id: candidate.leadId },
           select: {
@@ -229,6 +230,13 @@ const processMissedCallRecoveryImpl = createMissedCallRecoveryRunner({
           },
           select: { id: true },
         }),
+        candidate.fromNumberE164
+          ? getSmsConsentState({
+              client: tx,
+              orgId: candidate.orgId,
+              phoneE164: candidate.fromNumberE164,
+            })
+          : Promise.resolve(null),
       ]);
 
       const timeZone = organization?.dashboardConfig?.calendarTimezone || "America/Los_Angeles";
@@ -256,6 +264,7 @@ const processMissedCallRecoveryImpl = createMissedCallRecoveryRunner({
             (organization?.messagingSettings?.autoReplyEnabled ?? organization?.autoReplyEnabled ?? true),
         ),
         leadStatus: lead?.status || null,
+        smsConsentStatus: smsConsent?.status || "UNKNOWN",
         fromNumberE164: candidate.fromNumberE164,
         senderNumberE164: senderNumber,
         hasAnsweredEvent: Boolean(hasAnsweredEvent),

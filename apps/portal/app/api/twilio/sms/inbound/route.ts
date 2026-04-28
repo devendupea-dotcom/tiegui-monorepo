@@ -7,6 +7,7 @@ import { ensureLeadAndContactForInboundPhone } from "@/lib/lead-contact-resoluti
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { buildSmsComplianceReply, parseSmsComplianceKeyword } from "@/lib/sms-compliance";
+import { getSmsConsentState, recordSmsStart, recordSmsStop } from "@/lib/sms-consent";
 import { validateTwilioWebhook } from "@/lib/twilio";
 import { startOfUtcMonth } from "@/lib/usage";
 import { normalizeEnvValue } from "@/lib/env";
@@ -109,7 +110,10 @@ async function recordComplianceAutoReply(input: {
 async function applyComplianceKeyword(input: {
   orgId: string;
   leadId: string;
+  customerId: string | null;
+  phoneE164: string;
   keyword: "STOP" | "START" | "HELP";
+  body: string;
   occurredAt: Date;
   wasOptedOut: boolean;
 }) {
@@ -119,6 +123,16 @@ async function applyComplianceKeyword(input: {
 
   await prisma.$transaction(async (tx) => {
     if (input.keyword === "STOP") {
+      await recordSmsStop({
+        client: tx,
+        orgId: input.orgId,
+        phoneE164: input.phoneE164,
+        leadId: input.leadId,
+        customerId: input.customerId,
+        body: input.body,
+        occurredAt: input.occurredAt,
+      });
+
       await tx.lead.update({
         where: { id: input.leadId },
         data: {
@@ -155,16 +169,17 @@ async function applyComplianceKeyword(input: {
       return;
     }
 
-    if (input.wasOptedOut) {
-      await tx.lead.update({
-        where: { id: input.leadId },
-        data: {
-          status: "FOLLOW_UP",
-          intakeStage: "INTRO_SENT",
-          nextFollowUpAt: null,
-        },
-      });
+    await recordSmsStart({
+      client: tx,
+      orgId: input.orgId,
+      phoneE164: input.phoneE164,
+      leadId: input.leadId,
+      customerId: input.customerId,
+      body: input.body,
+      occurredAt: input.occurredAt,
+    });
 
+    if (input.wasOptedOut) {
       await tx.leadConversationState.updateMany({
         where: { leadId: input.leadId },
         data: {
@@ -402,6 +417,13 @@ export async function POST(req: Request) {
   }
 
   if (complianceKeyword) {
+    const smsConsentBeforeKeyword =
+      complianceKeyword === "START"
+        ? await getSmsConsentState({
+            orgId: organization.id,
+            phoneE164: fromNumber,
+          })
+        : null;
     const complianceReply = buildSmsComplianceReply({
       keyword: complianceKeyword,
       bizName: organization.name,
@@ -413,9 +435,14 @@ export async function POST(req: Request) {
         await applyComplianceKeyword({
           orgId: organization.id,
           leadId: lead.id,
+          customerId: lead.customerId,
+          phoneE164: fromNumber,
           keyword: complianceKeyword,
+          body,
           occurredAt: now,
-          wasOptedOut: lead.status === "DNC",
+          wasOptedOut:
+            lead.status === "DNC" ||
+            smsConsentBeforeKeyword?.status === "OPTED_OUT",
         });
         if (!optOutType) {
           await recordComplianceAutoReply({

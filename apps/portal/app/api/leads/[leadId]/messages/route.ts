@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { sendManualLeadSms } from "@/lib/manual-outbound-sms";
+import { getSmsSendBlockState } from "@/lib/sms-consent";
 import {
   normalizeManualSmsIdempotencyKey,
   runIdempotentManualSmsMutation,
@@ -143,11 +144,18 @@ export async function POST(req: Request, props: RouteContext) {
     return NextResponse.json({ ok: false, error: "Message body is required." }, { status: 400 });
   }
 
-  if (scoped.lead.status === "DNC") {
+  const smsBlock = await getSmsSendBlockState({
+    orgId: scoped.lead.orgId,
+    phoneE164: scoped.lead.phoneE164,
+    legacyLeadStatus: scoped.lead.status,
+  });
+  if (smsBlock.blocked) {
     return NextResponse.json(
       {
         ok: false,
-        error: "This contact has opted out (DNC/STOP). Sending is blocked until they reply START.",
+        error:
+          smsBlock.reason ||
+          "This contact has opted out (DNC/STOP). Sending is blocked until they reply START.",
       },
       { status: 403 },
     );

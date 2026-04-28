@@ -11,6 +11,8 @@ function baseOrg(overrides = {}) {
   return {
     orgId: "org_1",
     orgName: "Velocity Landscapes",
+    package: "MESSAGING_ENABLED",
+    messagingLaunchMode: "LIVE_SMS",
     twilioConfig: {
       phoneNumber: "+15555550123",
       status: "ACTIVE",
@@ -48,6 +50,8 @@ test("active config and strict runtime are live ready", () => {
 
   assert.equal(report.state, "ready");
   assert.equal(report.canSend, true);
+  assert.equal(report.package, "MESSAGING_ENABLED");
+  assert.equal(report.packageCanUseLiveSms, true);
   assert.equal(report.criticalIssueCount, 0);
   assert.equal(report.warningIssueCount, 0);
 });
@@ -116,6 +120,7 @@ test("failed sends and unmatched callbacks are counted in summary", () => {
       baseOrg({
         orgId: "org_bad",
         orgName: "Bad Org",
+        package: "MANAGED",
         traffic: {
           inbound30d: 0,
           outbound30d: 9,
@@ -134,6 +139,7 @@ test("failed sends and unmatched callbacks are counted in summary", () => {
   assert.equal(report.summary.totalOrgs, 2);
   assert.equal(report.summary.liveReady, 1);
   assert.equal(report.summary.blocked, 1);
+  assert.equal(report.summary.managed, 1);
   assert.equal(report.summary.failed30d, 5);
   assert.equal(report.summary.unmatchedStatusCallbacks30d, 6);
   assert.equal(report.summary.overdueQueueCount, 11);
@@ -169,5 +175,89 @@ test("missing org Twilio config is not treated as live ready", () => {
   assert.equal(report.canSend, false);
   assert.ok(
     report.issues.some((issue) => issue.code === "TWILIO_NOT_CONFIGURED"),
+  );
+});
+
+test("no-SMS org is not treated as a Twilio setup warning", () => {
+  const report = buildMessagingCommandCenterOrgReport(
+    baseOrg({
+      package: "PORTAL_ONLY",
+      messagingLaunchMode: "NO_SMS",
+      twilioConfig: null,
+      traffic: {
+        inbound30d: 0,
+        outbound30d: 0,
+        sent30d: 0,
+        delivered30d: 0,
+        queued30d: 0,
+        failed30d: 0,
+        unmatchedStatusCallbacks30d: 0,
+        dncLeadCount: 0,
+        overdueQueueCount: 0,
+      },
+      latest: {
+        inboundAt: null,
+        outboundAt: null,
+        statusCallbackAt: null,
+        voiceAt: null,
+      },
+    }),
+  );
+
+  assert.equal(report.state, "sms_disabled");
+  assert.equal(report.canSend, false);
+  assert.equal(report.issues.length, 0);
+  assert.equal(report.package, "PORTAL_ONLY");
+  assert.equal(report.packageLabel, "Portal Only");
+  assert.equal(report.messagingLaunchMode, "NO_SMS");
+
+  const summary = buildMessagingCommandCenterReport({
+    now: NOW,
+    orgs: [
+      baseOrg(),
+      baseOrg({
+        orgId: "org_no_sms",
+        package: "PORTAL_ONLY",
+        messagingLaunchMode: "NO_SMS",
+        twilioConfig: null,
+        traffic: {
+          inbound30d: 0,
+          outbound30d: 0,
+          sent30d: 0,
+          delivered30d: 0,
+          queued30d: 0,
+          failed30d: 0,
+          unmatchedStatusCallbacks30d: 0,
+          dncLeadCount: 0,
+          overdueQueueCount: 0,
+        },
+        latest: {
+          inboundAt: null,
+          outboundAt: null,
+          statusCallbackAt: null,
+          voiceAt: null,
+        },
+      }),
+    ],
+  });
+  assert.equal(summary.summary.smsDisabled, 1);
+  assert.equal(summary.summary.portalOnly, 1);
+});
+
+test("portal-only org in live SMS mode is blocked by package entitlement", () => {
+  const report = buildMessagingCommandCenterOrgReport(
+    baseOrg({
+      package: "PORTAL_ONLY",
+      messagingLaunchMode: "LIVE_SMS",
+    }),
+  );
+
+  assert.equal(report.state, "blocked");
+  assert.equal(report.canSend, false);
+  assert.equal(report.packageCanUseLiveSms, false);
+  assert.ok(
+    report.issues.some(
+      (issue) => issue.code === "PACKAGE_LIVE_SMS_NOT_ALLOWED",
+    ),
   );
 });

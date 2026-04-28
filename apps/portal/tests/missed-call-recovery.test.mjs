@@ -46,6 +46,46 @@ test("evaluateMissedCallTextEligibility queues instead of sending during quiet h
   });
 });
 
+test("evaluateMissedCallTextEligibility blocks explicit SMS opt-out", () => {
+  const decision = evaluateMissedCallTextEligibility({
+    missedCallAutoReplyOn: true,
+    leadStatus: "FOLLOW_UP",
+    smsConsentStatus: "OPTED_OUT",
+    fromNumberE164: "+15550001111",
+    senderNumberE164: "+15550002222",
+    hasAnsweredEvent: false,
+    hasRecentOutbound: false,
+    withinBusinessHours: true,
+    sendAfterAt: null,
+  });
+
+  assert.deepEqual(decision, {
+    action: "skip",
+    reason: "dnc",
+    withinBusinessHours: true,
+  });
+});
+
+test("evaluateMissedCallTextEligibility lets explicit opt-in override legacy DNC fallback", () => {
+  const decision = evaluateMissedCallTextEligibility({
+    missedCallAutoReplyOn: true,
+    leadStatus: "DNC",
+    smsConsentStatus: "OPTED_IN",
+    fromNumberE164: "+15550001111",
+    senderNumberE164: "+15550002222",
+    hasAnsweredEvent: false,
+    hasRecentOutbound: false,
+    withinBusinessHours: true,
+    sendAfterAt: null,
+  });
+
+  assert.deepEqual(decision, {
+    action: "send",
+    reason: "eligible",
+    withinBusinessHours: true,
+  });
+});
+
 test("createMissedCallRecoveryRunner prevents duplicate sends across realtime and cron", async () => {
   const storedDecisions = new Map();
   let dispatchCount = 0;
