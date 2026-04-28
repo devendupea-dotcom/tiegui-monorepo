@@ -167,6 +167,7 @@ model Organization {
   messagingSettings             OrganizationMessagingSettings?
   twilioConfig                  OrganizationTwilioConfig?
   twilioConfigAuditLogs         TwilioConfigAuditLog[]
+  messagingOpsTriage            MessagingOpsTriage[]
   blockedCallers                BlockedCaller[]
   smsConsents                   SmsConsent[]
   customerPortalAccounts        CustomerPortalAccount[]
@@ -304,6 +305,7 @@ model User {
   resetTokens                   PasswordResetToken[]
   aiUserDayUsage                AiUserDayUsage[]
   communicationEvents           CommunicationEvent[]       @relation("CommunicationEventActor")
+  messagingOpsTriageDecisions   MessagingOpsTriage[]       @relation("MessagingOpsTriageDecider")
   organizationMemberships       OrganizationMembership[]
   twilioConfigAuditLogs         TwilioConfigAuditLog[]     @relation("TwilioConfigAuditActor")
   createdBlockedCallers         BlockedCaller[]            @relation("BlockedCallerCreator")
@@ -740,6 +742,26 @@ model CommunicationEvent {
   @@index([messageId, occurredAt])
   @@index([providerCallSid, occurredAt])
   @@index([providerMessageSid, occurredAt])
+}
+
+model MessagingOpsTriage {
+  id              String                         @id @default(uuid())
+  orgId           String
+  targetType      MessagingOpsTriageTargetType
+  targetId        String
+  reason          MessagingOpsTriageReason
+  note            String?
+  decidedByUserId String?
+  targetCreatedAt DateTime?
+  createdAt       DateTime                       @default(now())
+  updatedAt       DateTime                       @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  decidedBy User?        @relation("MessagingOpsTriageDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, targetType, targetId])
+  @@index([orgId, targetType, createdAt])
+  @@index([decidedByUserId, createdAt])
 }
 
 model VoicemailArtifact {
@@ -2941,6 +2963,20 @@ enum OrganizationPackage {
   PORTAL_ONLY
   MESSAGING_ENABLED
   MANAGED
+}
+
+enum MessagingOpsTriageTargetType {
+  FAILED_SMS_MESSAGE
+  UNMATCHED_STATUS_CALLBACK
+}
+
+enum MessagingOpsTriageReason {
+  HISTORICAL_TEST_DATA
+  BAD_DESTINATION_NUMBER
+  CARRIER_FILTERING_ACCEPTED
+  RECOVERED_OR_DUPLICATE
+  ACCEPTED_FOR_CONTROLLED_ROLLOUT
+  OTHER
 }
 
 enum TwilioConfigAuditAction {

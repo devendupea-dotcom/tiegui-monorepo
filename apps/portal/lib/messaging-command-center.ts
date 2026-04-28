@@ -31,6 +31,8 @@ export type MessagingCommandCenterTraffic = {
   queued30d: number;
   failed30d: number;
   unmatchedStatusCallbacks30d: number;
+  acceptedFailedSms30d?: number;
+  acceptedUnmatchedStatusCallbacks30d?: number;
   dncLeadCount: number;
   overdueQueueCount: number;
 };
@@ -92,6 +94,8 @@ export type MessagingCommandCenterSummary = {
   managed: number;
   failed30d: number;
   unmatchedStatusCallbacks30d: number;
+  acceptedFailedSms30d: number;
+  acceptedUnmatchedStatusCallbacks30d: number;
   overdueQueueCount: number;
   dncLeadCount: number;
 };
@@ -378,6 +382,15 @@ export function buildMessagingCommandCenterReport(input: {
       failed30d: orgs.reduce((sum, org) => sum + org.traffic.failed30d, 0),
       unmatchedStatusCallbacks30d: orgs.reduce(
         (sum, org) => sum + org.traffic.unmatchedStatusCallbacks30d,
+        0,
+      ),
+      acceptedFailedSms30d: orgs.reduce(
+        (sum, org) => sum + (org.traffic.acceptedFailedSms30d || 0),
+        0,
+      ),
+      acceptedUnmatchedStatusCallbacks30d: orgs.reduce(
+        (sum, org) =>
+          sum + (org.traffic.acceptedUnmatchedStatusCallbacks30d || 0),
         0,
       ),
       overdueQueueCount: orgs.reduce(
