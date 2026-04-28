@@ -26,6 +26,8 @@
 - New organizations using live SMS without their own readiness gate.
 - Twilio/A2P changes outside the already active Velocity config.
 
+Customers that do not want Twilio can still use TieGui for leads, jobs, scheduling, estimates, invoices, files, website intake, and internal notes, but they are outside this SMS-controlled rollout readiness gate. Do not include SMS, missed-call recovery, text intake, or delivery receipts in that customer's launch scope until Twilio/A2P is intentionally approved and smoked.
+
 ## Preflight Checklist
 
 Complete this before each pilot day:
@@ -262,3 +264,18 @@ Collect all applicable evidence:
 - timestamp and operator
 
 Do not include auth cookies, Twilio auth tokens, source secrets, Vercel env values, reset tokens, or full customer phone numbers in reports.
+
+## Expanding To 3-5 Controlled Customers
+
+Before adding customer #2, #3, #4, or #5, use the controlled rollout readiness pass in `apps/portal/docs/controlled-rollout-readiness.md`.
+
+Required operator steps:
+
+- open `/hq/businesses/[orgId]` and confirm the Controlled Rollout Readiness card has zero blockers
+- run `npm run report:rollout-readiness --workspace=portal -- --org-id <org-id>` against the target DB
+- complete one manual outbound, inbound reply, delivery callback, STOP, and START/UNSTOP smoke
+- confirm `/hq/messaging` has no unresolved failed SMS, unmatched callbacks, or overdue queue blockers
+- confirm `/hq/leads/[leadId]/sms-debug` is safe and masked for the smoke lead
+- document Stripe/billing as manual/limited unless the org has a complete Stripe connection
+
+This readiness pass does not approve broad self-serve production, Meta/Instagram, or automated resend/retry behavior.
