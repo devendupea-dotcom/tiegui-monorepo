@@ -36,6 +36,13 @@ The card must show:
 - SMS debug link available after smoke traffic exists
 - billing mode documented as Stripe-connected or manual/limited
 
+Failed SMS and unmatched callback backlog must be handled in `/hq/messaging`.
+If the issue is historical test data, bad destination numbers, recovered/duplicate
+callbacks, or an explicitly accepted controlled-rollout risk, use the internal
+`Accept Current Backlog` action with a safe note. Accepted rows remain audited
+and are excluded from readiness blockers. Do not accept new unexplained
+production failures just to clear the dashboard.
+
 If the customer does not want Twilio:
 
 - set Package to `Portal Only`
@@ -169,6 +176,7 @@ Stop adding customers if any of these happen:
 - delivery callbacks do not reconcile
 - unmatched callbacks appear for a known smoke SID
 - failed SMS count grows without classification
+- accepted backlog is used without a clear reason and safe operator note
 - support/debug pages expose unmasked PII or secrets
 
 ## Final Launch Note

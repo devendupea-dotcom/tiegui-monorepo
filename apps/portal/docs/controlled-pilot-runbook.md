@@ -66,6 +66,11 @@ Check `/hq/messaging` at the start, middle, and end of each pilot day:
 - Cesar can send and receive normally.
 - No secret material is displayed.
 
+If historical failed SMS or unmatched callbacks have been reviewed and accepted,
+use `/hq/messaging` to accept the current backlog with a safe internal note.
+This is only for known historical/test/bad-number/recovered callback noise. Do
+not accept fresh unexplained failures or callbacks for a known smoke SID.
+
 ## Manual Outbound Verification
 
 Use a consented test mobile number or a real Velocity customer thread approved by Cesar.
@@ -211,6 +216,10 @@ If unmatched count increases and does not recover:
 3. Confirm `sms-status-reconciliation` ran after the message commit.
 4. Collect unmatched callback ids.
 5. Stop calling the issue fixed until the unmatched count is stable or recovered.
+
+Once the root cause is understood, historical/test or duplicate unmatched rows
+can be accepted in `/hq/messaging`. Accepted rows stay audited and no longer
+block controlled rollout readiness, but the underlying evidence is not deleted.
 
 ## Token Encryption Key Missing
 

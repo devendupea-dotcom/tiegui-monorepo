@@ -129,6 +129,8 @@ test("failed sends and unmatched callbacks are counted in summary", () => {
           queued30d: 1,
           failed30d: 5,
           unmatchedStatusCallbacks30d: 6,
+          acceptedFailedSms30d: 2,
+          acceptedUnmatchedStatusCallbacks30d: 3,
           dncLeadCount: 3,
           overdueQueueCount: 11,
         },
@@ -142,6 +144,8 @@ test("failed sends and unmatched callbacks are counted in summary", () => {
   assert.equal(report.summary.managed, 1);
   assert.equal(report.summary.failed30d, 5);
   assert.equal(report.summary.unmatchedStatusCallbacks30d, 6);
+  assert.equal(report.summary.acceptedFailedSms30d, 2);
+  assert.equal(report.summary.acceptedUnmatchedStatusCallbacks30d, 3);
   assert.equal(report.summary.overdueQueueCount, 11);
   assert.equal(report.summary.dncLeadCount, 3);
   assert.equal(report.orgs[0].orgId, "org_bad");

@@ -10,6 +10,7 @@ import {
   getPackageEntitlements,
   getPackageMessagingMismatch,
 } from "@/lib/package-entitlements";
+import { countUnacceptedMessagingOpsIssues } from "@/lib/messaging-ops-triage";
 import { prisma } from "@/lib/prisma";
 import { parseSmsComplianceKeyword } from "@/lib/sms-compliance";
 import {
@@ -522,6 +523,7 @@ export async function loadControlledRolloutReadinessReport(input: {
     consentCounts,
     messages,
     smsEvents,
+    triageRows,
     overdueQueueCount,
   ] = await Promise.all([
     prisma.organization.findUnique({
@@ -607,6 +609,7 @@ export async function loadControlledRolloutReadinessReport(input: {
         ],
       },
       select: {
+        id: true,
         leadId: true,
         type: true,
         summary: true,
@@ -618,6 +621,18 @@ export async function loadControlledRolloutReadinessReport(input: {
       },
       orderBy: { createdAt: "desc" },
       take: 1000,
+    }),
+    prisma.messagingOpsTriage.findMany({
+      where: {
+        orgId: input.orgId,
+        targetType: {
+          in: ["FAILED_SMS_MESSAGE", "UNMATCHED_STATUS_CALLBACK"],
+        },
+      },
+      select: {
+        targetType: true,
+        targetId: true,
+      },
     }),
     prisma.smsDispatchQueue.count({
       where: {
@@ -655,12 +670,20 @@ export async function loadControlledRolloutReadinessReport(input: {
       )
       .map((event) => event.createdAt || event.occurredAt),
   );
-  const failedSms30d = messages.filter(
+  const failedMessages = messages.filter(
     (message) => message.direction === "OUTBOUND" && message.status === "FAILED",
-  ).length;
-  const unmatchedCallbacks30d = smsEvents.filter(
+  );
+  const unmatchedCallbacks = smsEvents.filter(
     (event) => event.summary === "Unmatched outbound SMS status callback",
-  ).length;
+  );
+  const activeMessagingIssues = countUnacceptedMessagingOpsIssues({
+    failedMessages,
+    unmatchedCallbacks,
+    triageRows,
+  });
+  const failedSms30d = activeMessagingIssues.activeFailedMessages.length;
+  const unmatchedCallbacks30d =
+    activeMessagingIssues.activeUnmatchedCallbacks.length;
   const recoveredCallbacks30d = smsEvents.filter(
     (event) => event.summary === "Recovered outbound SMS status callback",
   ).length;

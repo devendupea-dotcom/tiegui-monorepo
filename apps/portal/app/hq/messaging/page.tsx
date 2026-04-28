@@ -1,15 +1,26 @@
 import Link from "next/link";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
 import {
   buildMessagingCommandCenterReport,
   type MessagingCommandCenterTraffic,
 } from "@/lib/messaging-command-center";
 import { normalizeEnvValue } from "@/lib/env";
+import {
+  buildMessagingOpsTriageCreateRows,
+  countUnacceptedMessagingOpsIssues,
+  MESSAGING_OPS_TRIAGE_REASONS,
+  normalizeMessagingOpsTriageNote,
+  normalizeMessagingOpsTriageReason,
+} from "@/lib/messaging-ops-triage";
 import { prisma } from "@/lib/prisma";
 import { requireInternalUser } from "@/lib/session";
 import {
   buildFailedSmsDrilldownRows,
   buildSmsWebhookMonitorReport,
+  extractSmsFailureMetadata,
+  smsMetadataString,
 } from "@/lib/sms-operations-debug";
 import { getTwilioMessagingEnvironmentSnapshot } from "@/lib/twilio-readiness";
 import { maskSid } from "@/lib/twilio-config-crypto";
@@ -100,6 +111,98 @@ function countMap<T extends { orgId: string; _count: { id: number } }>(
   return new Map(rows.map((row) => [row.orgId, row._count.id]));
 }
 
+function reasonLabel(value: string): string {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+async function acceptOrgMessagingBacklogAction(formData: FormData) {
+  "use server";
+
+  const orgId = String(formData.get("orgId") || "").trim();
+  const reason = normalizeMessagingOpsTriageReason(
+    String(formData.get("reason") || ""),
+  );
+  const note = normalizeMessagingOpsTriageNote(
+    String(formData.get("note") || ""),
+  );
+
+  if (!orgId || !reason) {
+    redirect("/hq/messaging?error=invalid-triage");
+  }
+
+  const actor = await requireInternalUser("/hq/messaging");
+  const thirtyDaysAgo = new Date(Date.now() - THIRTY_DAYS_MS);
+
+  const [org, failedMessages, unmatchedCallbacks, existingTriage] =
+    await Promise.all([
+      prisma.organization.findUnique({
+        where: { id: orgId },
+        select: { id: true },
+      }),
+      prisma.message.findMany({
+        where: {
+          orgId,
+          direction: "OUTBOUND",
+          status: "FAILED",
+          createdAt: { gte: thirtyDaysAgo },
+        },
+        select: { id: true, createdAt: true },
+      }),
+      prisma.communicationEvent.findMany({
+        where: {
+          orgId,
+          channel: "SMS",
+          type: "OUTBOUND_SMS_SENT",
+          summary: "Unmatched outbound SMS status callback",
+          providerMessageSid: { not: null },
+          createdAt: { gte: thirtyDaysAgo },
+        },
+        select: { id: true, createdAt: true },
+      }),
+      prisma.messagingOpsTriage.findMany({
+        where: {
+          orgId,
+          targetType: {
+            in: ["FAILED_SMS_MESSAGE", "UNMATCHED_STATUS_CALLBACK"],
+          },
+        },
+        select: {
+          targetType: true,
+          targetId: true,
+        },
+      }),
+    ]);
+
+  if (!org) {
+    redirect("/hq/messaging?error=org-not-found");
+  }
+
+  const createRows = buildMessagingOpsTriageCreateRows({
+    orgId,
+    reason,
+    note,
+    decidedByUserId: actor.id || null,
+    failedMessages,
+    unmatchedCallbacks,
+    triageRows: existingTriage,
+  });
+
+  if (createRows.length > 0) {
+    await prisma.messagingOpsTriage.createMany({
+      data: createRows,
+      skipDuplicates: true,
+    });
+  }
+
+  revalidatePath("/hq/messaging");
+  revalidatePath(`/hq/businesses/${orgId}`);
+
+  redirect(`/hq/messaging?accepted=${createRows.length}`);
+}
+
 export default async function HqMessagingCommandCenterPage() {
   await requireInternalUser("/hq/messaging");
 
@@ -119,7 +222,9 @@ export default async function HqMessagingCommandCenterPage() {
     latestOutboundRows,
     latestStatusRows,
     latestVoiceRows,
-    unmatchedStatusCounts,
+    failedSmsForTriage,
+    unmatchedCallbackEvents,
+    triageRows,
     dncLeadCounts,
     overdueQueueCounts,
     recentFailedSms,
@@ -176,8 +281,19 @@ export default async function HqMessagingCommandCenterPage() {
       by: ["orgId"],
       _max: { startedAt: true },
     }),
-    prisma.communicationEvent.groupBy({
-      by: ["orgId"],
+    prisma.message.findMany({
+      where: {
+        direction: "OUTBOUND",
+        status: "FAILED",
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      select: {
+        id: true,
+        orgId: true,
+        createdAt: true,
+      },
+    }),
+    prisma.communicationEvent.findMany({
       where: {
         channel: "SMS",
         type: "OUTBOUND_SMS_SENT",
@@ -185,7 +301,38 @@ export default async function HqMessagingCommandCenterPage() {
         providerMessageSid: { not: null },
         createdAt: { gte: thirtyDaysAgo },
       },
-      _count: { id: true },
+      select: {
+        id: true,
+        orgId: true,
+        createdAt: true,
+        occurredAt: true,
+        providerMessageSid: true,
+        providerStatus: true,
+        metadataJson: true,
+        org: { select: { name: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.messagingOpsTriage.findMany({
+      where: {
+        targetType: {
+          in: ["FAILED_SMS_MESSAGE", "UNMATCHED_STATUS_CALLBACK"],
+        },
+      },
+      select: {
+        orgId: true,
+        targetType: true,
+        targetId: true,
+        reason: true,
+        note: true,
+        createdAt: true,
+        decidedBy: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+      },
     }),
     prisma.lead.groupBy({
       by: ["orgId"],
@@ -207,7 +354,7 @@ export default async function HqMessagingCommandCenterPage() {
         createdAt: { gte: thirtyDaysAgo },
       },
       orderBy: { createdAt: "desc" },
-      take: 12,
+      take: 300,
       select: {
         id: true,
         orgId: true,
@@ -288,11 +435,48 @@ export default async function HqMessagingCommandCenterPage() {
     trafficByOrg.set(row.orgId, traffic);
   }
 
-  const unmatchedByOrg = countMap(unmatchedStatusCounts);
+  const failedTriageByOrg = new Map<
+    string,
+    Array<{ id: string; createdAt: Date }>
+  >();
+  for (const message of failedSmsForTriage) {
+    const rows = failedTriageByOrg.get(message.orgId) || [];
+    rows.push({ id: message.id, createdAt: message.createdAt });
+    failedTriageByOrg.set(message.orgId, rows);
+  }
+
+  const unmatchedTriageByOrg = new Map<
+    string,
+    Array<{ id: string; createdAt: Date }>
+  >();
+  for (const event of unmatchedCallbackEvents) {
+    const rows = unmatchedTriageByOrg.get(event.orgId) || [];
+    rows.push({ id: event.id, createdAt: event.createdAt });
+    unmatchedTriageByOrg.set(event.orgId, rows);
+  }
+
+  const triageByOrg = new Map<string, typeof triageRows>();
+  for (const row of triageRows) {
+    const rows = triageByOrg.get(row.orgId) || [];
+    rows.push(row);
+    triageByOrg.set(row.orgId, rows);
+  }
+
   const dncByOrg = countMap(dncLeadCounts);
   const overdueQueueByOrg = countMap(overdueQueueCounts);
   for (const [orgId, traffic] of trafficByOrg.entries()) {
-    traffic.unmatchedStatusCallbacks30d = unmatchedByOrg.get(orgId) || 0;
+    const activeMessagingIssues = countUnacceptedMessagingOpsIssues({
+      failedMessages: failedTriageByOrg.get(orgId) || [],
+      unmatchedCallbacks: unmatchedTriageByOrg.get(orgId) || [],
+      triageRows: triageByOrg.get(orgId) || [],
+    });
+    traffic.failed30d = activeMessagingIssues.activeFailedMessages.length;
+    traffic.unmatchedStatusCallbacks30d =
+      activeMessagingIssues.activeUnmatchedCallbacks.length;
+    traffic.acceptedFailedSms30d =
+      activeMessagingIssues.acceptedFailedSmsCount;
+    traffic.acceptedUnmatchedStatusCallbacks30d =
+      activeMessagingIssues.acceptedUnmatchedCallbackCount;
     traffic.dncLeadCount = dncByOrg.get(orgId) || 0;
     traffic.overdueQueueCount = overdueQueueByOrg.get(orgId) || 0;
   }
@@ -346,25 +530,67 @@ export default async function HqMessagingCommandCenterPage() {
     messages: webhookMonitorMessages,
     now,
   });
+  const acceptedIssueSets = countUnacceptedMessagingOpsIssues({
+    failedMessages: failedSmsForTriage,
+    unmatchedCallbacks: unmatchedCallbackEvents,
+    triageRows,
+  }).accepted;
   const failedSmsRows = buildFailedSmsDrilldownRows(
-    recentFailedSms.map((message) => ({
-      id: message.id,
-      orgId: message.orgId,
-      orgName: message.org.name,
-      leadId: message.lead.id,
-      leadLabel:
-        message.lead.contactName ||
-        message.lead.businessName ||
-        maskPhone(message.toNumberE164),
-      leadStatus: message.lead.status,
-      toNumberE164: message.toNumberE164,
-      providerMessageSid: message.providerMessageSid,
-      status: message.status,
-      body: message.body,
-      createdAt: message.createdAt,
-      communicationEvents: message.communicationEvents,
-    })),
+    recentFailedSms
+      .filter(
+        (message) => !acceptedIssueSets.failedSmsMessageIds.has(message.id),
+      )
+      .slice(0, 12)
+      .map((message) => ({
+        id: message.id,
+        orgId: message.orgId,
+        orgName: message.org.name,
+        leadId: message.lead.id,
+        leadLabel:
+          message.lead.contactName ||
+          message.lead.businessName ||
+          maskPhone(message.toNumberE164),
+        leadStatus: message.lead.status,
+        toNumberE164: message.toNumberE164,
+        providerMessageSid: message.providerMessageSid,
+        status: message.status,
+        body: message.body,
+        createdAt: message.createdAt,
+        communicationEvents: message.communicationEvents,
+      })),
   );
+  const recentUnmatchedCallbacks = unmatchedCallbackEvents
+    .filter(
+      (event) => !acceptedIssueSets.unmatchedStatusCallbackIds.has(event.id),
+    )
+    .slice(0, 12)
+    .map((event) => {
+      const failure = extractSmsFailureMetadata(
+        event.metadataJson,
+        event.providerStatus,
+      );
+      return {
+        id: event.id,
+        orgId: event.orgId,
+        orgName: event.org.name,
+        createdAt: event.createdAt,
+        providerStatus: event.providerStatus || "-",
+        providerMessageSid: event.providerMessageSid,
+        maskedProviderSid: maskSid(event.providerMessageSid),
+        providerErrorCode:
+          smsMetadataString(event.metadataJson, "providerErrorCode") || "-",
+        failureLabel:
+          failure?.label || failure?.category || failure?.reason || "Unmatched",
+        operatorAction:
+          failure?.operatorActionLabel ||
+          failure?.operatorDetail ||
+          "Review Message SID routing",
+      };
+    });
+  const acceptedTriageRows = triageRows
+    .slice()
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, 8);
 
   return (
     <>
@@ -418,6 +644,14 @@ export default async function HqMessagingCommandCenterPage() {
             {report.summary.unmatchedStatusCallbacks30d}
           </p>
           <p className="muted">Delivery callbacks with no local match.</p>
+        </article>
+        <article className="card kpi-card">
+          <h2>Accepted Backlog</h2>
+          <p className="kpi-value">
+            {report.summary.acceptedFailedSms30d +
+              report.summary.acceptedUnmatchedStatusCallbacks30d}
+          </p>
+          <p className="muted">Reviewed failed SMS/callbacks excluded from blockers.</p>
         </article>
         <article className="card kpi-card">
           <h2>Overdue Queue</h2>
@@ -636,6 +870,35 @@ export default async function HqMessagingCommandCenterPage() {
                         >
                           Twilio
                         </Link>
+                        {org.traffic.failed30d > 0 ||
+                        org.traffic.unmatchedStatusCallbacks30d > 0 ? (
+                          <form
+                            action={acceptOrgMessagingBacklogAction}
+                            className="stack"
+                            style={{ marginTop: 8 }}
+                          >
+                            <input type="hidden" name="orgId" value={org.orgId} />
+                            <select
+                              name="reason"
+                              defaultValue="ACCEPTED_FOR_CONTROLLED_ROLLOUT"
+                              aria-label="Acceptance reason"
+                            >
+                              {MESSAGING_OPS_TRIAGE_REASONS.map((reason) => (
+                                <option key={reason} value={reason}>
+                                  {reasonLabel(reason)}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              name="note"
+                              maxLength={280}
+                              placeholder="Safe note, no full phone/SID/secrets"
+                            />
+                            <button className="btn secondary" type="submit">
+                              Accept Current Backlog
+                            </button>
+                          </form>
+                        ) : null}
                       </td>
                     </tr>
                   );
@@ -753,9 +1016,63 @@ export default async function HqMessagingCommandCenterPage() {
       </section>
 
       <section className="card">
+        <h3>Recent Unmatched Callbacks</h3>
+        <p className="muted">
+          Active unmatched callbacks only. Accepted historical/test callbacks stay
+          auditable below but no longer block rollout readiness.
+        </p>
+        {recentUnmatchedCallbacks.length === 0 ? (
+          <p className="muted">No active unmatched callbacks in the last 30 days.</p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 10 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Org</th>
+                  <th>SID</th>
+                  <th>Status</th>
+                  <th>Error</th>
+                  <th>Failure</th>
+                  <th>Operator Action</th>
+                  <th>Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentUnmatchedCallbacks.map((event) => (
+                  <tr key={event.id}>
+                    <td>
+                      {formatDateTimeForDisplay(event.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </td>
+                    <td>{event.orgName}</td>
+                    <td>{event.maskedProviderSid}</td>
+                    <td>{event.providerStatus}</td>
+                    <td>{event.providerErrorCode}</td>
+                    <td>{event.failureLabel}</td>
+                    <td>{event.operatorAction}</td>
+                    <td>
+                      <Link
+                        className="table-link"
+                        href={`/hq/orgs/${event.orgId}/twilio`}
+                      >
+                        Twilio
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="card">
         <h3>Recent Failed SMS</h3>
         {failedSmsRows.length === 0 ? (
-          <p className="muted">No outbound SMS failures in the last 30 days.</p>
+          <p className="muted">No active outbound SMS failures in the last 30 days.</p>
         ) : (
           <div className="table-wrap" style={{ marginTop: 10 }}>
             <table className="data-table">
@@ -821,6 +1138,50 @@ export default async function HqMessagingCommandCenterPage() {
                           SMS Debug
                         </Link>
                       </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <h3>Accepted Messaging Backlog</h3>
+        {acceptedTriageRows.length === 0 ? (
+          <p className="muted">No accepted messaging backlog yet.</p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 10 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Accepted</th>
+                  <th>Org</th>
+                  <th>Type</th>
+                  <th>Reason</th>
+                  <th>Operator</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {acceptedTriageRows.map((row) => {
+                  const org = orgById.get(row.orgId);
+                  return (
+                    <tr key={`${row.targetType}:${row.targetId}`}>
+                      <td>
+                        {formatDateTimeForDisplay(row.createdAt, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </td>
+                      <td>{org?.name || row.orgId}</td>
+                      <td>{reasonLabel(row.targetType)}</td>
+                      <td>{reasonLabel(row.reason)}</td>
+                      <td>
+                        {row.decidedBy?.name || row.decidedBy?.email || "Internal"}
+                      </td>
+                      <td>{row.note || "-"}</td>
                     </tr>
                   );
                 })}
