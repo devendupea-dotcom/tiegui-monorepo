@@ -1,29 +1,23 @@
 import Link from "next/link";
-
-const FOOTER_LINKS = [
-  { href: "/how-it-works", label: "How It Works" },
-  { href: "/system", label: "System" },
-  { href: "/pricing", label: "Pricing" },
-  { href: "/case-studies", label: "Case Studies" },
-  { href: "/about", label: "About" },
-  { href: "/contact", label: "Contact" },
-];
+import { siteCopy } from "../../content/siteCopy";
+import PageShell from "./ui/PageShell";
 
 export default function SiteFooter() {
   return (
-    <footer className="footer" id="site-footer">
-      <div className="container footer-inner">
-        <div className="footer-trust">Revenue engines, not brochure sites.</div>
-        <div className="footer-meta">Based in Tacoma, WA</div>
-        <nav className="footer-links" aria-label="Footer navigation">
-          {FOOTER_LINKS.map((link) => (
-            <Link key={link.href} href={link.href} className="footer-link">
+    <footer className="site-footer">
+      <PageShell className="site-footer__inner">
+        <p className="site-footer__tagline">{siteCopy.footer.tagline}</p>
+        <nav className="site-footer__nav" aria-label="Footer">
+          {siteCopy.footer.links.map((link) => (
+            <Link key={link.href} href={link.href} className="site-footer__link">
               {link.label}
             </Link>
           ))}
         </nav>
-        <div className="footer-copy">(c) {new Date().getFullYear()} Tiegui Solutions</div>
-      </div>
+        <p className="site-footer__copyright">
+          {new Date().getFullYear()} {siteCopy.footer.copyright}. {siteCopy.brand.location}
+        </p>
+      </PageShell>
     </footer>
   );
 }

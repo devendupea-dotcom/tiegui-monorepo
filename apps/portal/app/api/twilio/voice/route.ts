@@ -1,89 +1,192 @@
+import { normalizeEnvValue } from "@/lib/env";
+import { assessInboundCallRisk } from "@/lib/inbound-call-risk";
 import { normalizeE164 } from "@/lib/phone";
+import { isWithinSmsSendWindow } from "@/lib/sms-quiet-hours";
+import { buildForwardDialTwiml, buildVoicemailFallbackTwiml } from "@/lib/twilio-voice-copy";
 import { getBaseUrlFromRequest } from "@/lib/urls";
-import { validateTwilioWebhook } from "@/lib/twilio";
-import { maskSid } from "@/lib/twilio-config-crypto";
-import { getTwilioOrgRuntimeConfigByAccountSid, resolveTwilioVoiceForwardingNumber } from "@/lib/twilio-org";
+import {
+  asTwilioString,
+  getVoiceCalendarTimezone,
+  maskTwilioAccountSid,
+  recordVoiceForwarding,
+  recordVoiceVoicemailReached,
+  resolveForwardTarget,
+  trackVoiceCallStart,
+  resolveTwilioVoiceWebhookContext,
+  validateTwilioVoiceWebhookRequest,
+} from "@/lib/twilio-voice-webhook";
 
-function asString(value: FormDataEntryValue | null): string {
-  return typeof value === "string" ? value.trim() : "";
+const DEFAULT_FORWARD_DIAL_TIMEOUT_SECONDS = 20;
+
+function getForwardDialTimeoutSeconds(): number {
+  const raw = Number.parseInt(normalizeEnvValue(process.env.TWILIO_VOICE_FORWARD_TIMEOUT_SECONDS) || "", 10);
+  if (!Number.isFinite(raw)) {
+    return DEFAULT_FORWARD_DIAL_TIMEOUT_SECONDS;
+  }
+  return Math.max(12, Math.min(30, raw));
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("\"", "&quot;")
-    .replaceAll("'", "&apos;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
+function getAfterCallActionUrl(req: Request, params?: Record<string, string>): string {
+  const configured = normalizeEnvValue(process.env.TWILIO_VOICE_AFTER_CALL_URL);
+  const base =
+    configured ||
+    (normalizeEnvValue(process.env.VERCEL_ENV) === "production"
+      ? "https://app.tieguisolutions.com/api/webhooks/twilio/after-call"
+      : `${getBaseUrlFromRequest(req)}/api/webhooks/twilio/after-call`);
 
-function twimlResponse(body: string) {
-  return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`, {
-    status: 200,
-    headers: {
-      "content-type": "text/xml; charset=utf-8",
-    },
-  });
-}
-
-function getAfterCallUrl(req: Request): string {
-  return `${getBaseUrlFromRequest(req)}/api/twilio/voice/status`;
-}
-
-function voicemailFallbackTwiml(afterCallUrl: string) {
-  return twimlResponse(
-    [
-      "<Say>Thanks for calling. We are helping another customer right now. Please leave a message after the tone.</Say>",
-      `<Record maxLength="60" playBeep="true" action="${escapeXml(afterCallUrl)}" method="POST" />`,
-      "<Say>Thanks. We will get back to you shortly.</Say>",
-    ].join(""),
-  );
+  const url = new URL(base);
+  for (const [key, value] of Object.entries(params || {})) {
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
 }
 
 export async function POST(req: Request) {
   const form = await req.formData();
-  const accountSid = asString(form.get("AccountSid"));
-  const afterCallUrl = getAfterCallUrl(req);
+  const accountSid = asTwilioString(form.get("AccountSid"));
+  const forwardDialTimeoutSeconds = getForwardDialTimeoutSeconds();
 
-  if (!accountSid) {
-    return voicemailFallbackTwiml(afterCallUrl);
-  }
-
-  let twilioConfig: Awaited<ReturnType<typeof getTwilioOrgRuntimeConfigByAccountSid>>;
+  let context: Awaited<ReturnType<typeof resolveTwilioVoiceWebhookContext>>;
   try {
-    twilioConfig = await getTwilioOrgRuntimeConfigByAccountSid(accountSid);
+    context = await resolveTwilioVoiceWebhookContext(form);
   } catch {
-    console.warn(`[twilio:voice] unable to decrypt auth token for account ${maskSid(accountSid)}.`);
-    return voicemailFallbackTwiml(afterCallUrl);
+    console.warn(`[twilio:voice] unable to decrypt auth token for account ${maskTwilioAccountSid(accountSid)}.`);
+    return buildVoicemailFallbackTwiml({
+      afterCallUrl: getAfterCallActionUrl(req),
+    });
   }
 
-  if (!twilioConfig) {
-    console.warn(`[twilio:voice] ignored inbound voice for unknown account ${maskSid(accountSid)}.`);
-    return voicemailFallbackTwiml(afterCallUrl);
+  if (!context) {
+    console.warn(`[twilio:voice] ignored inbound voice for unknown account ${maskTwilioAccountSid(accountSid)}.`);
+    return buildVoicemailFallbackTwiml({
+      afterCallUrl: getAfterCallActionUrl(req),
+    });
   }
 
-  const validation = validateTwilioWebhook(req, form, { authToken: twilioConfig.twilioAuthToken });
+  const validation = validateTwilioVoiceWebhookRequest(req, form, context);
   if (!validation.ok) {
     return new Response(validation.error, { status: validation.status });
   }
 
-  if (twilioConfig.status === "PAUSED") {
-    return voicemailFallbackTwiml(afterCallUrl);
-  }
+  const riskAssessment = await assessInboundCallRisk({
+    orgId: context.organization.id,
+    fromNumber: asTwilioString(form.get("From")),
+    stirVerstat: asTwilioString(form.get("StirVerstat")),
+    excludeCallSid: asTwilioString(form.get("CallSid")) || null,
+  });
+  const suppressLeadCreation = riskAssessment.disposition === "VOICEMAIL_ONLY";
 
-  const forwardingNumber = await resolveTwilioVoiceForwardingNumber(twilioConfig.organizationId);
-  if (!forwardingNumber) {
-    console.warn(`[twilio:voice] no owner/admin forwarding target for org ${twilioConfig.organizationId}.`);
-    return voicemailFallbackTwiml(afterCallUrl);
-  }
+  const trackedCall = await trackVoiceCallStart({
+    context,
+    form,
+    riskAssessment,
+    allowLeadCreation: !suppressLeadCreation,
+  });
 
-  const callerId = normalizeE164(twilioConfig.phoneNumber) || twilioConfig.phoneNumber;
-
-  return twimlResponse(
-    [
-      `<Dial timeout="20" action="${escapeXml(afterCallUrl)}" method="POST" answerOnBridge="true" callerId="${escapeXml(callerId)}">`,
-      escapeXml(forwardingNumber),
-      "</Dial>",
-    ].join(""),
+  console.info(
+    `[twilio:voice] tracked call start callSid=${asTwilioString(form.get("CallSid")) || "unknown"} status=${trackedCall.status} leadId=${trackedCall.leadId || "none"} orgId=${context.organization.id} risk=${riskAssessment.disposition}:${riskAssessment.score}`,
   );
+
+  const afterCallUrl = getAfterCallActionUrl(req);
+  const voicemailAfterCallUrl = getAfterCallActionUrl(req, { voicemailFallback: "1" });
+  const inVoiceForwardingWindow = isWithinSmsSendWindow({
+    at: new Date(),
+    timeZone: getVoiceCalendarTimezone(context),
+    startMinute: context.organization.smsQuietHoursStartMinute,
+    endMinute: context.organization.smsQuietHoursEndMinute,
+  });
+
+  if (context.twilioConfig.status === "PAUSED") {
+    await recordVoiceVoicemailReached({
+      context,
+      form,
+      leadId: trackedCall.leadId,
+      contactId: trackedCall.contactId,
+      callId: trackedCall.callId,
+      reason: "twilio_paused",
+      riskAssessment,
+    });
+    return buildVoicemailFallbackTwiml({
+      afterCallUrl: voicemailAfterCallUrl,
+      businessName: context.organization.name,
+    });
+  }
+
+  if (!inVoiceForwardingWindow) {
+    console.info(
+      `[twilio:voice] quiet-hours voicemail fallback callSid=${asTwilioString(form.get("CallSid")) || "unknown"} orgId=${context.organization.id} timezone=${getVoiceCalendarTimezone(context)} startMinute=${context.organization.smsQuietHoursStartMinute} endMinute=${context.organization.smsQuietHoursEndMinute}`,
+    );
+    await recordVoiceVoicemailReached({
+      context,
+      form,
+      leadId: trackedCall.leadId,
+      contactId: trackedCall.contactId,
+      callId: trackedCall.callId,
+      reason: "quiet_hours",
+      riskAssessment,
+    });
+    return buildVoicemailFallbackTwiml({
+      afterCallUrl: voicemailAfterCallUrl,
+      businessName: context.organization.name,
+    });
+  }
+
+  const forwardingNumber = await resolveForwardTarget(context);
+  if (!forwardingNumber) {
+    await recordVoiceVoicemailReached({
+      context,
+      form,
+      leadId: trackedCall.leadId,
+      contactId: trackedCall.contactId,
+      callId: trackedCall.callId,
+      reason: "missing_forward_target",
+      riskAssessment,
+    });
+    return buildVoicemailFallbackTwiml({
+      afterCallUrl: voicemailAfterCallUrl,
+      businessName: context.organization.name,
+    });
+  }
+
+  await recordVoiceForwarding({
+    context,
+    form,
+    leadId: trackedCall.leadId,
+    contactId: trackedCall.contactId,
+    callId: trackedCall.callId,
+    forwardedTo: forwardingNumber,
+  });
+
+  if (riskAssessment.disposition === "VOICEMAIL_ONLY") {
+    await recordVoiceVoicemailReached({
+      context,
+      form,
+      leadId: trackedCall.leadId,
+      contactId: trackedCall.contactId,
+      callId: trackedCall.callId,
+      reason: "spam_high_risk",
+      forwardedTo: forwardingNumber,
+      riskAssessment,
+    });
+    return buildVoicemailFallbackTwiml({
+      afterCallUrl: voicemailAfterCallUrl,
+      businessName: context.organization.name,
+    });
+  }
+
+  const originalCallerId = normalizeE164(asTwilioString(form.get("From")));
+  const fallbackCallerId = normalizeE164(context.twilioConfig.phoneNumber) || context.twilioConfig.phoneNumber;
+
+  console.info(
+    `[twilio:voice] forwarding inbound call callSid=${asTwilioString(form.get("CallSid")) || "unknown"} orgId=${context.organization.id} target=${forwardingNumber} timeout=${forwardDialTimeoutSeconds}s callerId=${originalCallerId || fallbackCallerId || "default"} risk=${riskAssessment.disposition}:${riskAssessment.score} afterCall=${afterCallUrl}`,
+  );
+
+  return buildForwardDialTwiml({
+    afterCallUrl,
+    forwardingNumber,
+    timeoutSeconds: forwardDialTimeoutSeconds,
+    // Let the owner see the real caller whenever Twilio gives it to us. Fall back to the business line only
+    // when the inbound caller number is unavailable.
+    callerId: originalCallerId ? null : fallbackCallerId,
+  });
 }

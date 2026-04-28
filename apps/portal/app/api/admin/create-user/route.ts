@@ -8,6 +8,7 @@ import { getBaseUrlFromRequest } from "@/lib/urls";
 import { decode } from "next-auth/jwt";
 import { normalizeEnvValue } from "@/lib/env";
 import { cookies } from "next/headers";
+import { createProvisionedPortalUser } from "@/lib/user-provisioning";
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
@@ -34,7 +35,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
-  const vaultToken = cookies().get("tg_admin_vault")?.value;
+  const vaultToken = (await cookies()).get("tg_admin_vault")?.value;
   const decoded = await decode({ token: vaultToken, secret: vaultKey, salt: "admin-vault" });
   if (!decoded || decoded.sub !== requester.id || decoded.unlocked !== true) {
     return NextResponse.json({ ok: false, error: "Admin vault is locked. Unlock it first." }, { status: 403 });
@@ -92,25 +93,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "User already exists." }, { status: 409 });
   }
 
-  const user = await prisma.user.create({
-    data: {
+  const { token, tokenHash } = createResetToken();
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+  const user = await prisma.$transaction(async (tx) => {
+    const createdUser = await createProvisionedPortalUser({
+      tx,
       email: normalizedEmail,
       name,
       role,
-      orgId: role === "CLIENT" ? orgId : null,
-      mustChangePassword: true,
-    },
-    select: { id: true, email: true },
-  });
+      orgId,
+    });
 
-  const { token, tokenHash } = createResetToken();
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-  await prisma.passwordResetToken.create({
-    data: {
-      tokenHash,
-      userId: user.id,
-      expiresAt,
-    },
+    await tx.passwordResetToken.create({
+      data: {
+        tokenHash,
+        userId: createdUser.id,
+        expiresAt,
+      },
+    });
+
+    return {
+      id: createdUser.id,
+      email: createdUser.email,
+    };
   });
 
   const baseUrl = getBaseUrlFromRequest(req);

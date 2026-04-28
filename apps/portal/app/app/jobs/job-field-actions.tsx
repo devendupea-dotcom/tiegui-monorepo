@@ -111,51 +111,14 @@ export default function JobFieldActions({ jobId, voiceNotesEnabled, offlineModeE
     setUploadingPhoto(true);
     setFeedback(null);
     try {
-      const signResponse = await fetch("/api/photos/sign-upload", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          leadId: jobId,
-          contentType: file.type,
-          sizeBytes: file.size,
-          originalName: file.name,
-        }),
-      });
-
-      const signed = (await signResponse.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            uploadUrl?: string;
-            photoId?: string;
-            error?: string;
-          }
-        | null;
-
-      if (!signResponse.ok || !signed?.ok || !signed.uploadUrl || !signed.photoId) {
-        setRetryPhoto(file);
-        setFeedback(signed?.error || "Couldn't upload photo - retry.");
-        return;
-      }
-
-      const putResponse = await fetch(signed.uploadUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": file.type,
-        },
-        body: file,
-      });
-
-      if (!putResponse.ok) {
-        setRetryPhoto(file);
-        setFeedback("Couldn't upload photo - retry.");
-        return;
-      }
+      const formData = new FormData();
+      formData.set("photoFile", file);
 
       const response = await fetch(`/api/jobs/${jobId}/photos`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ photoId: signed.photoId }),
+        body: formData,
       });
+
       const payload = (await response.json().catch(() => null)) as
         | {
             ok?: boolean;

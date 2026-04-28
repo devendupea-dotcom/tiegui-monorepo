@@ -16,6 +16,8 @@ import {
 } from "date-fns";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import type { CalendarAccessRole, Role } from "@prisma/client";
+import { useTranslations } from "next-intl";
+import type enMessages from "@/messages/en.json";
 import {
   clampSlotMinutes,
   clampWeekStartsOn,
@@ -77,6 +79,7 @@ type CalendarView = "day" | "week" | "month";
 type EventFormState = {
   mode: "create" | "edit";
   eventId: string | null;
+  leadId: string | null;
   title: string;
   customerName: string;
   addressLine: string;
@@ -125,6 +128,13 @@ type HoverSlotState = {
   minute: number;
 } | null;
 
+type QuickScheduleLead = {
+  id: string;
+  title: string;
+  customerName: string;
+  addressLine: string;
+};
+
 type NextOpenDuration = 30 | 60 | 90;
 type NextOpenFallbackStrategy = "OWNER" | "ROUND_ROBIN";
 
@@ -142,14 +152,23 @@ type FailedMutationState =
     }
   | null;
 
+type StatusTranslationKey = keyof typeof enMessages.status;
+
 const EVENT_TYPES = ["JOB", "ESTIMATE", "CALL", "BLOCK", "ADMIN", "TRAVEL"];
-const EVENT_STATUSES = ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW"];
+const EVENT_STATUSES = [
+  "SCHEDULED",
+  "CONFIRMED",
+  "COMPLETED",
+  "CANCELLED",
+  "NO_SHOW",
+];
 
 const GRID_START_MINUTE = 6 * 60;
 const GRID_END_MINUTE = 22 * 60;
 const SLOT_ROW_HEIGHT = 26;
 const NEXT_OPEN_DURATIONS: NextOpenDuration[] = [30, 60, 90];
 const NEXT_OPEN_LOOKAHEAD_OPTIONS = [3, 7, 14] as const;
+const SLOT_INTERVAL_OPTIONS = [15, 30, 60, 90] as const;
 
 function clampNextOpenDuration(value: number): NextOpenDuration {
   if (value <= 30) return 30;
@@ -196,7 +215,8 @@ function canEditEvent(input: {
 }): boolean {
   if (input.event.provider === "GOOGLE") return false;
   if (input.internalUser) return true;
-  if (input.currentUserRole === "OWNER" || input.currentUserRole === "ADMIN") return true;
+  if (input.currentUserRole === "OWNER" || input.currentUserRole === "ADMIN")
+    return true;
   if (input.currentUserRole === "READ_ONLY") return false;
   return input.event.workerIds.includes(input.currentUserId);
 }
@@ -214,11 +234,13 @@ function toInitialForm(input: {
   durationMinutes: number;
   workerIds: string[];
   timeZone: string;
+  quickScheduleLead?: QuickScheduleLead | null;
 }): EventFormState {
   if (input.event) {
     return {
       mode: input.mode,
       eventId: input.event.id,
+      leadId: input.event.leadId,
       title: input.event.title,
       customerName: input.event.customerName || "",
       addressLine: input.event.addressLine || "",
@@ -229,10 +251,17 @@ function toInitialForm(input: {
       allDay: input.event.allDay,
       startLocal: fromUtcIsoToLocalInput(input.event.startAt, input.timeZone),
       endLocal: fromUtcIsoToLocalInput(
-        input.event.endAt || addMinutes(new Date(input.event.startAt), input.event.durationMinutes).toISOString(),
+        input.event.endAt ||
+          addMinutes(
+            new Date(input.event.startAt),
+            input.event.durationMinutes,
+          ).toISOString(),
         input.timeZone,
       ),
-      workerIds: input.event.workerIds.length > 0 ? input.event.workerIds : input.workerIds,
+      workerIds:
+        input.event.workerIds.length > 0
+          ? input.event.workerIds
+          : input.workerIds,
     };
   }
 
@@ -241,9 +270,10 @@ function toInitialForm(input: {
   return {
     mode: input.mode,
     eventId: null,
-    title: "",
-    customerName: "",
-    addressLine: "",
+    leadId: input.quickScheduleLead?.id || null,
+    title: input.quickScheduleLead?.title || "",
+    customerName: input.quickScheduleLead?.customerName || "",
+    addressLine: input.quickScheduleLead?.addressLine || "",
     description: "",
     type: "JOB",
     status: "SCHEDULED",
@@ -262,6 +292,7 @@ export default function PremiumJobCalendar({
   currentUserId,
   currentUserCalendarRole,
   defaultSettings,
+  quickScheduleLead = null,
   workers,
 }: {
   orgId: string;
@@ -270,13 +301,19 @@ export default function PremiumJobCalendar({
   currentUserId: string;
   currentUserCalendarRole: CalendarAccessRole;
   defaultSettings: CalendarSettings;
+  quickScheduleLead?: QuickScheduleLead | null;
   workers: Worker[];
 }) {
+  const t = useTranslations("calendar");
+  const buttonT = useTranslations("buttons");
+  const statusT = useTranslations("status");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [view, setView] = useState<CalendarView>("week");
-  const [slotMinutes, setSlotMinutes] = useState<15 | 30 | 60 | 90>(clampSlotMinutes(defaultSettings.defaultSlotMinutes));
+  const [slotMinutes, setSlotMinutes] = useState<15 | 30 | 60 | 90>(
+    clampSlotMinutes(defaultSettings.defaultSlotMinutes),
+  );
   const [focusDate, setFocusDate] = useState<Date>(new Date());
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -291,22 +328,44 @@ export default function PremiumJobCalendar({
   const [dayPanelDate, setDayPanelDate] = useState<Date | null>(null);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [slotAction, setSlotAction] = useState<SlotActionState | null>(null);
-  const [monthPickerValue, setMonthPickerValue] = useState(format(new Date(), "yyyy-MM"));
+  const [monthPickerValue, setMonthPickerValue] = useState(
+    format(new Date(), "yyyy-MM"),
+  );
   const [isMobile, setIsMobile] = useState(false);
-  const [mobileExpandedDayKey, setMobileExpandedDayKey] = useState<string>(toDateOnlyKey(new Date()));
-  const [failedMutation, setFailedMutation] = useState<FailedMutationState>(null);
-  const [resolvingNextOpenDayKey, setResolvingNextOpenDayKey] = useState<string | null>(null);
+  const [mobileExpandedDayKey, setMobileExpandedDayKey] = useState<string>(
+    toDateOnlyKey(new Date()),
+  );
+  const [failedMutation, setFailedMutation] =
+    useState<FailedMutationState>(null);
+  const [resolvingNextOpenDayKey, setResolvingNextOpenDayKey] = useState<
+    string | null
+  >(null);
   const [splitByWorker, setSplitByWorker] = useState(false);
   const [hoverSlot, setHoverSlot] = useState<HoverSlotState>(null);
   const [now, setNow] = useState<Date>(() => new Date());
-  const [nextOpenDurationMinutes, setNextOpenDurationMinutes] = useState<NextOpenDuration>(
-    clampNextOpenDuration(defaultSettings.defaultSlotMinutes),
-  );
-  const [nextOpenFallbackStrategy, setNextOpenFallbackStrategy] = useState<NextOpenFallbackStrategy>("OWNER");
+  const [nextOpenDurationMinutes, setNextOpenDurationMinutes] =
+    useState<NextOpenDuration>(
+      clampNextOpenDuration(defaultSettings.defaultSlotMinutes),
+    );
+  const [nextOpenFallbackStrategy, setNextOpenFallbackStrategy] =
+    useState<NextOpenFallbackStrategy>("OWNER");
   const [nextOpenLookaheadDays, setNextOpenLookaheadDays] = useState<number>(7);
+  const localizeStatus = useCallback(
+    (value: string) => {
+      const key = value.toLowerCase();
+      const statusKey = key as StatusTranslationKey;
+      return statusT.has(statusKey)
+        ? statusT(statusKey)
+        : value.replaceAll("_", " ");
+    },
+    [statusT],
+  );
   const quickActionHandledRef = useRef<string | null>(null);
   const firstColumnWrapRef = useRef<HTMLDivElement | null>(null);
   const firstDayColumnRef = useRef<HTMLDivElement | null>(null);
+  const mobileDayPillRefs = useRef<Record<string, HTMLButtonElement | null>>(
+    {},
+  );
   const [timeAxisOffset, setTimeAxisOffset] = useState(0);
 
   useEffect(() => {
@@ -323,7 +382,10 @@ export default function PremiumJobCalendar({
   }, []);
 
   const canWrite =
-    internalUser || currentUserCalendarRole === "OWNER" || currentUserCalendarRole === "ADMIN" || currentUserCalendarRole === "WORKER";
+    internalUser ||
+    currentUserCalendarRole === "OWNER" ||
+    currentUserCalendarRole === "ADMIN" ||
+    currentUserCalendarRole === "WORKER";
 
   const weekStartsOn = clampWeekStartsOn(defaultSettings.weekStartsOn);
   const visibleRange = useMemo(
@@ -346,78 +408,63 @@ export default function PremiumJobCalendar({
       }
 
       const response = await fetch(`/api/calendar/events?${params.toString()}`);
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            error?: string;
-            events?: CalendarEvent[];
-          }
-        | null;
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        events?: CalendarEvent[];
+      } | null;
 
       if (!response.ok || !payload?.ok) {
-        setError(payload?.error || "Failed to load calendar events.");
+        setError(payload?.error || t("loadEventsError"));
         return;
       }
 
       setEvents(payload.events || []);
     } catch (fetchError) {
-      setError(fetchError instanceof Error ? fetchError.message : "Failed to load calendar events.");
+      setError(
+        fetchError instanceof Error ? fetchError.message : t("loadEventsError"),
+      );
     } finally {
       setLoading(false);
     }
-  }, [focusDate, orgId, selectedWorkerIds, view]);
+  }, [focusDate, orgId, selectedWorkerIds, t, view]);
 
   useEffect(() => {
     void fetchEvents();
   }, [fetchEvents]);
 
-  useEffect(() => {
-    if (resizeState === null) return;
-    const activeResize = resizeState;
-
-    function onPointerMove(event: PointerEvent) {
-      const deltaY = event.clientY - activeResize.startY;
-      const slotDelta = Math.round(deltaY / SLOT_ROW_HEIGHT);
-      const nextDuration = Math.max(slotMinutes, activeResize.initialDuration + slotDelta * slotMinutes);
-      setEvents((current) =>
-        current.map((item) =>
-          item.id === activeResize.eventId
-            ? {
-                ...item,
-                durationMinutes: nextDuration,
-                endAt: addMinutes(new Date(item.startAt), nextDuration).toISOString(),
-              }
-            : item,
-        ),
-      );
-    }
-
-    async function onPointerUp() {
-      const target = events.find((eventItem) => eventItem.id === activeResize.eventId);
-      setResizeState(null);
-      if (!target) return;
+  const saveResizedEvent = useCallback(
+    async (target: CalendarEvent, requestedDuration: number) => {
       const canEdit = canEditEvent({
         internalUser,
         currentUserId,
         currentUserRole: currentUserCalendarRole,
         event: target,
       });
-      if (!canEdit || !canWrite) {
+      if (!canEdit || !canWrite) return;
+
+      const nextDuration = Math.max(slotMinutes, requestedDuration);
+      if (nextDuration === target.durationMinutes && !target.localPending) {
         return;
       }
 
-      const nextEndAt = addMinutes(new Date(target.startAt), target.durationMinutes).toISOString();
+      const nextEndAt = addMinutes(
+        new Date(target.startAt),
+        nextDuration,
+      ).toISOString();
       setEvents((current) =>
         current.map((item) =>
           item.id === target.id
             ? {
                 ...item,
+                durationMinutes: nextDuration,
                 endAt: nextEndAt,
                 localPending: true,
               }
             : item,
         ),
       );
+
       const response = await fetch(`/api/calendar/events/${target.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -426,23 +473,32 @@ export default function PremiumJobCalendar({
           endAt: nextEndAt,
         }),
       });
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; suggestedSlots?: string[]; event?: CalendarEvent }
-        | null;
-      if (response.status === 409 && payload?.suggestedSlots && payload.suggestedSlots.length > 0) {
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        suggestedSlots?: string[];
+        event?: CalendarEvent;
+      } | null;
+      if (
+        response.status === 409 &&
+        payload?.suggestedSlots &&
+        payload.suggestedSlots.length > 0
+      ) {
         setConflict({
           eventId: target.id,
           suggestedSlots: payload.suggestedSlots,
-          durationMinutes: target.durationMinutes,
+          durationMinutes: nextDuration,
         });
         setEvents((current) =>
-          current.map((item) => (item.id === target.id ? { ...item, localPending: false } : item)),
+          current.map((item) =>
+            item.id === target.id ? { ...item, localPending: false } : item,
+          ),
         );
         return;
       }
 
       if (!response.ok || !payload?.ok || !payload.event) {
-        setError(payload?.error || "Couldn't save - retry.");
+        setError(payload?.error || t("saveRetryError"));
         setFailedMutation({
           kind: "resize",
           eventId: target.id,
@@ -452,6 +508,52 @@ export default function PremiumJobCalendar({
       }
 
       mergeEventFromServer(payload.event);
+    },
+    [
+      canWrite,
+      currentUserCalendarRole,
+      currentUserId,
+      internalUser,
+      orgId,
+      slotMinutes,
+      t,
+    ],
+  );
+
+  useEffect(() => {
+    if (resizeState === null) return;
+    const activeResize = resizeState;
+
+    function onPointerMove(event: PointerEvent) {
+      const deltaY = event.clientY - activeResize.startY;
+      const slotDelta = Math.round(deltaY / SLOT_ROW_HEIGHT);
+      const nextDuration = Math.max(
+        slotMinutes,
+        activeResize.initialDuration + slotDelta * slotMinutes,
+      );
+      setEvents((current) =>
+        current.map((item) =>
+          item.id === activeResize.eventId
+            ? {
+                ...item,
+                durationMinutes: nextDuration,
+                endAt: addMinutes(
+                  new Date(item.startAt),
+                  nextDuration,
+                ).toISOString(),
+              }
+            : item,
+        ),
+      );
+    }
+
+    async function onPointerUp() {
+      const target = events.find(
+        (eventItem) => eventItem.id === activeResize.eventId,
+      );
+      setResizeState(null);
+      if (!target) return;
+      await saveResizedEvent(target, target.durationMinutes);
     }
 
     window.addEventListener("pointermove", onPointerMove);
@@ -469,6 +571,7 @@ export default function PremiumJobCalendar({
     internalUser,
     orgId,
     resizeState,
+    saveResizedEvent,
     slotMinutes,
   ]);
 
@@ -480,13 +583,18 @@ export default function PremiumJobCalendar({
 
   const visibleEvents = useMemo(() => {
     if (selectedWorkerIds.length === 0) return events;
-    return events.filter((eventItem) => eventItem.workerIds.some((id) => selectedWorkerIds.includes(id)));
+    return events.filter((eventItem) =>
+      eventItem.workerIds.some((id) => selectedWorkerIds.includes(id)),
+    );
   }, [events, selectedWorkerIds]);
 
   const eventsByDayKey = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
     for (const eventItem of visibleEvents) {
-      const dayKey = localDateFromUtc(eventItem.startAt, defaultSettings.calendarTimezone);
+      const dayKey = localDateFromUtc(
+        eventItem.startAt,
+        defaultSettings.calendarTimezone,
+      );
       const list = map.get(dayKey);
       if (list) {
         list.push(eventItem);
@@ -498,15 +606,25 @@ export default function PremiumJobCalendar({
     for (const [key, list] of map.entries()) {
       map.set(
         key,
-        [...list].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()),
+        [...list].sort(
+          (a, b) =>
+            new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
+        ),
       );
     }
 
     return map;
   }, [defaultSettings.calendarTimezone, visibleEvents]);
 
-  const dayOrWeekDays = useMemo(() => (view === "week" ? getWeekDays(focusDate, weekStartsOn) : [focusDate]), [focusDate, view, weekStartsOn]);
-  const mobileWeekDays = useMemo(() => getWeekDays(focusDate, weekStartsOn), [focusDate, weekStartsOn]);
+  const dayOrWeekDays = useMemo(
+    () =>
+      view === "week" ? getWeekDays(focusDate, weekStartsOn) : [focusDate],
+    [focusDate, view, weekStartsOn],
+  );
+  const mobileWeekDays = useMemo(
+    () => getWeekDays(focusDate, weekStartsOn),
+    [focusDate, weekStartsOn],
+  );
 
   const selectedWorkers = useMemo(() => {
     if (selectedWorkerIds.length === 0) return workers;
@@ -514,7 +632,8 @@ export default function PremiumJobCalendar({
     return workers.filter((worker) => selectedSet.has(worker.id));
   }, [selectedWorkerIds, workers]);
 
-  const shouldSplitByWorker = splitByWorker && view !== "month" && selectedWorkers.length > 1;
+  const shouldSplitByWorker =
+    splitByWorker && view !== "month" && selectedWorkers.length > 1;
 
   const gridColumns = useMemo(() => {
     if (view === "month") return [];
@@ -547,7 +666,11 @@ export default function PremiumJobCalendar({
 
   const slotMarkers = useMemo(() => {
     const markers: number[] = [];
-    for (let minute = GRID_START_MINUTE; minute <= GRID_END_MINUTE; minute += slotMinutes) {
+    for (
+      let minute = GRID_START_MINUTE;
+      minute <= GRID_END_MINUTE;
+      minute += slotMinutes
+    ) {
       markers.push(minute);
     }
     return markers;
@@ -555,7 +678,11 @@ export default function PremiumJobCalendar({
 
   const slotRows = useMemo(() => {
     const rows: Array<{ minute: number; top: number }> = [];
-    for (let minute = GRID_START_MINUTE; minute < GRID_END_MINUTE; minute += slotMinutes) {
+    for (
+      let minute = GRID_START_MINUTE;
+      minute < GRID_END_MINUTE;
+      minute += slotMinutes
+    ) {
       rows.push({
         minute,
         top: ((minute - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT,
@@ -564,11 +691,19 @@ export default function PremiumJobCalendar({
     return rows;
   }, [slotMinutes]);
 
-  const totalGridHeight = ((GRID_END_MINUTE - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT;
+  const totalGridHeight =
+    ((GRID_END_MINUTE - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT;
 
   const nowIndicator = useMemo(() => {
-    const todayKey = formatInTimeZone(now, defaultSettings.calendarTimezone, "yyyy-MM-dd");
-    const minuteOfDay = localMinutes(now.toISOString(), defaultSettings.calendarTimezone);
+    const todayKey = formatInTimeZone(
+      now,
+      defaultSettings.calendarTimezone,
+      "yyyy-MM-dd",
+    );
+    const minuteOfDay = localMinutes(
+      now.toISOString(),
+      defaultSettings.calendarTimezone,
+    );
     if (minuteOfDay < GRID_START_MINUTE || minuteOfDay > GRID_END_MINUTE) {
       return {
         show: false,
@@ -591,17 +726,25 @@ export default function PremiumJobCalendar({
       : selectedWorkerIds.length > 0
         ? selectedWorkerIds.slice(0, 2)
         : workers.slice(0, 1).map((worker) => worker.id);
-  }, [currentUserCalendarRole, currentUserId, internalUser, selectedWorkerIds, workers]);
+  }, [
+    currentUserCalendarRole,
+    currentUserId,
+    internalUser,
+    selectedWorkerIds,
+    workers,
+  ]);
 
   useEffect(() => {
-    const quickAction = searchParams.get("quickAction")?.trim().toLowerCase() || "";
+    const quickAction =
+      searchParams.get("quickAction")?.trim().toLowerCase() || "";
+    const quickLeadId = searchParams.get("leadId")?.trim() || "";
     if (!quickAction || !canWrite) {
       quickActionHandledRef.current = null;
       return;
     }
 
     const quickDate = searchParams.get("quickDate")?.trim() || "";
-    const actionKey = `${quickAction}|${quickDate}|${slotMinutes}`;
+    const actionKey = `${quickAction}|${quickDate}|${quickLeadId}|${slotMinutes}`;
     if (quickActionHandledRef.current === actionKey) {
       return;
     }
@@ -609,10 +752,16 @@ export default function PremiumJobCalendar({
 
     const localNow = toZonedTime(new Date(), defaultSettings.calendarTimezone);
     const dateKey = quickDate || format(localNow, "yyyy-MM-dd");
-    const roundedMinute = Math.ceil((localNow.getHours() * 60 + localNow.getMinutes()) / slotMinutes) * slotMinutes;
+    const roundedMinute =
+      Math.ceil(
+        (localNow.getHours() * 60 + localNow.getMinutes()) / slotMinutes,
+      ) * slotMinutes;
     const minute = Math.max(
       GRID_START_MINUTE,
-      Math.min(GRID_END_MINUTE - slotMinutes, roundedMinute || defaultSettings.defaultUntimedStartHour * 60),
+      Math.min(
+        GRID_END_MINUTE - slotMinutes,
+        roundedMinute || defaultSettings.defaultUntimedStartHour * 60,
+      ),
     );
 
     const initial = toInitialForm({
@@ -623,6 +772,10 @@ export default function PremiumJobCalendar({
       durationMinutes: slotMinutes,
       workerIds: getDefaultWorkerIds(),
       timeZone: defaultSettings.calendarTimezone,
+      quickScheduleLead:
+        quickScheduleLead && quickScheduleLead.id === quickLeadId
+          ? quickScheduleLead
+          : null,
     });
 
     if (quickAction === "block") {
@@ -647,21 +800,25 @@ export default function PremiumJobCalendar({
     const nextDate = parseISO(`${dateKey}T00:00:00`);
     if (!Number.isNaN(nextDate.getTime())) {
       setFocusDate(nextDate);
-      setDayPanelDate(nextDate);
+      setDayPanelDate(null);
       setView("day");
     }
 
     const params = new URLSearchParams(searchParams.toString());
     params.delete("quickAction");
     params.delete("quickDate");
+    params.delete("leadId");
     const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    router.replace(query ? `${pathname}?${query}` : pathname, {
+      scroll: false,
+    });
   }, [
     canWrite,
     defaultSettings.calendarTimezone,
     defaultSettings.defaultUntimedStartHour,
     getDefaultWorkerIds,
     pathname,
+    quickScheduleLead,
     router,
     searchParams,
     slotMinutes,
@@ -669,8 +826,14 @@ export default function PremiumJobCalendar({
 
   useEffect(() => {
     const requestedView = searchParams.get("view")?.trim().toLowerCase();
-    if (requestedView === "day" || requestedView === "week" || requestedView === "month") {
-      setView((current) => (current === requestedView ? current : (requestedView as CalendarView)));
+    if (
+      requestedView === "day" ||
+      requestedView === "week" ||
+      requestedView === "month"
+    ) {
+      setView((current) =>
+        current === requestedView ? current : (requestedView as CalendarView),
+      );
     }
 
     const requestedDate = searchParams.get("date")?.trim();
@@ -688,9 +851,23 @@ export default function PremiumJobCalendar({
   useEffect(() => {
     if (view !== "week") return;
     const todayKey = toDateOnlyKey(new Date());
-    const inCurrentWeek = mobileWeekDays.some((day) => toDateOnlyKey(day) === todayKey);
-    setMobileExpandedDayKey(inCurrentWeek ? todayKey : toDateOnlyKey(mobileWeekDays[0] || new Date()));
+    const inCurrentWeek = mobileWeekDays.some(
+      (day) => toDateOnlyKey(day) === todayKey,
+    );
+    setMobileExpandedDayKey(
+      inCurrentWeek ? todayKey : toDateOnlyKey(mobileWeekDays[0] || new Date()),
+    );
   }, [mobileWeekDays, view]);
+
+  useEffect(() => {
+    if (!isMobile || view !== "week") return;
+    const target = mobileDayPillRefs.current[mobileExpandedDayKey];
+    target?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [isMobile, mobileExpandedDayKey, view]);
 
   useEffect(() => {
     if (view === "month" || selectedWorkerIds.length < 2) {
@@ -731,7 +908,11 @@ export default function PremiumJobCalendar({
     });
   }
 
-  function openNewEvent(input: { dateKey: string; minute: number; durationMinutes: number }) {
+  function openNewEvent(input: {
+    dateKey: string;
+    minute: number;
+    durationMinutes: number;
+  }) {
     if (!canWrite) return;
     const defaultWorkerIds = getDefaultWorkerIds();
 
@@ -790,11 +971,18 @@ export default function PremiumJobCalendar({
     setSubmitting(true);
     setError(null);
 
-    const startAtUtc = toUtcIsoFromLocalInput(eventForm.startLocal, defaultSettings.calendarTimezone);
-    const endAtUtc = toUtcIsoFromLocalInput(eventForm.endLocal, defaultSettings.calendarTimezone);
+    const startAtUtc = toUtcIsoFromLocalInput(
+      eventForm.startLocal,
+      defaultSettings.calendarTimezone,
+    );
+    const endAtUtc = toUtcIsoFromLocalInput(
+      eventForm.endLocal,
+      defaultSettings.calendarTimezone,
+    );
     const payload = {
       orgId,
       title: eventForm.title.trim(),
+      leadId: eventForm.leadId,
       customerName: eventForm.customerName.trim() || null,
       addressLine: eventForm.addressLine.trim() || null,
       description: eventForm.description.trim() || null,
@@ -807,7 +995,10 @@ export default function PremiumJobCalendar({
       workerIds: eventForm.workerIds,
     };
 
-    const url = eventForm.mode === "create" ? "/api/calendar/events" : `/api/calendar/events/${eventForm.eventId}`;
+    const url =
+      eventForm.mode === "create"
+        ? "/api/calendar/events"
+        : `/api/calendar/events/${eventForm.eventId}`;
     const method = eventForm.mode === "create" ? "POST" : "PATCH";
 
     try {
@@ -816,28 +1007,35 @@ export default function PremiumJobCalendar({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const result = (await response.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            error?: string;
-            suggestedSlots?: string[];
-            event?: CalendarEvent;
-          }
-        | null;
+      const result = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        suggestedSlots?: string[];
+        event?: CalendarEvent;
+      } | null;
 
-      if (response.status === 409 && result?.suggestedSlots && result.suggestedSlots.length > 0 && eventForm.eventId) {
+      if (
+        response.status === 409 &&
+        result?.suggestedSlots &&
+        result.suggestedSlots.length > 0 &&
+        eventForm.eventId
+      ) {
         setConflict({
           eventId: eventForm.eventId,
           suggestedSlots: result.suggestedSlots,
           durationMinutes: Math.max(
             slotMinutes,
-            Math.round((new Date(payload.endAt).getTime() - new Date(payload.startAt).getTime()) / 60000),
+            Math.round(
+              (new Date(payload.endAt).getTime() -
+                new Date(payload.startAt).getTime()) /
+                60000,
+            ),
           ),
         });
       }
 
       if (!response.ok || !result?.ok || !result.event) {
-        setError(result?.error || "Couldn't save - retry.");
+        setError(result?.error || t("saveRetryError"));
         return;
       }
 
@@ -847,7 +1045,9 @@ export default function PremiumJobCalendar({
           const nextEvent = { ...result.event!, localPending: false };
           const exists = current.some((item) => item.id === nextEvent.id);
           if (exists) {
-            return current.map((item) => (item.id === nextEvent.id ? nextEvent : item));
+            return current.map((item) =>
+              item.id === nextEvent.id ? nextEvent : item,
+            );
           }
           return [...current, nextEvent];
         });
@@ -855,7 +1055,11 @@ export default function PremiumJobCalendar({
         mergeEventFromServer(result.event);
       }
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Could not save event.");
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : t("saveEventError"),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -863,10 +1067,15 @@ export default function PremiumJobCalendar({
 
   async function deleteEvent(eventId: string) {
     if (!canWrite) return;
-    const response = await fetch(`/api/calendar/events/${eventId}`, { method: "DELETE" });
-    const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+    const response = await fetch(`/api/calendar/events/${eventId}`, {
+      method: "DELETE",
+    });
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+    } | null;
     if (!response.ok || !payload?.ok) {
-      setError(payload?.error || "Failed to delete event.");
+      setError(payload?.error || t("deleteEventError"));
       return;
     }
     setEvents((current) => current.filter((item) => item.id !== eventId));
@@ -887,9 +1096,17 @@ export default function PremiumJobCalendar({
     });
     if (!canEdit || !canWrite) return;
 
-    const existingTime = zonedTimeString(new Date(eventItem.startAt), defaultSettings.calendarTimezone);
-    const minute = input.targetMinute ?? (eventItem.allDay ? defaultSettings.defaultUntimedStartHour * 60 : localMinutes(eventItem.startAt, defaultSettings.calendarTimezone));
-    const nextTime = input.targetMinute === null ? existingTime : minutesToHHmm(minute);
+    const existingTime = zonedTimeString(
+      new Date(eventItem.startAt),
+      defaultSettings.calendarTimezone,
+    );
+    const minute =
+      input.targetMinute ??
+      (eventItem.allDay
+        ? defaultSettings.defaultUntimedStartHour * 60
+        : localMinutes(eventItem.startAt, defaultSettings.calendarTimezone));
+    const nextTime =
+      input.targetMinute === null ? existingTime : minutesToHHmm(minute);
     const nextStartUtc = toUtcFromLocalDateTime({
       date: input.targetDateKey,
       time: nextTime,
@@ -919,11 +1136,18 @@ export default function PremiumJobCalendar({
         endAt: nextEndUtc.toISOString(),
       }),
     });
-    const payload = (await response.json().catch(() => null)) as
-      | { ok?: boolean; error?: string; suggestedSlots?: string[]; event?: CalendarEvent }
-      | null;
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      suggestedSlots?: string[];
+      event?: CalendarEvent;
+    } | null;
 
-    if (response.status === 409 && payload?.suggestedSlots && payload.suggestedSlots.length > 0) {
+    if (
+      response.status === 409 &&
+      payload?.suggestedSlots &&
+      payload.suggestedSlots.length > 0
+    ) {
       setConflict({
         eventId: eventItem.id,
         suggestedSlots: payload.suggestedSlots,
@@ -945,7 +1169,7 @@ export default function PremiumJobCalendar({
     }
 
     if (!response.ok || !payload?.ok || !payload.event) {
-      setError(payload?.error || "Couldn't save - retry.");
+      setError(payload?.error || t("saveRetryError"));
       setFailedMutation({
         kind: "move",
         eventId: eventItem.id,
@@ -958,7 +1182,11 @@ export default function PremiumJobCalendar({
     mergeEventFromServer(payload.event);
   }
 
-  async function applyConflictResolution(eventId: string, slotUtc: string, durationMinutes: number) {
+  async function applyConflictResolution(
+    eventId: string,
+    slotUtc: string,
+    durationMinutes: number,
+  ) {
     const startAt = new Date(slotUtc);
     const endAt = addMinutes(startAt, durationMinutes);
     const response = await fetch(`/api/calendar/events/${eventId}`, {
@@ -970,11 +1198,13 @@ export default function PremiumJobCalendar({
         endAt: endAt.toISOString(),
       }),
     });
-    const payload = (await response.json().catch(() => null)) as
-      | { ok?: boolean; error?: string; event?: CalendarEvent }
-      | null;
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      event?: CalendarEvent;
+    } | null;
     if (!response.ok || !payload?.ok || !payload.event) {
-      setError(payload?.error || "Could not resolve conflict.");
+      setError(payload?.error || t("resolveConflictError"));
       return;
     }
     setConflict(null);
@@ -992,19 +1222,24 @@ export default function PremiumJobCalendar({
       return;
     }
 
-    const response = await fetch(`/api/calendar/events/${failedMutation.eventId}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        orgId,
-        endAt: failedMutation.endAt,
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | { ok?: boolean; error?: string; event?: CalendarEvent }
-      | null;
+    const response = await fetch(
+      `/api/calendar/events/${failedMutation.eventId}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          orgId,
+          endAt: failedMutation.endAt,
+        }),
+      },
+    );
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      event?: CalendarEvent;
+    } | null;
     if (!response.ok || !payload?.ok || !payload.event) {
-      setError(payload?.error || "Couldn't save - retry.");
+      setError(payload?.error || t("saveRetryError"));
       return;
     }
     mergeEventFromServer(payload.event);
@@ -1012,15 +1247,24 @@ export default function PremiumJobCalendar({
 
   function navigate(offset: number) {
     if (view === "day") {
-      setFocusDate((current) => (offset > 0 ? addDays(current, 1) : subDays(current, 1)));
+      setFocusDate((current) =>
+        offset > 0 ? addDays(current, 1) : subDays(current, 1),
+      );
       return;
     }
     if (view === "week") {
       setFocusDate((current) => addDays(current, offset * 7));
       return;
     }
-    setFocusDate((current) => (offset > 0 ? addMonths(current, 1) : subMonths(current, 1)));
-    setMonthPickerValue(format(offset > 0 ? addMonths(focusDate, 1) : subMonths(focusDate, 1), "yyyy-MM"));
+    setFocusDate((current) =>
+      offset > 0 ? addMonths(current, 1) : subMonths(current, 1),
+    );
+    setMonthPickerValue(
+      format(
+        offset > 0 ? addMonths(focusDate, 1) : subMonths(focusDate, 1),
+        "yyyy-MM",
+      ),
+    );
   }
 
   function onMonthPickerChange(value: string) {
@@ -1052,7 +1296,9 @@ export default function PremiumJobCalendar({
     }
 
     const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    router.replace(query ? `${pathname}?${query}` : pathname, {
+      scroll: false,
+    });
     setSlotAction(null);
   }
 
@@ -1069,7 +1315,9 @@ export default function PremiumJobCalendar({
     params.set("view", "day");
     params.set("date", dayKey);
     const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    router.replace(query ? `${pathname}?${query}` : pathname, {
+      scroll: false,
+    });
   }
 
   async function scheduleNextOpenFromDay(dayKey: string) {
@@ -1077,7 +1325,8 @@ export default function PremiumJobCalendar({
       return;
     }
 
-    const preferredWorkerId = getDefaultWorkerIds()[0] || selectedWorkerIds[0] || workers[0]?.id;
+    const preferredWorkerId =
+      getDefaultWorkerIds()[0] || selectedWorkerIds[0] || workers[0]?.id;
     if (!preferredWorkerId) {
       openQuickLeadFromSlot({
         dateKey: dayKey,
@@ -1103,28 +1352,30 @@ export default function PremiumJobCalendar({
           candidateWorkerIds: workers.map((worker) => worker.id),
         }),
       });
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            error?: string;
-            slot?: string;
-            workerId?: string;
-          }
-        | null;
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        slot?: string;
+        workerId?: string;
+      } | null;
 
       if (!response.ok || !payload?.ok || !payload.slot) {
-        setError(payload?.error || "Couldn't find open time.");
+        setError(payload?.error || t("findOpenTimeError"));
         return;
       }
 
       const selectedSlot = new Date(payload.slot);
       if (Number.isNaN(selectedSlot.getTime())) {
-        setError("Couldn't find open time.");
+        setError(t("findOpenTimeError"));
         return;
       }
 
       const local = toZonedTime(selectedSlot, defaultSettings.calendarTimezone);
-      const slotDateKey = formatInTimeZone(selectedSlot, defaultSettings.calendarTimezone, "yyyy-MM-dd");
+      const slotDateKey = formatInTimeZone(
+        selectedSlot,
+        defaultSettings.calendarTimezone,
+        "yyyy-MM-dd",
+      );
 
       openQuickLeadFromSlot({
         dateKey: slotDateKey,
@@ -1133,7 +1384,7 @@ export default function PremiumJobCalendar({
         workerUserId: payload.workerId || preferredWorkerId,
       });
     } catch {
-      setError("Couldn't find open time.");
+      setError(t("findOpenTimeError"));
     } finally {
       setResolvingNextOpenDayKey(null);
     }
@@ -1149,13 +1400,15 @@ export default function PremiumJobCalendar({
     <section className="jobcal-shell card">
       <header className="jobcal-toolbar">
         <div className="jobcal-toolbar-primary">
-          <p className="jobcal-kicker">Job Calendar</p>
+          <p className="jobcal-kicker">{t("jobCalendar")}</p>
           <h2>{orgName}</h2>
-          <p className="muted">Time zone: {defaultSettings.calendarTimezone}</p>
+          <p className="muted">
+            {t("timeZone", { value: defaultSettings.calendarTimezone })}
+          </p>
         </div>
 
         <div className="jobcal-toolbar-controls">
-          <div className="jobcal-segment">
+          <div className="jobcal-segment" aria-label={t("viewLabel")}>
             {(["day", "week", "month"] as const).map((item) => (
               <button
                 key={item}
@@ -1163,14 +1416,18 @@ export default function PremiumJobCalendar({
                 className={`jobcal-segment-btn ${view === item ? "active" : ""}`}
                 onClick={() => setView(item)}
               >
-                {item.toUpperCase()}
+                {t(item)}
               </button>
             ))}
           </div>
 
           <div className="jobcal-nav">
-            <button type="button" className="btn secondary" onClick={() => navigate(-1)}>
-              Prev
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => navigate(-1)}
+            >
+              {t("prev")}
             </button>
             <button
               type="button"
@@ -1180,35 +1437,65 @@ export default function PremiumJobCalendar({
                 setMonthPickerValue(format(new Date(), "yyyy-MM"));
               }}
             >
-              Today
+              {t("today")}
             </button>
-            <button type="button" className="btn secondary" onClick={() => navigate(1)}>
-              Next
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => navigate(1)}
+            >
+              {t("next")}
             </button>
           </div>
 
-          <div className="jobcal-segment">
-            {[15, 30, 60, 90].map((interval) => (
-              <button
-                key={interval}
-                type="button"
-                className={`jobcal-segment-btn ${slotMinutes === interval ? "active" : ""}`}
-                onClick={() => setSlotMinutes(clampSlotMinutes(interval))}
+          {isMobile ? (
+            <label className="jobcal-toolbar-field">
+              <span>{t("spacing")}</span>
+              <select
+                aria-label={t("spacing")}
+                value={slotMinutes}
+                onChange={(event) =>
+                  setSlotMinutes(
+                    clampSlotMinutes(Number.parseInt(event.target.value, 10)),
+                  )
+                }
               >
-                {interval}m
-              </button>
-            ))}
-          </div>
+                {SLOT_INTERVAL_OPTIONS.map((interval) => (
+                  <option key={interval} value={interval}>
+                    {interval} minutes
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="jobcal-segment" aria-label="Calendar spacing">
+              {SLOT_INTERVAL_OPTIONS.map((interval) => (
+                <button
+                  key={interval}
+                  type="button"
+                  className={`jobcal-segment-btn ${slotMinutes === interval ? "active" : ""}`}
+                  onClick={() => setSlotMinutes(clampSlotMinutes(interval))}
+                >
+                  {interval}m
+                </button>
+              ))}
+            </div>
+          )}
 
-          <input
-            type="month"
-            value={monthPickerValue}
-            className="jobcal-month-picker"
-            onChange={(event) => onMonthPickerChange(event.target.value)}
-          />
+          <label className="jobcal-toolbar-field">
+            <span>{t("jumpToMonth")}</span>
+            <input
+              type="month"
+              value={monthPickerValue}
+              className="jobcal-month-picker"
+              onChange={(event) => onMonthPickerChange(event.target.value)}
+            />
+          </label>
 
           <details className="jobcal-worker-filter">
-            <summary>Workers ({selectedWorkerIds.length})</summary>
+            <summary>
+              {t("workers", { count: selectedWorkerIds.length })}
+            </summary>
             <div className="jobcal-worker-list">
               {workers.map((worker) => (
                 <label key={worker.id}>
@@ -1225,8 +1512,12 @@ export default function PremiumJobCalendar({
 
           {view !== "month" && selectedWorkerIds.length > 1 ? (
             <label className="jobcal-split-toggle">
-              <input type="checkbox" checked={splitByWorker} onChange={(event) => setSplitByWorker(event.target.checked)} />
-              <span>Split by worker</span>
+              <input
+                type="checkbox"
+                checked={splitByWorker}
+                onChange={(event) => setSplitByWorker(event.target.checked)}
+              />
+              <span>{t("splitByWorker")}</span>
             </label>
           ) : null}
         </div>
@@ -1239,7 +1530,9 @@ export default function PremiumJobCalendar({
             : `${format(visibleRange.rangeStart, "MMM d")} - ${format(addDays(visibleRange.rangeEnd, -1), "MMM d, yyyy")}`}
         </strong>
         <span className="muted">
-          {loading ? "Loading events..." : `${visibleEvents.length} events`}
+          {loading
+            ? t("loadingEvents")
+            : t("eventsCount", { count: visibleEvents.length })}
         </span>
       </div>
 
@@ -1247,8 +1540,12 @@ export default function PremiumJobCalendar({
         <div className="jobcal-error-row">
           <p className="form-status">{error}</p>
           {failedMutation ? (
-            <button type="button" className="btn secondary" onClick={() => void retryFailedMutation()}>
-              Retry save
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => void retryFailedMutation()}
+            >
+              {t("retrySave")}
             </button>
           ) : null}
         </div>
@@ -1256,8 +1553,8 @@ export default function PremiumJobCalendar({
 
       {!loading && visibleEvents.length === 0 ? (
         <div className="portal-empty-state">
-          <strong>No events yet in your schedule.</strong>
-          <p className="muted">Add a job or set working hours to populate your calendar.</p>
+          <strong>{t("emptyTitle")}</strong>
+          <p className="muted">{t("emptyBody")}</p>
           <div className="portal-empty-actions">
             <button
               type="button"
@@ -1270,13 +1567,17 @@ export default function PremiumJobCalendar({
                 })
               }
             >
-              Add Lead
+              {buttonT("addLead")}
             </button>
             <a
               className="btn secondary"
-              href={internalUser ? `/app/onboarding?step=1&orgId=${encodeURIComponent(orgId)}` : "/app/onboarding?step=1"}
+              href={
+                internalUser
+                  ? `/app/onboarding?step=1&orgId=${encodeURIComponent(orgId)}`
+                  : "/app/onboarding?step=1"
+              }
             >
-              Set Working Hours
+              {buttonT("setWorkingHours")}
             </a>
           </div>
         </div>
@@ -1294,7 +1595,10 @@ export default function PremiumJobCalendar({
               const dayKey = toDateOnlyKey(day);
               const eventsForDay = eventsByDayKey.get(dayKey) || [];
               const visibleChips = eventsForDay.slice(0, 3);
-              const overflow = Math.max(0, eventsForDay.length - visibleChips.length);
+              const overflow = Math.max(
+                0,
+                eventsForDay.length - visibleChips.length,
+              );
               return (
                 <button
                   key={dayKey}
@@ -1306,7 +1610,9 @@ export default function PremiumJobCalendar({
                   }}
                   onDrop={(event) => {
                     event.preventDefault();
-                    const eventId = event.dataTransfer.getData("text/calendar-event-id");
+                    const eventId = event.dataTransfer.getData(
+                      "text/calendar-event-id",
+                    );
                     if (!eventId) return;
                     void moveEvent({
                       eventId,
@@ -1315,7 +1621,11 @@ export default function PremiumJobCalendar({
                     });
                   }}
                 >
-                  <span className={`jobcal-month-date ${isSameDay(day, new Date()) ? "today" : ""}`}>{format(day, "d")}</span>
+                  <span
+                    className={`jobcal-month-date ${isSameDay(day, new Date()) ? "today" : ""}`}
+                  >
+                    {format(day, "d")}
+                  </span>
                   <div className="jobcal-month-chips">
                     {visibleChips.map((eventItem) => (
                       <span
@@ -1341,15 +1651,29 @@ export default function PremiumJobCalendar({
                             dragEvent.preventDefault();
                             return;
                           }
-                          dragEvent.dataTransfer.setData("text/calendar-event-id", eventItem.id);
+                          dragEvent.dataTransfer.setData(
+                            "text/calendar-event-id",
+                            eventItem.id,
+                          );
                         }}
                         className={`jobcal-chip type-${eventItem.type.toLowerCase()}`}
                       >
-                        <strong>{zonedTimeString(new Date(eventItem.startAt), defaultSettings.calendarTimezone)}</strong>
-                        <span>{firstName(eventItem.customerName || eventItem.title)}</span>
+                        <strong>
+                          {zonedTimeString(
+                            new Date(eventItem.startAt),
+                            defaultSettings.calendarTimezone,
+                          )}
+                        </strong>
+                        <span>
+                          {firstName(eventItem.customerName || eventItem.title)}
+                        </span>
                       </span>
                     ))}
-                    {overflow > 0 ? <span className="jobcal-more">+{overflow} more</span> : null}
+                    {overflow > 0 ? (
+                      <span className="jobcal-more">
+                        {t("moreCount", { count: overflow })}
+                      </span>
+                    ) : null}
                   </div>
                 </button>
               );
@@ -1362,11 +1686,21 @@ export default function PremiumJobCalendar({
             {mobileWeekDays.map((day) => {
               const dayKey = toDateOnlyKey(day);
               const count = (eventsByDayKey.get(dayKey) || []).length;
-              const loadClass = count >= 7 ? "heavy" : count >= 4 ? "med" : count >= 1 ? "light" : "none";
+              const loadClass =
+                count >= 7
+                  ? "heavy"
+                  : count >= 4
+                    ? "med"
+                    : count >= 1
+                      ? "light"
+                      : "none";
               return (
                 <button
                   key={dayKey}
                   type="button"
+                  ref={(node) => {
+                    mobileDayPillRefs.current[dayKey] = node;
+                  }}
                   className={`jobcal-mobile-day-pill ${mobileExpandedDayKey === dayKey ? "active" : ""}`}
                   onClick={() => setMobileExpandedDayKey(dayKey)}
                 >
@@ -1385,14 +1719,23 @@ export default function PremiumJobCalendar({
               const eventsForDay = eventsByDayKey.get(dayKey) || [];
               const expanded = mobileExpandedDayKey === dayKey;
               return (
-                <section key={dayKey} className={`jobcal-mobile-day ${expanded ? "expanded" : ""}`}>
-                  <button type="button" className="jobcal-mobile-day-header" onClick={() => setMobileExpandedDayKey(dayKey)}>
+                <section
+                  key={dayKey}
+                  className={`jobcal-mobile-day ${expanded ? "expanded" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className="jobcal-mobile-day-header"
+                    onClick={() => setMobileExpandedDayKey(dayKey)}
+                  >
                     <span>
                       <strong>{format(day, "EEEE")}</strong>
                       <span className="muted">{format(day, "MMM d")}</span>
                     </span>
                     <span className="jobcal-mobile-day-meta">
-                      <span className="muted">{eventsForDay.length} jobs</span>
+                      <span className="muted">
+                        {t("eventsCount", { count: eventsForDay.length })}
+                      </span>
                       <span aria-hidden>{expanded ? "▾" : "▸"}</span>
                     </span>
                   </button>
@@ -1409,32 +1752,58 @@ export default function PremiumJobCalendar({
                               event: eventItem,
                             });
                             return (
-                              <li key={eventItem.id} className="jobcal-mobile-event">
+                              <li
+                                key={eventItem.id}
+                                className="jobcal-mobile-event"
+                              >
                                 <div className="stack-cell">
-                                  <strong className="jobcal-event-title">{eventItem.customerName || eventItem.title}</strong>
+                                  <strong className="jobcal-event-title">
+                                    {eventItem.customerName || eventItem.title}
+                                  </strong>
                                   <span className="jobcal-event-time">
-                                    {zonedTimeString(new Date(eventItem.startAt), defaultSettings.calendarTimezone)} -{" "}
+                                    {zonedTimeString(
+                                      new Date(eventItem.startAt),
+                                      defaultSettings.calendarTimezone,
+                                    )}{" "}
+                                    -{" "}
                                     {zonedTimeString(
                                       new Date(
                                         eventItem.endAt ||
-                                          addMinutes(new Date(eventItem.startAt), eventItem.durationMinutes).toISOString(),
+                                          addMinutes(
+                                            new Date(eventItem.startAt),
+                                            eventItem.durationMinutes,
+                                          ).toISOString(),
                                       ),
                                       defaultSettings.calendarTimezone,
                                     )}
                                   </span>
-                                  {eventItem.addressLine ? <span className="jobcal-event-address">{eventItem.addressLine}</span> : null}
-                                  <span className={`jobcal-status-chip status-${eventItem.status.toLowerCase()}`}>
-                                    {eventItem.status.replaceAll("_", " ")}
-                                    {eventItem.localPending ? " • Pending" : ""}
+                                  {eventItem.addressLine ? (
+                                    <span className="jobcal-event-address">
+                                      {eventItem.addressLine}
+                                    </span>
+                                  ) : null}
+                                  <span
+                                    className={`jobcal-status-chip status-${eventItem.status.toLowerCase()}`}
+                                  >
+                                    {localizeStatus(eventItem.status)}
+                                    {eventItem.localPending
+                                      ? ` • ${t("pendingChanges")}`
+                                      : ""}
                                   </span>
                                 </div>
                                 <div className="jobcal-mobile-event-actions">
                                   {canEdit && canWrite ? (
-                                    <button type="button" className="btn secondary" onClick={() => openEditEvent(eventItem)}>
-                                      Edit
+                                    <button
+                                      type="button"
+                                      className="btn secondary"
+                                      onClick={() => openEditEvent(eventItem)}
+                                    >
+                                      {t("editEvent")}
                                     </button>
                                   ) : (
-                                    <span className="muted">Read-only</span>
+                                    <span className="muted">
+                                      {t("readOnly")}
+                                    </span>
                                   )}
                                 </div>
                               </li>
@@ -1442,7 +1811,9 @@ export default function PremiumJobCalendar({
                           })}
                         </ul>
                       ) : (
-                        <p className="muted jobcal-mobile-empty">No jobs scheduled.</p>
+                        <p className="muted jobcal-mobile-empty">
+                          {t("noJobsScheduled")}
+                        </p>
                       )}
                       {canWrite ? (
                         <div className="jobcal-mobile-day-cta">
@@ -1450,18 +1821,24 @@ export default function PremiumJobCalendar({
                             <button
                               type="button"
                               className="btn primary"
-                              onClick={() => void scheduleNextOpenFromDay(dayKey)}
+                              onClick={() =>
+                                void scheduleNextOpenFromDay(dayKey)
+                              }
                               disabled={Boolean(resolvingNextOpenDayKey)}
                             >
-                              {resolvingNextOpenDayKey === dayKey ? "Finding open time..." : "Schedule next open time"}
+                              {resolvingNextOpenDayKey === dayKey
+                                ? t("findingOpenTime")
+                                : t("scheduleNextOpenTime")}
                             </button>
                             <label className="jobcal-mobile-next-open-duration">
-                              <span>Duration</span>
+                              <span>{t("duration")}</span>
                               <select
                                 value={nextOpenDurationMinutes}
                                 onChange={(event) =>
                                   setNextOpenDurationMinutes(
-                                    clampNextOpenDuration(Number.parseInt(event.target.value, 10)),
+                                    clampNextOpenDuration(
+                                      Number.parseInt(event.target.value, 10),
+                                    ),
                                   )
                                 }
                                 disabled={Boolean(resolvingNextOpenDayKey)}
@@ -1476,28 +1853,37 @@ export default function PremiumJobCalendar({
                           </div>
                           <div className="jobcal-mobile-next-open-options">
                             <label>
-                              <span>Fallback</span>
+                              <span>{t("fallback")}</span>
                               <select
                                 value={nextOpenFallbackStrategy}
                                 onChange={(event) =>
                                   setNextOpenFallbackStrategy(
-                                    event.target.value === "ROUND_ROBIN" ? "ROUND_ROBIN" : "OWNER",
+                                    event.target.value === "ROUND_ROBIN"
+                                      ? "ROUND_ROBIN"
+                                      : "OWNER",
                                   )
                                 }
                                 disabled={Boolean(resolvingNextOpenDayKey)}
                               >
-                                <option value="OWNER">Owner</option>
-                                <option value="ROUND_ROBIN">Round-robin</option>
+                                <option value="OWNER">{t("owner")}</option>
+                                <option value="ROUND_ROBIN">
+                                  {t("roundRobin")}
+                                </option>
                               </select>
                             </label>
                             <label>
-                              <span>Window</span>
+                              <span>{t("window")}</span>
                               <select
                                 value={nextOpenLookaheadDays}
                                 onChange={(event) => {
-                                  const parsed = Number.parseInt(event.target.value, 10);
+                                  const parsed = Number.parseInt(
+                                    event.target.value,
+                                    10,
+                                  );
                                   setNextOpenLookaheadDays(
-                                    NEXT_OPEN_LOOKAHEAD_OPTIONS.includes(parsed as (typeof NEXT_OPEN_LOOKAHEAD_OPTIONS)[number])
+                                    NEXT_OPEN_LOOKAHEAD_OPTIONS.includes(
+                                      parsed as (typeof NEXT_OPEN_LOOKAHEAD_OPTIONS)[number],
+                                    )
                                       ? parsed
                                       : 7,
                                   );
@@ -1506,7 +1892,7 @@ export default function PremiumJobCalendar({
                               >
                                 {NEXT_OPEN_LOOKAHEAD_OPTIONS.map((days) => (
                                   <option key={days} value={days}>
-                                    {days} days
+                                    {t("daysCount", { count: days })}
                                   </option>
                                 ))}
                               </select>
@@ -1531,23 +1917,36 @@ export default function PremiumJobCalendar({
         </div>
       ) : (
         <div className="jobcal-grid-shell">
-          <div className="jobcal-time-column" style={{ height: totalGridHeight + timeAxisOffset + 1 }}>
+          <div
+            className="jobcal-time-column"
+            style={{ height: totalGridHeight + timeAxisOffset + 1 }}
+          >
             {slotMarkers.map((minute) => (
               <span
                 key={minute}
-                style={{ top: timeAxisOffset + ((minute - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT }}
+                style={{
+                  top:
+                    timeAxisOffset +
+                    ((minute - GRID_START_MINUTE) / slotMinutes) *
+                      SLOT_ROW_HEIGHT,
+                }}
               >
                 {minutesToHHmm(minute)}
               </span>
             ))}
             {nowIndicator.show ? (
-              <span className="jobcal-now-label" style={{ top: timeAxisOffset + nowIndicator.top }}>
+              <span
+                className="jobcal-now-label"
+                style={{ top: timeAxisOffset + nowIndicator.top }}
+              >
                 {nowIndicator.label}
               </span>
             ) : null}
           </div>
 
-          <div className={`jobcal-day-columns-scroll ${shouldSplitByWorker ? "split" : ""}`}>
+          <div
+            className={`jobcal-day-columns-scroll ${shouldSplitByWorker ? "split" : ""}`}
+          >
             <div
               className={`jobcal-day-columns ${view === "day" ? "single" : ""} ${shouldSplitByWorker ? "split" : ""}`}
               style={{
@@ -1558,12 +1957,21 @@ export default function PremiumJobCalendar({
                 const day = column.day;
                 const dayKey = column.dayKey;
                 const eventsForDay = visibleEvents.filter((eventItem) => {
-                  const matchesWorker = !column.workerId || eventItem.workerIds.includes(column.workerId);
+                  const matchesWorker =
+                    !column.workerId ||
+                    eventItem.workerIds.includes(column.workerId);
                   if (!matchesWorker) return false;
-                  const start = toZonedTime(new Date(eventItem.startAt), defaultSettings.calendarTimezone);
+                  const start = toZonedTime(
+                    new Date(eventItem.startAt),
+                    defaultSettings.calendarTimezone,
+                  );
                   const end = toZonedTime(
                     new Date(
-                      eventItem.endAt || addMinutes(new Date(eventItem.startAt), eventItem.durationMinutes).toISOString(),
+                      eventItem.endAt ||
+                        addMinutes(
+                          new Date(eventItem.startAt),
+                          eventItem.durationMinutes,
+                        ).toISOString(),
                     ),
                     defaultSettings.calendarTimezone,
                   );
@@ -1574,7 +1982,8 @@ export default function PremiumJobCalendar({
                 const isToday = isSameDay(day, new Date());
                 const hoverTop =
                   hoverSlot && hoverSlot.columnKey === column.key
-                    ? ((hoverSlot.minute - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT
+                    ? ((hoverSlot.minute - GRID_START_MINUTE) / slotMinutes) *
+                      SLOT_ROW_HEIGHT
                     : null;
 
                 return (
@@ -1586,8 +1995,16 @@ export default function PremiumJobCalendar({
                     <div className="jobcal-day-label">
                       <strong>{column.dayLabel}</strong>
                       <span className="jobcal-day-meta">
-                        {column.workerName ? <span className="jobcal-worker-pill">{column.workerName}</span> : null}
-                        {isToday ? <span className="jobcal-today-pill">Today</span> : null}
+                        {column.workerName ? (
+                          <span className="jobcal-worker-pill">
+                            {column.workerName}
+                          </span>
+                        ) : null}
+                        {isToday ? (
+                          <span className="jobcal-today-pill">
+                            {t("todayPill")}
+                          </span>
+                        ) : null}
                       </span>
                     </div>
 
@@ -1598,13 +2015,23 @@ export default function PremiumJobCalendar({
                       onPointerDown={(pointerEvent) => {
                         if (!canWrite) return;
                         const target = pointerEvent.target as HTMLElement;
-                        if (target.closest(".jobcal-event-block, .jobcal-slot-add-btn")) return;
-                        const rect = (pointerEvent.currentTarget as HTMLDivElement).getBoundingClientRect();
+                        if (
+                          target.closest(
+                            ".jobcal-event-block, .jobcal-slot-add-btn",
+                          )
+                        )
+                          return;
+                        const rect = (
+                          pointerEvent.currentTarget as HTMLDivElement
+                        ).getBoundingClientRect();
                         const y = Math.max(0, pointerEvent.clientY - rect.top);
                         const snappedSlot = Math.floor(y / SLOT_ROW_HEIGHT);
                         const minute = Math.max(
                           GRID_START_MINUTE,
-                          Math.min(GRID_END_MINUTE - slotMinutes, GRID_START_MINUTE + snappedSlot * slotMinutes),
+                          Math.min(
+                            GRID_END_MINUTE - slotMinutes,
+                            GRID_START_MINUTE + snappedSlot * slotMinutes,
+                          ),
                         );
                         setHoverSlot({
                           columnKey: column.key,
@@ -1619,15 +2046,22 @@ export default function PremiumJobCalendar({
                           startMinute: minute,
                           currentMinute: minute + slotMinutes,
                         });
-                        (pointerEvent.currentTarget as HTMLDivElement).setPointerCapture(pointerEvent.pointerId);
+                        (
+                          pointerEvent.currentTarget as HTMLDivElement
+                        ).setPointerCapture(pointerEvent.pointerId);
                       }}
                       onPointerMove={(pointerEvent) => {
-                        const rect = (pointerEvent.currentTarget as HTMLDivElement).getBoundingClientRect();
+                        const rect = (
+                          pointerEvent.currentTarget as HTMLDivElement
+                        ).getBoundingClientRect();
                         const y = Math.max(0, pointerEvent.clientY - rect.top);
                         const snappedSlot = Math.floor(y / SLOT_ROW_HEIGHT);
                         const minute = Math.max(
                           GRID_START_MINUTE,
-                          Math.min(GRID_END_MINUTE - slotMinutes, GRID_START_MINUTE + snappedSlot * slotMinutes),
+                          Math.min(
+                            GRID_END_MINUTE - slotMinutes,
+                            GRID_START_MINUTE + snappedSlot * slotMinutes,
+                          ),
                         );
                         if (canWrite) {
                           setHoverSlot({
@@ -1637,31 +2071,46 @@ export default function PremiumJobCalendar({
                             minute,
                           });
                         }
-                        if (!dragCreate || dragCreate.columnKey !== column.key) return;
+                        if (!dragCreate || dragCreate.columnKey !== column.key)
+                          return;
                         setDragCreate((current) =>
                           current
                             ? {
                                 ...current,
                                 currentMinute: Math.max(
                                   GRID_START_MINUTE + slotMinutes,
-                                  Math.min(GRID_END_MINUTE, minute + slotMinutes),
+                                  Math.min(
+                                    GRID_END_MINUTE,
+                                    minute + slotMinutes,
+                                  ),
                                 ),
                               }
                             : null,
                         );
                       }}
                       onPointerLeave={() =>
-                        setHoverSlot((current) => (current && current.columnKey === column.key ? null : current))
+                        setHoverSlot((current) =>
+                          current && current.columnKey === column.key
+                            ? null
+                            : current,
+                        )
                       }
                       onPointerUp={() => {
-                        if (!dragCreate || dragCreate.columnKey !== column.key) return;
+                        if (!dragCreate || dragCreate.columnKey !== column.key)
+                          return;
                         const startMinute = Math.max(
                           GRID_START_MINUTE,
-                          Math.min(dragCreate.startMinute, dragCreate.currentMinute),
+                          Math.min(
+                            dragCreate.startMinute,
+                            dragCreate.currentMinute,
+                          ),
                         );
                         const endMinute = Math.max(
                           startMinute + slotMinutes,
-                          Math.max(dragCreate.startMinute, dragCreate.currentMinute),
+                          Math.max(
+                            dragCreate.startMinute,
+                            dragCreate.currentMinute,
+                          ),
                         );
                         setDragCreate(null);
                         setSlotAction({
@@ -1676,12 +2125,17 @@ export default function PremiumJobCalendar({
                       }}
                       onDrop={(dragEvent) => {
                         dragEvent.preventDefault();
-                        const eventId = dragEvent.dataTransfer.getData("text/calendar-event-id");
+                        const eventId = dragEvent.dataTransfer.getData(
+                          "text/calendar-event-id",
+                        );
                         if (!eventId) return;
-                        const rect = (dragEvent.currentTarget as HTMLDivElement).getBoundingClientRect();
+                        const rect = (
+                          dragEvent.currentTarget as HTMLDivElement
+                        ).getBoundingClientRect();
                         const y = Math.max(0, dragEvent.clientY - rect.top);
                         const slotIndex = Math.floor(y / SLOT_ROW_HEIGHT);
-                        const minute = GRID_START_MINUTE + slotIndex * slotMinutes;
+                        const minute =
+                          GRID_START_MINUTE + slotIndex * slotMinutes;
                         void moveEvent({
                           eventId,
                           targetDateKey: dayKey,
@@ -1701,16 +2155,26 @@ export default function PremiumJobCalendar({
                         <div
                           key={`${column.key}-${minute}`}
                           className={`jobcal-slot-line ${minute % 60 === 0 ? "hour" : minute % 30 === 0 ? "half" : "minor"}`}
-                          style={{ top: ((minute - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT }}
+                          style={{
+                            top:
+                              ((minute - GRID_START_MINUTE) / slotMinutes) *
+                              SLOT_ROW_HEIGHT,
+                          }}
                         />
                       ))}
 
                       {nowIndicator.show && nowIndicator.dayKey === dayKey ? (
-                        <div className="jobcal-now-line" style={{ top: nowIndicator.top }} />
+                        <div
+                          className="jobcal-now-line"
+                          style={{ top: nowIndicator.top }}
+                        />
                       ) : null}
 
                       {canWrite && hoverTop !== null && !dragCreate ? (
-                        <div className="jobcal-slot-hover" style={{ top: hoverTop }}>
+                        <div
+                          className="jobcal-slot-hover"
+                          style={{ top: hoverTop }}
+                        >
                           <button
                             type="button"
                             className="jobcal-slot-add-btn"
@@ -1730,7 +2194,7 @@ export default function PremiumJobCalendar({
                               });
                             }}
                           >
-                            + Add job
+                            {t("addJob")}
                           </button>
                         </div>
                       ) : null}
@@ -1740,12 +2204,20 @@ export default function PremiumJobCalendar({
                           className="jobcal-drag-create"
                           style={{
                             top:
-                              ((Math.min(dragCreate.startMinute, dragCreate.currentMinute) - GRID_START_MINUTE) / slotMinutes) *
+                              ((Math.min(
+                                dragCreate.startMinute,
+                                dragCreate.currentMinute,
+                              ) -
+                                GRID_START_MINUTE) /
+                                slotMinutes) *
                               SLOT_ROW_HEIGHT,
                             height:
                               (Math.max(
                                 slotMinutes,
-                                Math.abs(dragCreate.currentMinute - dragCreate.startMinute),
+                                Math.abs(
+                                  dragCreate.currentMinute -
+                                    dragCreate.startMinute,
+                                ),
                               ) /
                                 slotMinutes) *
                               SLOT_ROW_HEIGHT,
@@ -1754,17 +2226,33 @@ export default function PremiumJobCalendar({
                       ) : null}
 
                       {eventsForDay.map((eventItem) => {
-                        const startMinute = localMinutes(eventItem.startAt, defaultSettings.calendarTimezone);
-                        const endMinute = localMinutes(
-                          eventItem.endAt || addMinutes(new Date(eventItem.startAt), eventItem.durationMinutes).toISOString(),
+                        const startMinute = localMinutes(
+                          eventItem.startAt,
                           defaultSettings.calendarTimezone,
                         );
-                        const clampedStart = Math.max(GRID_START_MINUTE, Math.min(GRID_END_MINUTE - slotMinutes, startMinute));
-                        const clampedEnd = Math.max(clampedStart + slotMinutes, Math.min(GRID_END_MINUTE, endMinute));
-                        const top = ((clampedStart - GRID_START_MINUTE) / slotMinutes) * SLOT_ROW_HEIGHT;
+                        const endMinute = localMinutes(
+                          eventItem.endAt ||
+                            addMinutes(
+                              new Date(eventItem.startAt),
+                              eventItem.durationMinutes,
+                            ).toISOString(),
+                          defaultSettings.calendarTimezone,
+                        );
+                        const clampedStart = Math.max(
+                          GRID_START_MINUTE,
+                          Math.min(GRID_END_MINUTE - slotMinutes, startMinute),
+                        );
+                        const clampedEnd = Math.max(
+                          clampedStart + slotMinutes,
+                          Math.min(GRID_END_MINUTE, endMinute),
+                        );
+                        const top =
+                          ((clampedStart - GRID_START_MINUTE) / slotMinutes) *
+                          SLOT_ROW_HEIGHT;
                         const height = Math.max(
                           SLOT_ROW_HEIGHT,
-                          ((clampedEnd - clampedStart) / slotMinutes) * SLOT_ROW_HEIGHT,
+                          ((clampedEnd - clampedStart) / slotMinutes) *
+                            SLOT_ROW_HEIGHT,
                         );
                         const canEdit = canEditEvent({
                           internalUser,
@@ -1778,7 +2266,10 @@ export default function PremiumJobCalendar({
                             key={eventItem.id}
                             draggable={canEdit && canWrite}
                             onDragStart={(dragEvent) => {
-                              dragEvent.dataTransfer.setData("text/calendar-event-id", eventItem.id);
+                              dragEvent.dataTransfer.setData(
+                                "text/calendar-event-id",
+                                eventItem.id,
+                              );
                             }}
                             className={`jobcal-event-block type-${eventItem.type.toLowerCase()} ${canEdit ? "editable" : "readonly"} ${eventItem.localPending ? "pending" : ""}`}
                             style={{ top, height }}
@@ -1790,28 +2281,48 @@ export default function PremiumJobCalendar({
                               onClick={() => openEditEvent(eventItem)}
                               disabled={!canEdit || !canWrite}
                             >
-                              <p className="jobcal-event-title">{eventItem.customerName || eventItem.title}</p>
+                              <p className="jobcal-event-title">
+                                {eventItem.customerName || eventItem.title}
+                              </p>
                               <p className="jobcal-event-time">
-                                {zonedTimeString(new Date(eventItem.startAt), defaultSettings.calendarTimezone)} -{" "}
+                                {zonedTimeString(
+                                  new Date(eventItem.startAt),
+                                  defaultSettings.calendarTimezone,
+                                )}{" "}
+                                -{" "}
                                 {zonedTimeString(
                                   new Date(
                                     eventItem.endAt ||
-                                      addMinutes(new Date(eventItem.startAt), eventItem.durationMinutes).toISOString(),
+                                      addMinutes(
+                                        new Date(eventItem.startAt),
+                                        eventItem.durationMinutes,
+                                      ).toISOString(),
                                   ),
                                   defaultSettings.calendarTimezone,
                                 )}
                               </p>
-                              {eventItem.addressLine ? <p className="jobcal-event-address">{eventItem.addressLine}</p> : null}
-                              <span className={`jobcal-status-chip status-${eventItem.status.toLowerCase()}`}>
-                                {eventItem.status.replaceAll("_", " ")}
-                                {eventItem.localPending ? " • Pending" : ""}
+                              {eventItem.addressLine ? (
+                                <p className="jobcal-event-address">
+                                  {eventItem.addressLine}
+                                </p>
+                              ) : null}
+                              <span
+                                className={`jobcal-status-chip status-${eventItem.status.toLowerCase()}`}
+                              >
+                                {localizeStatus(eventItem.status)}
+                                {eventItem.localPending
+                                  ? ` • ${t("pendingChanges")}`
+                                  : ""}
                               </span>
                             </button>
                             {canEdit && canWrite ? (
-                              <span
-                                role="button"
-                                tabIndex={0}
+                              <button
+                                type="button"
                                 className="jobcal-resize-handle"
+                                aria-label={t("resizeEvent", {
+                                  value:
+                                    eventItem.customerName || eventItem.title,
+                                })}
                                 onPointerDown={(pointerEvent) => {
                                   pointerEvent.preventDefault();
                                   pointerEvent.stopPropagation();
@@ -1821,6 +2332,29 @@ export default function PremiumJobCalendar({
                                     startY: pointerEvent.clientY,
                                     initialDuration: eventItem.durationMinutes,
                                   });
+                                }}
+                                onKeyDown={(keyboardEvent) => {
+                                  let nextDuration: number | null = null;
+                                  if (
+                                    keyboardEvent.key === "Enter" ||
+                                    keyboardEvent.key === " " ||
+                                    keyboardEvent.key === "ArrowDown"
+                                  ) {
+                                    nextDuration =
+                                      eventItem.durationMinutes + slotMinutes;
+                                  } else if (keyboardEvent.key === "ArrowUp") {
+                                    nextDuration =
+                                      eventItem.durationMinutes - slotMinutes;
+                                  }
+
+                                  if (nextDuration === null) return;
+
+                                  keyboardEvent.preventDefault();
+                                  keyboardEvent.stopPropagation();
+                                  void saveResizedEvent(
+                                    eventItem,
+                                    nextDuration,
+                                  );
                                 }}
                               />
                             ) : null}
@@ -1840,21 +2374,36 @@ export default function PremiumJobCalendar({
         <aside className="jobcal-day-panel">
           <header>
             <strong>{format(dayPanelDate, "EEEE, MMM d")}</strong>
-            <button type="button" className="btn secondary" onClick={() => setDayPanelDate(null)}>
-              Close
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => setDayPanelDate(null)}
+            >
+              {t("close")}
             </button>
           </header>
 
           <div className="jobcal-day-panel-list">
-            {dayPanelEvents.length === 0 ? <p className="muted">No events for this day.</p> : null}
+            {dayPanelEvents.length === 0 ? (
+              <p className="muted">{t("noEventsForDay")}</p>
+            ) : null}
             {dayPanelEvents.map((eventItem) => (
               <article key={eventItem.id} className="jobcal-day-panel-item">
                 <div>
-                  <p className="jobcal-event-title">{eventItem.customerName || eventItem.title}</p>
-                  <p className="jobcal-event-time">
-                    {zonedDateTimeLabel(new Date(eventItem.startAt), defaultSettings.calendarTimezone)}
+                  <p className="jobcal-event-title">
+                    {eventItem.customerName || eventItem.title}
                   </p>
-                  {eventItem.addressLine ? <p className="jobcal-event-address">{eventItem.addressLine}</p> : null}
+                  <p className="jobcal-event-time">
+                    {zonedDateTimeLabel(
+                      new Date(eventItem.startAt),
+                      defaultSettings.calendarTimezone,
+                    )}
+                  </p>
+                  {eventItem.addressLine ? (
+                    <p className="jobcal-event-address">
+                      {eventItem.addressLine}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="jobcal-day-panel-actions">
                   {canEditEvent({
@@ -1863,11 +2412,15 @@ export default function PremiumJobCalendar({
                     currentUserRole: currentUserCalendarRole,
                     event: eventItem,
                   }) && canWrite ? (
-                    <button type="button" className="btn secondary" onClick={() => openEditEvent(eventItem)}>
-                      Edit
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => openEditEvent(eventItem)}
+                    >
+                      {t("editEvent")}
                     </button>
                   ) : (
-                    <span className="muted">Read-only</span>
+                    <span className="muted">{t("readOnly")}</span>
                   )}
                   {canEditEvent({
                     internalUser,
@@ -1875,8 +2428,12 @@ export default function PremiumJobCalendar({
                     currentUserRole: currentUserCalendarRole,
                     event: eventItem,
                   }) && canWrite ? (
-                    <button type="button" className="btn secondary" onClick={() => void deleteEvent(eventItem.id)}>
-                      Delete
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => void deleteEvent(eventItem.id)}
+                    >
+                      {t("deleteEvent")}
                     </button>
                   ) : null}
                 </div>
@@ -1897,7 +2454,7 @@ export default function PremiumJobCalendar({
                   })
                 }
               >
-                Add Event
+                {t("addEvent")}
               </button>
               <button
                 type="button"
@@ -1910,7 +2467,7 @@ export default function PremiumJobCalendar({
                   })
                 }
               >
-                Add Lead
+                {buttonT("addLead")}
               </button>
             </div>
           ) : null}
@@ -1921,10 +2478,14 @@ export default function PremiumJobCalendar({
         <div className="jobcal-modal-backdrop" role="dialog" aria-modal>
           <div className="jobcal-modal">
             <header>
-              <strong>Add from Empty Slot</strong>
+              <strong>{t("addFromEmptySlot")}</strong>
             </header>
             <p className="muted">
-              {slotAction.dateKey} at {minutesToHHmm(slotAction.startMinute)} for {slotAction.durationMinutes} minutes.
+              {t("emptySlotDetails", {
+                date: slotAction.dateKey,
+                time: minutesToHHmm(slotAction.startMinute),
+                minutes: slotAction.durationMinutes,
+              })}
             </p>
             <div className="jobcal-modal-actions">
               <button
@@ -1939,17 +2500,21 @@ export default function PremiumJobCalendar({
                   setSlotAction(null);
                 }}
               >
-                Create Event
+                {t("createEvent")}
               </button>
               <button
                 type="button"
                 className="btn primary"
                 onClick={() => openQuickLeadFromSlot(slotAction)}
               >
-                Add Lead + Schedule
+                {t("addLeadAndSchedule")}
               </button>
-              <button type="button" className="btn secondary" onClick={() => setSlotAction(null)}>
-                Cancel
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setSlotAction(null)}
+              >
+                {t("cancel")}
               </button>
             </div>
           </div>
@@ -1960,92 +2525,131 @@ export default function PremiumJobCalendar({
         <div className="jobcal-modal-backdrop" role="dialog" aria-modal>
           <div className="jobcal-modal">
             <header>
-              <strong>{eventForm.mode === "create" ? "Create Event" : "Edit Event"}</strong>
+              <strong>
+                {eventForm.mode === "create"
+                  ? t("createEvent")
+                  : t("editEvent")}
+              </strong>
             </header>
             <form className="auth-form" onSubmit={submitEventForm}>
+              {eventForm.leadId && eventForm.mode === "create" ? (
+                <p className="muted">{t("linkedLeadNotice")}</p>
+              ) : null}
               <label>
-                Customer / Title
+                {t("customerTitle")}
                 <input
                   required
                   value={eventForm.title}
-                  onChange={(event) => setEventForm((current) => (current ? { ...current, title: event.target.value } : current))}
+                  onChange={(event) =>
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, title: event.target.value }
+                        : current,
+                    )
+                  }
                 />
               </label>
 
               <label>
-                Customer Name
+                {t("customerName")}
                 <input
                   value={eventForm.customerName}
                   onChange={(event) =>
-                    setEventForm((current) => (current ? { ...current, customerName: event.target.value } : current))
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, customerName: event.target.value }
+                        : current,
+                    )
                   }
                 />
               </label>
 
               <label>
-                Address
+                {t("address")}
                 <input
                   value={eventForm.addressLine}
                   onChange={(event) =>
-                    setEventForm((current) => (current ? { ...current, addressLine: event.target.value } : current))
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, addressLine: event.target.value }
+                        : current,
+                    )
                   }
                 />
               </label>
 
               <label>
-                Type
+                {t("type")}
                 <select
                   value={eventForm.type}
-                  onChange={(event) => setEventForm((current) => (current ? { ...current, type: event.target.value } : current))}
+                  onChange={(event) =>
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, type: event.target.value }
+                        : current,
+                    )
+                  }
                 >
                   {EVENT_TYPES.map((item) => (
                     <option key={item} value={item}>
-                      {item}
+                      {localizeStatus(item)}
                     </option>
                   ))}
                 </select>
               </label>
 
               <label>
-                Status
+                {t("eventStatus")}
                 <select
                   value={eventForm.status}
                   onChange={(event) =>
-                    setEventForm((current) => (current ? { ...current, status: event.target.value } : current))
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, status: event.target.value }
+                        : current,
+                    )
                   }
                 >
                   {EVENT_STATUSES.map((item) => (
                     <option key={item} value={item}>
-                      {item.replaceAll("_", " ")}
+                      {localizeStatus(item)}
                     </option>
                   ))}
                 </select>
               </label>
 
               <label>
-                Start
+                {t("start")}
                 <input
                   type="datetime-local"
                   value={eventForm.startLocal}
                   onChange={(event) =>
-                    setEventForm((current) => (current ? { ...current, startLocal: event.target.value } : current))
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, startLocal: event.target.value }
+                        : current,
+                    )
                   }
                 />
               </label>
 
               <label>
-                End
+                {t("end")}
                 <input
                   type="datetime-local"
                   value={eventForm.endLocal}
                   onChange={(event) =>
-                    setEventForm((current) => (current ? { ...current, endLocal: event.target.value } : current))
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, endLocal: event.target.value }
+                        : current,
+                    )
                   }
                 />
               </label>
 
               <fieldset className="jobcal-workers-fieldset">
-                <legend>Assigned Workers</legend>
+                <legend>{t("assignedWorkers")}</legend>
                 <div className="jobcal-worker-list inline">
                   {workers.map((worker) => {
                     const checked = eventForm.workerIds.includes(worker.id);
@@ -2063,7 +2667,9 @@ export default function PremiumJobCalendar({
                               return {
                                 ...current,
                                 workerIds: checked
-                                  ? current.workerIds.filter((id) => id !== worker.id)
+                                  ? current.workerIds.filter(
+                                      (id) => id !== worker.id,
+                                    )
                                   : [...current.workerIds, worker.id],
                               };
                             })
@@ -2077,12 +2683,16 @@ export default function PremiumJobCalendar({
               </fieldset>
 
               <label>
-                Notes
+                {t("notes")}
                 <textarea
                   rows={3}
                   value={eventForm.description}
                   onChange={(event) =>
-                    setEventForm((current) => (current ? { ...current, description: event.target.value } : current))
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, description: event.target.value }
+                        : current,
+                    )
                   }
                 />
               </label>
@@ -2092,15 +2702,24 @@ export default function PremiumJobCalendar({
                   type="checkbox"
                   checked={eventForm.busy}
                   onChange={(event) =>
-                    setEventForm((current) => (current ? { ...current, busy: event.target.checked } : current))
+                    setEventForm((current) =>
+                      current
+                        ? { ...current, busy: event.target.checked }
+                        : current,
+                    )
                   }
                 />
-                Busy event (blocks availability)
+                {t("busyEvent")}
               </label>
 
               <div className="jobcal-modal-actions">
-                <button type="button" className="btn secondary" onClick={() => setEventForm(null)} disabled={submitting}>
-                  Cancel
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => setEventForm(null)}
+                  disabled={submitting}
+                >
+                  {t("cancel")}
                 </button>
                 {eventForm.mode === "edit" && eventForm.eventId ? (
                   <button
@@ -2112,11 +2731,15 @@ export default function PremiumJobCalendar({
                     }}
                     disabled={submitting}
                   >
-                    Delete
+                    {t("deleteEvent")}
                   </button>
                 ) : null}
-                <button type="submit" className="btn primary" disabled={submitting}>
-                  {submitting ? "Saving..." : "Save Event"}
+                <button
+                  type="submit"
+                  className="btn primary"
+                  disabled={submitting}
+                >
+                  {submitting ? t("savingEvent") : t("saveEvent")}
                 </button>
               </div>
             </form>
@@ -2128,26 +2751,37 @@ export default function PremiumJobCalendar({
         <div className="jobcal-modal-backdrop" role="dialog" aria-modal>
           <div className="jobcal-modal">
             <header>
-              <strong>Resolve Conflict</strong>
+              <strong>{t("resolveConflict")}</strong>
             </header>
-            <p className="muted">
-              The selected time conflicts with another assignment. Pick a suggested slot:
-            </p>
+            <p className="muted">{t("conflictBody")}</p>
             <div className="jobcal-slot-options">
               {conflict.suggestedSlots.slice(0, 6).map((slot) => (
                 <button
                   key={slot}
                   type="button"
                   className="btn secondary"
-                  onClick={() => void applyConflictResolution(conflict.eventId, slot, conflict.durationMinutes)}
+                  onClick={() =>
+                    void applyConflictResolution(
+                      conflict.eventId,
+                      slot,
+                      conflict.durationMinutes,
+                    )
+                  }
                 >
-                  {zonedDateTimeLabel(new Date(slot), defaultSettings.calendarTimezone)}
+                  {zonedDateTimeLabel(
+                    new Date(slot),
+                    defaultSettings.calendarTimezone,
+                  )}
                 </button>
               ))}
             </div>
             <div className="jobcal-modal-actions">
-              <button type="button" className="btn secondary" onClick={() => setConflict(null)}>
-                Close
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setConflict(null)}
+              >
+                {t("close")}
               </button>
             </div>
           </div>

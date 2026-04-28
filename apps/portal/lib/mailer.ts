@@ -1,21 +1,11 @@
-import nodemailer from "nodemailer";
-import { Resend } from "resend";
+import { Resend, type Attachment } from "resend";
 import { normalizeEnvValue } from "./env";
 
-const smtpUrl = normalizeEnvValue(process.env.SMTP_URL) || normalizeEnvValue(process.env.EMAIL_SERVER);
 const emailFrom = normalizeEnvValue(process.env.EMAIL_FROM);
+const resendFrom = normalizeEnvValue(process.env.RESEND_FROM);
 const resendApiKey = normalizeEnvValue(process.env.RESEND_API_KEY);
 
-let transporter: nodemailer.Transporter | null = null;
 let resendClient: Resend | null = null;
-
-function getTransporter(): nodemailer.Transporter {
-  if (!smtpUrl) {
-    throw new Error("SMTP is not configured (missing SMTP_URL/EMAIL_SERVER).");
-  }
-  if (!transporter) transporter = nodemailer.createTransport(smtpUrl);
-  return transporter;
-}
 
 function getResendClient(): Resend {
   if (!resendApiKey) {
@@ -34,44 +24,39 @@ function parseRecipients(to: string): string[] {
     .filter((value) => value.length > 0);
 }
 
+function resolveFromAddress(from?: string): string {
+  const resolved = normalizeEnvValue(from) || resendFrom || emailFrom;
+  if (!resolved) {
+    throw new Error("EMAIL_FROM/RESEND_FROM is not configured.");
+  }
+  return resolved;
+}
+
 export async function sendEmail(params: {
   to: string;
   subject: string;
   text: string;
   html?: string;
+  from?: string;
+  attachments?: Attachment[];
 }): Promise<void> {
-  if (!emailFrom) {
-    throw new Error("EMAIL_FROM is not configured.");
+  const from = resolveFromAddress(params.from);
+  const resend = getResendClient();
+  const recipients = parseRecipients(params.to);
+  if (recipients.length === 0) {
+    throw new Error("Email recipient list is empty.");
   }
 
-  if (resendApiKey) {
-    const resend = getResendClient();
-    const recipients = parseRecipients(params.to);
-    if (recipients.length === 0) {
-      throw new Error("Email recipient list is empty.");
-    }
-
-    const result = await resend.emails.send({
-      from: emailFrom,
-      to: recipients,
-      subject: params.subject,
-      text: params.text,
-      ...(params.html ? { html: params.html } : {}),
-    });
-
-    if (result.error) {
-      throw new Error(result.error.message || "Resend failed to send email.");
-    }
-
-    return;
-  }
-
-  const transport = getTransporter();
-  await transport.sendMail({
-    from: emailFrom,
-    to: params.to,
+  const result = await resend.emails.send({
+    from,
+    to: recipients,
     subject: params.subject,
     text: params.text,
     ...(params.html ? { html: params.html } : {}),
+    ...(params.attachments?.length ? { attachments: params.attachments } : {}),
   });
+
+  if (result.error) {
+    throw new Error(result.error.message || "Resend failed to send email.");
+  }
 }

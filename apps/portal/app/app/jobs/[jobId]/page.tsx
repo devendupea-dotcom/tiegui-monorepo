@@ -1,23 +1,52 @@
+import Image from "next/image";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { deriveLeadBookingProjection } from "@/lib/booking-read-model";
+import { dispatchStatusFromDb } from "@/lib/dispatch";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime, formatLabel, isOverdueFollowUp } from "@/lib/hq";
 import {
+  computeInvoiceDueDate,
   formatCurrency,
   formatInvoiceNumber,
   recomputeInvoiceTotals,
   reserveNextInvoiceNumber,
   toMoneyDecimal,
 } from "@/lib/invoices";
+import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
+import { leadPhotoSelect, resolveLeadPhotoUrls } from "@/lib/lead-photos";
+import {
+  buildMapsHrefFromLocation,
+  normalizeLeadCity,
+  resolveLeadLocationLabel,
+} from "@/lib/lead-location";
+import { sanitizeConversationMessageBody } from "@/lib/inbox-message-display";
+import { blockLeadAsSpam } from "@/lib/lead-spam";
 import { sendMetaCapiPurchaseForInvoice } from "@/lib/meta-capi";
-import { isR2Configured, requireR2 } from "@/lib/r2";
+import {
+  findOperationalJobForLead,
+  operationalJobCandidateSelect,
+  selectReusableOperationalJobCandidate,
+} from "@/lib/operational-jobs";
+import {
+  canComposeManualSms,
+  getTwilioMessagingComposeNotice,
+  resolveTwilioMessagingReadiness,
+} from "@/lib/twilio-readiness";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
-import { canAccessOrg, isInternalRole, requireSessionUser } from "@/lib/session";
-import { getParam, resolveAppScope, withOrgQuery } from "../../_lib/portal-scope";
+import {
+  resolveContractorWorkflow,
+  resolveContractorWorkflowActionTarget,
+} from "@/lib/contractor-workflow";
+import {
+  getParam,
+  requireAppOrgActor,
+  resolveAppScope,
+  withOrgQuery,
+} from "../../_lib/portal-scope";
+import { requireAppPageViewer } from "../../_lib/portal-viewer";
 import JobFieldActions from "../job-field-actions";
 import JobPhotoUploader from "../job-photo-uploader";
 import JobStatusControls from "../job-status-controls";
@@ -30,7 +59,19 @@ type TimelineItem = {
   details?: string;
 };
 
-type TabKey = "overview" | "messages" | "notes" | "photos" | "measurements" | "invoice";
+type TabKey =
+  | "overview"
+  | "messages"
+  | "notes"
+  | "photos"
+  | "measurements"
+  | "invoice";
+
+type WorkflowAction = {
+  label: string;
+  href: string;
+  external?: boolean;
+};
 
 function getTab(value: string | string[] | undefined): TabKey {
   const current = typeof value === "string" ? value : "overview";
@@ -45,7 +86,6 @@ function getTab(value: string | string[] | undefined): TabKey {
   }
   return "overview";
 }
-
 
 function appendQuery(path: string, key: string, value: string): string {
   const joiner = path.includes("?") ? "&" : "?";
@@ -77,6 +117,22 @@ function getInvoiceStatusClass(status: string | null | undefined) {
   return String(status || "DRAFT").toLowerCase();
 }
 
+function renderWorkflowAction(action: WorkflowAction, className: string) {
+  if (action.external) {
+    return (
+      <a className={className} href={action.href}>
+        {action.label}
+      </a>
+    );
+  }
+
+  return (
+    <Link className={className} href={action.href}>
+      {action.label}
+    </Link>
+  );
+}
+
 async function requireLeadActionAccess(formData: FormData) {
   const leadId = String(formData.get("leadId") || "").trim();
   const orgId = String(formData.get("orgId") || "").trim();
@@ -85,33 +141,26 @@ async function requireLeadActionAccess(formData: FormData) {
     redirect("/app/jobs");
   }
 
-  const user = await requireSessionUser(`/app/jobs/${leadId}`);
-  if (!canAccessOrg(user, orgId)) {
-    redirect("/app");
-  }
+  const actor = await requireAppOrgActor(`/app/jobs/${leadId}`, orgId);
 
-  const currentUser =
-    user.id && !isInternalRole(user.role)
-      ? await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
-
-  if (!isInternalRole(user.role) && currentUser?.calendarAccessRole === "READ_ONLY") {
+  if (!actor.internalUser && actor.calendarAccessRole === "READ_ONLY") {
     redirect("/app/jobs");
   }
 
-  if (!isInternalRole(user.role) && currentUser?.calendarAccessRole === "WORKER") {
+  if (!actor.internalUser && actor.calendarAccessRole === "WORKER") {
     const workerAllowed = await prisma.lead.findFirst({
       where: {
         id: leadId,
         orgId,
         OR: [
-          { assignedToUserId: currentUser.id },
-          { createdByUserId: currentUser.id },
-          { events: { some: { assignedToUserId: currentUser.id } } },
-          { events: { some: { workerAssignments: { some: { workerUserId: currentUser.id } } } } },
+          { assignedToUserId: actor.id },
+          { createdByUserId: actor.id },
+          { events: { some: { assignedToUserId: actor.id } } },
+          {
+            events: {
+              some: { workerAssignments: { some: { workerUserId: actor.id } } },
+            },
+          },
         ],
       },
       select: { id: true },
@@ -132,6 +181,7 @@ async function requireLeadActionAccess(formData: FormData) {
       businessName: true,
       phoneE164: true,
       city: true,
+      intakeLocationText: true,
       businessType: true,
       estimatedRevenueCents: true,
     },
@@ -141,10 +191,17 @@ async function requireLeadActionAccess(formData: FormData) {
     redirect("/app/jobs");
   }
 
-  const fallbackReturn = withOrgQuery(`/app/jobs/${lead.id}?tab=overview`, lead.orgId, isInternalRole(user.role));
-  const returnPath = getSafeReturnPath(String(formData.get("returnPath") || ""), fallbackReturn);
+  const fallbackReturn = withOrgQuery(
+    `/app/jobs/${lead.id}?tab=overview`,
+    lead.orgId,
+    actor.internalUser,
+  );
+  const returnPath = getSafeReturnPath(
+    String(formData.get("returnPath") || ""),
+    fallbackReturn,
+  );
 
-  return { lead, user, returnPath, internalUser: isInternalRole(user.role) };
+  return { lead, actor, returnPath, internalUser: actor.internalUser };
 }
 
 async function addJobNoteAction(formData: FormData) {
@@ -161,7 +218,7 @@ async function addJobNoteAction(formData: FormData) {
     data: {
       orgId: scoped.lead.orgId,
       leadId: scoped.lead.id,
-      createdByUserId: scoped.user.id ?? null,
+      createdByUserId: scoped.actor.id ?? null,
       body,
     },
   });
@@ -170,6 +227,110 @@ async function addJobNoteAction(formData: FormData) {
   revalidatePath("/app/jobs");
 
   redirect(appendQuery(scoped.returnPath, "saved", "note"));
+}
+
+async function blockSpamLeadAction(formData: FormData) {
+  "use server";
+
+  const scoped = await requireLeadActionAccess(formData);
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await blockLeadAsSpam(tx, {
+      orgId: scoped.lead.orgId,
+      leadId: scoped.lead.id,
+      phoneE164: scoped.lead.phoneE164,
+      userId: scoped.actor.id ?? null,
+      at: now,
+      blockedCallerReason: "Blocked from CRM as spam or junk lead.",
+      noteBody:
+        "[Spam] Caller blocked from CRM. Future auto-text and forwarding should stay suppressed.",
+    });
+  });
+
+  revalidatePath(`/app/jobs/${scoped.lead.id}`);
+  revalidatePath("/app/jobs");
+  revalidatePath("/app/inbox");
+
+  redirect(appendQuery(scoped.returnPath, "saved", "spam-blocked"));
+}
+
+async function deleteSpamLeadAction(formData: FormData) {
+  "use server";
+
+  const scoped = await requireLeadActionAccess(formData);
+  const now = new Date();
+  const jobsListPath = withOrgQuery(
+    "/app/jobs",
+    scoped.lead.orgId,
+    scoped.internalUser,
+  );
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    await blockLeadAsSpam(tx, {
+      orgId: scoped.lead.orgId,
+      leadId: scoped.lead.id,
+      phoneE164: scoped.lead.phoneE164,
+      userId: scoped.actor.id ?? null,
+      at: now,
+      blockedCallerReason: "Deleted from CRM as blocked spam or junk caller.",
+    });
+
+    const current = await tx.lead.findUnique({
+      where: { id: scoped.lead.id },
+      select: {
+        id: true,
+        _count: {
+          select: {
+            events: true,
+            estimates: true,
+            invoices: true,
+            jobs: true,
+          },
+        },
+      },
+    });
+
+    if (!current) {
+      return { deleted: true as const };
+    }
+
+    const hasOperationalRecords =
+      current._count.events > 0 ||
+      current._count.estimates > 0 ||
+      current._count.invoices > 0 ||
+      current._count.jobs > 0;
+
+    if (hasOperationalRecords) {
+      await blockLeadAsSpam(tx, {
+        orgId: scoped.lead.orgId,
+        leadId: scoped.lead.id,
+        phoneE164: scoped.lead.phoneE164,
+        userId: scoped.actor.id ?? null,
+        at: now,
+        noteBody:
+          "[Spam] Caller blocked from CRM. Lead was kept because jobs, estimates, invoices, or events already exist.",
+      });
+
+      return { deleted: false as const };
+    }
+
+    await tx.lead.delete({
+      where: { id: scoped.lead.id },
+    });
+
+    return { deleted: true as const };
+  });
+
+  revalidatePath(`/app/jobs/${scoped.lead.id}`);
+  revalidatePath("/app/jobs");
+  revalidatePath("/app/inbox");
+
+  if (outcome.deleted) {
+    redirect(appendQuery(jobsListPath, "saved", "spam-deleted"));
+  }
+
+  redirect(appendQuery(scoped.returnPath, "saved", "spam-blocked-retained"));
 }
 
 async function addJobMeasurementAction(formData: FormData) {
@@ -181,7 +342,14 @@ async function addJobMeasurementAction(formData: FormData) {
   const unit = String(formData.get("unit") || "").trim();
   const notes = String(formData.get("notes") || "").trim();
 
-  if (!label || !value || label.length > 120 || value.length > 120 || unit.length > 40 || notes.length > 1000) {
+  if (
+    !label ||
+    !value ||
+    label.length > 120 ||
+    value.length > 120 ||
+    unit.length > 40 ||
+    notes.length > 1000
+  ) {
     redirect(appendQuery(scoped.returnPath, "error", "measurement"));
   }
 
@@ -189,7 +357,7 @@ async function addJobMeasurementAction(formData: FormData) {
     data: {
       orgId: scoped.lead.orgId,
       leadId: scoped.lead.id,
-      createdByUserId: scoped.user.id ?? null,
+      createdByUserId: scoped.actor.id ?? null,
       label,
       value,
       unit: unit || null,
@@ -206,13 +374,29 @@ async function createInvoiceAction(formData: FormData) {
   "use server";
 
   const scoped = await requireLeadActionAccess(formData);
-  const now = new Date();
-  const dueAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
   const baseAmount = scoped.lead.estimatedRevenueCents
-    ? new Prisma.Decimal(scoped.lead.estimatedRevenueCents).div(100).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+    ? new Prisma.Decimal(scoped.lead.estimatedRevenueCents)
+        .div(100)
+        .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
     : new Prisma.Decimal(0);
-  const leadLabel = scoped.lead.contactName || scoped.lead.businessName || scoped.lead.phoneE164;
-  const description = scoped.lead.businessType ? `${scoped.lead.businessType} service` : `Service for ${leadLabel}`;
+
+  if (baseAmount.lte(0)) {
+    redirect(appendQuery(scoped.returnPath, "error", "invoice-empty"));
+  }
+
+  const now = new Date();
+  const terms = "NET_15" as const;
+  const dueAt = computeInvoiceDueDate(now, terms);
+  const leadLabel =
+    scoped.lead.contactName ||
+    scoped.lead.businessName ||
+    scoped.lead.phoneE164;
+  const displayBusinessType = sanitizeLeadBusinessTypeLabel(
+    scoped.lead.businessType,
+  );
+  const description = displayBusinessType
+    ? `${displayBusinessType} service`
+    : `Service for ${leadLabel}`;
 
   const createdInvoice = await prisma.$transaction(async (tx) => {
     let customerId = scoped.lead.customerId;
@@ -220,10 +404,17 @@ async function createInvoiceAction(formData: FormData) {
       const customer = await tx.customer.create({
         data: {
           orgId: scoped.lead.orgId,
-          createdByUserId: scoped.user.id ?? null,
-          name: scoped.lead.contactName || scoped.lead.businessName || scoped.lead.phoneE164,
+          createdByUserId: scoped.actor.id ?? null,
+          name:
+            scoped.lead.contactName ||
+            scoped.lead.businessName ||
+            scoped.lead.phoneE164,
           phoneE164: scoped.lead.phoneE164,
-          addressLine: scoped.lead.city || null,
+          addressLine:
+            resolveLeadLocationLabel({
+              intakeLocationText: scoped.lead.intakeLocationText,
+              city: scoped.lead.city,
+            }) || null,
         },
         select: { id: true },
       });
@@ -243,18 +434,24 @@ async function createInvoiceAction(formData: FormData) {
     });
 
     const invoiceNumber = await reserveNextInvoiceNumber(tx, scoped.lead.orgId);
+    const operationalJob = await findOperationalJobForLead(tx, {
+      orgId: scoped.lead.orgId,
+      leadId: scoped.lead.id,
+    });
     const invoice = await tx.invoice.create({
       data: {
         orgId: scoped.lead.orgId,
-        jobId: scoped.lead.id,
+        legacyLeadId: scoped.lead.id,
+        sourceJobId: operationalJob?.id || null,
         customerId,
         invoiceNumber,
+        terms,
         status: "DRAFT",
         issueDate: now,
         dueDate: dueAt,
         taxRate: config.defaultTaxRate,
-        notes: `Created from job folder: ${leadLabel}`,
-        createdByUserId: scoped.user.id ?? null,
+        notes: `Created from lead workspace: ${leadLabel}`,
+        createdByUserId: scoped.actor.id ?? null,
       },
       select: { id: true },
     });
@@ -278,8 +475,12 @@ async function createInvoiceAction(formData: FormData) {
   revalidatePath("/app/jobs");
   revalidatePath("/app/invoices");
 
-  const invoicePath = withOrgQuery(`/app/invoices/${createdInvoice.id}`, scoped.lead.orgId, scoped.internalUser);
-  redirect(invoicePath);
+  const invoicePath = withOrgQuery(
+    `/app/invoices/${createdInvoice.id}`,
+    scoped.lead.orgId,
+    scoped.internalUser,
+  );
+  redirect(`${appendQuery(invoicePath, "focus", "details")}#invoice-details`);
 }
 
 async function quickMarkInvoicePaidAction(formData: FormData) {
@@ -297,7 +498,7 @@ async function quickMarkInvoicePaidAction(formData: FormData) {
       where: {
         id: invoiceId,
         orgId: scoped.lead.orgId,
-        jobId: scoped.lead.id,
+        legacyLeadId: scoped.lead.id,
       },
       select: {
         id: true,
@@ -305,18 +506,17 @@ async function quickMarkInvoicePaidAction(formData: FormData) {
       },
     });
 
-    const balanceDue = toMoneyDecimal(invoice?.balanceDue);
-    if (!invoice || balanceDue.lte(0)) {
+    if (!invoice || invoice.balanceDue.lte(0)) {
       return;
     }
 
     await tx.invoicePayment.create({
       data: {
         invoiceId: invoice.id,
-        amount: balanceDue,
+        amount: invoice.balanceDue,
         date: new Date(),
         method: "OTHER",
-        note: "Quick mark paid from project folder.",
+        note: "Quick mark paid manually from lead workspace.",
       },
     });
 
@@ -335,13 +535,14 @@ async function quickMarkInvoicePaidAction(formData: FormData) {
 
 export const dynamic = "force-dynamic";
 
-export default async function ClientJobDetailPage({
-  params,
-  searchParams,
-}: {
-  params: { jobId: string };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function ClientJobDetailPage(
+  props: {
+    params: Promise<{ jobId: string }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const requestedOrgId = getParam(searchParams?.orgId);
   const currentTab = getTab(searchParams?.tab);
   const saved = getParam(searchParams?.saved);
@@ -351,26 +552,27 @@ export default async function ClientJobDetailPage({
     nextPath: `/app/jobs/${params.jobId}`,
     requestedOrgId,
   });
+  const viewer = await requireAppPageViewer({
+    nextPath: `/app/jobs/${params.jobId}`,
+    orgId: scope.orgId,
+  });
 
-  const sessionUser = await requireSessionUser(`/app/jobs/${params.jobId}`);
-  const currentUser =
-    sessionUser.id && !scope.internalUser
-      ? await prisma.user.findUnique({
-          where: { id: sessionUser.id },
-          select: { id: true, calendarAccessRole: true },
-        })
-      : null;
-
-  if (!scope.internalUser && currentUser?.calendarAccessRole === "WORKER") {
+  if (!viewer.internalUser && viewer.calendarAccessRole === "WORKER") {
     const workerAllowed = await prisma.lead.findFirst({
       where: {
         id: params.jobId,
         orgId: scope.orgId,
         OR: [
-          { assignedToUserId: currentUser.id },
-          { createdByUserId: currentUser.id },
-          { events: { some: { assignedToUserId: currentUser.id } } },
-          { events: { some: { workerAssignments: { some: { workerUserId: currentUser.id } } } } },
+          { assignedToUserId: viewer.id },
+          { createdByUserId: viewer.id },
+          { events: { some: { assignedToUserId: viewer.id } } },
+          {
+            events: {
+              some: {
+                workerAssignments: { some: { workerUserId: viewer.id } },
+              },
+            },
+          },
         ],
       },
       select: { id: true },
@@ -395,6 +597,7 @@ export default async function ClientJobDetailPage({
           twilioConfig: {
             select: {
               phoneNumber: true,
+              status: true,
             },
           },
           voiceNotesEnabled: true,
@@ -404,6 +607,11 @@ export default async function ClientJobDetailPage({
             select: { id: true, name: true, body: true },
             orderBy: { createdAt: "asc" },
           },
+        },
+      },
+      customer: {
+        select: {
+          addressLine: true,
         },
       },
       calls: {
@@ -440,6 +648,7 @@ export default async function ClientJobDetailPage({
       events: {
         select: {
           id: true,
+          jobId: true,
           type: true,
           title: true,
           description: true,
@@ -447,6 +656,8 @@ export default async function ClientJobDetailPage({
           endAt: true,
           status: true,
           assignedToUserId: true,
+          createdAt: true,
+          updatedAt: true,
           assignedTo: {
             select: {
               id: true,
@@ -483,21 +694,7 @@ export default async function ClientJobDetailPage({
         take: 120,
       },
       leadPhotos: {
-        select: {
-          id: true,
-          photoId: true,
-          fileName: true,
-          mimeType: true,
-          imageDataUrl: true,
-          caption: true,
-          createdAt: true,
-          photo: {
-            select: { key: true },
-          },
-          createdBy: {
-            select: { name: true, email: true },
-          },
-        },
+        select: leadPhotoSelect,
         orderBy: { createdAt: "desc" },
         take: 120,
       },
@@ -530,6 +727,31 @@ export default async function ClientJobDetailPage({
         },
         orderBy: [{ createdAt: "desc" }],
       },
+      estimates: {
+        select: {
+          id: true,
+          estimateNumber: true,
+          status: true,
+          title: true,
+          total: true,
+          sentAt: true,
+          customerViewedAt: true,
+          approvedAt: true,
+          declinedAt: true,
+          archivedAt: true,
+          updatedAt: true,
+        },
+        where: {
+          archivedAt: null,
+        },
+        orderBy: [{ updatedAt: "desc" }],
+        take: 8,
+      },
+      jobs: {
+        select: operationalJobCandidateSelect,
+        orderBy: [{ updatedAt: "desc" }],
+        take: 12,
+      },
     },
   });
 
@@ -541,7 +763,9 @@ export default async function ClientJobDetailPage({
       });
 
       if (fallbackLead) {
-        redirect(`/app/jobs/${params.jobId}?tab=${currentTab}&orgId=${encodeURIComponent(fallbackLead.orgId)}`);
+        redirect(
+          `/app/jobs/${params.jobId}?tab=${currentTab}&orgId=${encodeURIComponent(fallbackLead.orgId)}`,
+        );
       }
     }
 
@@ -549,47 +773,10 @@ export default async function ClientJobDetailPage({
   }
 
   const resolvedLeadPhotos =
-    currentTab === "photos"
-      ? await (async () => {
-          if (lead.leadPhotos.length === 0) return [];
-
-          if (!isR2Configured()) {
-            return lead.leadPhotos.map((photo) => ({
-              ...photo,
-              resolvedUrl: photo.imageDataUrl,
-            }));
-          }
-
-          const { r2, bucket } = requireR2();
-
-          return await Promise.all(
-            lead.leadPhotos.map(async (photo) => {
-              if (photo.imageDataUrl) {
-                return { ...photo, resolvedUrl: photo.imageDataUrl };
-              }
-
-              if (photo.photo?.key) {
-                try {
-                  const url = await getSignedUrl(
-                    r2,
-                    new GetObjectCommand({
-                      Bucket: bucket,
-                      Key: photo.photo.key,
-                    }),
-                    { expiresIn: 60 },
-                  );
-
-                  return { ...photo, resolvedUrl: url };
-                } catch {
-                  return { ...photo, resolvedUrl: null };
-                }
-              }
-
-              return { ...photo, resolvedUrl: null };
-            }),
-          );
-        })()
-      : [];
+    currentTab === "photos" ? await resolveLeadPhotoUrls(lead.leadPhotos) : [];
+  const twilioReadiness = resolveTwilioMessagingReadiness({
+    twilioConfig: lead.org.twilioConfig,
+  });
 
   const timeline: TimelineItem[] = [
     ...lead.calls.map((call) => ({
@@ -603,44 +790,102 @@ export default async function ClientJobDetailPage({
       id: `event-${event.id}`,
       kind: "EVENT" as const,
       timestamp: event.startAt,
-      title: `${formatLabel(event.type)} • ${event.title}`,
-      details: event.description || undefined,
+      title: `${formatLabel(event.type)} • ${sanitizeConversationMessageBody({ body: event.title })}`,
+      details:
+        sanitizeConversationMessageBody({ body: event.description }) ||
+        undefined,
     })),
     ...lead.leadNotes.slice(0, 30).map((note) => ({
       id: `note-${note.id}`,
       kind: "NOTE" as const,
       timestamp: note.createdAt,
       title: "Field note added",
-      details: note.body,
+      details:
+        sanitizeConversationMessageBody({ body: note.body }) || undefined,
     })),
   ].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
-  const schedulableEvents = lead.events.filter((event) => event.type === "JOB" || event.type === "ESTIMATE" || event.type === "CALL");
   const now = new Date();
-  const primaryJobEvent =
-    schedulableEvents.find((event) => event.status !== "CANCELLED" && event.startAt >= now) ||
-    [...schedulableEvents].reverse().find((event) => event.status !== "CANCELLED") ||
-    null;
+  const bookingProjection = deriveLeadBookingProjection({
+    leadStatus: lead.status,
+    events: lead.events,
+    jobs: lead.jobs,
+    now,
+  });
+  const primaryJobEvent = bookingProjection.primaryBookingEvent;
   const primaryDurationMinutes = primaryJobEvent?.endAt
-    ? Math.max(15, Math.round((primaryJobEvent.endAt.getTime() - primaryJobEvent.startAt.getTime()) / 60000))
+    ? Math.max(
+        15,
+        Math.round(
+          (primaryJobEvent.endAt.getTime() -
+            primaryJobEvent.startAt.getTime()) /
+            60000,
+        ),
+      )
     : null;
 
-  const assignedTechNames =
-    primaryJobEvent
-      ? Array.from(
-          new Set(
-            [
-              primaryJobEvent.assignedTo?.name || primaryJobEvent.assignedTo?.email || null,
-              ...primaryJobEvent.workerAssignments.map(
-                (assignment) => assignment.worker.name || assignment.worker.email || null,
-              ),
-            ].filter((value): value is string => Boolean(value && value.trim())),
-          ),
-        )
-      : [];
+  const assignedTechNames = primaryJobEvent
+    ? Array.from(
+        new Set(
+          [
+            primaryJobEvent.assignedTo?.name ||
+              primaryJobEvent.assignedTo?.email ||
+              null,
+            ...primaryJobEvent.workerAssignments.map(
+              (assignment) =>
+                assignment.worker.name || assignment.worker.email || null,
+            ),
+          ].filter((value): value is string => Boolean(value && value.trim())),
+        ),
+      )
+    : [];
   const latestInvoice = lead.invoices[0] || null;
-  const primaryStatusLabel = formatLabel(primaryJobEvent?.status || lead.status);
+  const operationalJob =
+    (bookingProjection.linkedOperationalJobId
+      ? lead.jobs.find(
+          (candidate) =>
+            candidate.id === bookingProjection.linkedOperationalJobId,
+        ) || null
+      : null) ||
+    selectReusableOperationalJobCandidate({
+      candidates: lead.jobs,
+      preferredJobId: bookingProjection.linkedOperationalJobId,
+    });
+  const latestEstimate =
+    lead.estimates.find((estimate) => estimate.status !== "CONVERTED") ||
+    lead.estimates[0] ||
+    null;
+  const latestMessage = lead.messages[lead.messages.length - 1] || null;
+  const hasMessagingWorkspace = Boolean(
+    lead.org.twilioConfig?.phoneNumber ||
+    lead.org.smsFromNumberE164 ||
+    lead.messages.length > 0,
+  );
+  const scheduledJobEvent = bookingProjection.activeBookingEvent;
+  const openInvoice =
+    lead.invoices.find((invoice) => toMoneyDecimal(invoice.balanceDue).gt(0)) || null;
+  const primaryStatusValue =
+    operationalJob?.dispatchStatus === "ON_THE_WAY"
+      ? "ON_THE_WAY"
+      : operationalJob?.dispatchStatus === "ON_SITE"
+        ? "ON_SITE"
+        : operationalJob &&
+            operationalJob.status !== "SCHEDULED" &&
+            operationalJob.status !== "ESTIMATING"
+          ? operationalJob.status
+          : primaryJobEvent?.status || bookingProjection.derivedLeadStatus;
+  const primaryStatusLabel = formatLabel(primaryStatusValue);
   const hasPaidInvoice = latestInvoice ? isInvoiceSettled(latestInvoice) : false;
+  const displayCity = normalizeLeadCity(lead.city) || "-";
+  const displayBusinessType = sanitizeLeadBusinessTypeLabel(lead.businessType);
+  const effectiveNextFollowUpAt = bookingProjection.hasActiveBooking
+    ? null
+    : lead.nextFollowUpAt;
+  const locationLabel = resolveLeadLocationLabel({
+    customerAddressLine: lead.customer?.addressLine,
+    intakeLocationText: lead.intakeLocationText,
+    city: lead.city,
+  });
   const jobValueLabel =
     lead.estimatedRevenueCents && lead.estimatedRevenueCents > 0
       ? formatCurrencyFromCents(lead.estimatedRevenueCents)
@@ -649,27 +894,138 @@ export default async function ClientJobDetailPage({
         : "TBD";
 
   const backHref = withOrgQuery("/app/jobs", scope.orgId, scope.internalUser);
-  const overviewHref = withOrgQuery(`/app/jobs/${lead.id}?tab=overview`, scope.orgId, scope.internalUser);
-  const messagesHref = withOrgQuery(`/app/jobs/${lead.id}?tab=messages`, scope.orgId, scope.internalUser);
-  const notesHref = withOrgQuery(`/app/jobs/${lead.id}?tab=notes`, scope.orgId, scope.internalUser);
-  const photosHref = withOrgQuery(`/app/jobs/${lead.id}?tab=photos`, scope.orgId, scope.internalUser);
-  const measurementsHref = withOrgQuery(`/app/jobs/${lead.id}?tab=measurements`, scope.orgId, scope.internalUser);
-  const invoiceHref = withOrgQuery(`/app/jobs/${lead.id}?tab=invoice`, scope.orgId, scope.internalUser);
-  const mapsQuery = [lead.businessName, lead.city].filter(Boolean).join(" ").trim();
-  const mapsHref = mapsQuery ? `https://maps.google.com/?q=${encodeURIComponent(mapsQuery)}` : null;
+  const operationalJobHref = operationalJob
+    ? withOrgQuery(
+        `/app/jobs/records/${operationalJob.id}`,
+        scope.orgId,
+        scope.internalUser,
+      )
+    : null;
+  const overviewHref = withOrgQuery(
+    `/app/jobs/${lead.id}?tab=overview`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const messagesHref = withOrgQuery(
+    `/app/jobs/${lead.id}?tab=messages`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const notesHref = withOrgQuery(
+    `/app/jobs/${lead.id}?tab=notes`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const photosHref = withOrgQuery(
+    `/app/jobs/${lead.id}?tab=photos`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const measurementsHref = withOrgQuery(
+    `/app/jobs/${lead.id}?tab=measurements`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const invoiceHref = withOrgQuery(
+    `/app/jobs/${lead.id}?tab=invoice`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const createEstimateHref = withOrgQuery(
+    `/app/estimates?create=1&leadId=${encodeURIComponent(lead.id)}`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const latestEstimateHref = latestEstimate
+    ? withOrgQuery(
+        `/app/estimates/${latestEstimate.id}`,
+        scope.orgId,
+        scope.internalUser,
+      )
+    : null;
+  const scheduleCalendarHref = withOrgQuery(
+    `/app/calendar?quickAction=schedule&leadId=${encodeURIComponent(lead.id)}`,
+    scope.orgId,
+    scope.internalUser,
+  );
+  const mapsHref = buildMapsHrefFromLocation(locationLabel);
+  const workflow = resolveContractorWorkflow({
+    now,
+    hasMessagingWorkspace,
+    latestMessageDirection: latestMessage?.direction || null,
+    nextFollowUpAt: effectiveNextFollowUpAt,
+    latestEstimateStatus: latestEstimate?.status || null,
+    hasScheduledJob: bookingProjection.hasActiveBooking,
+    hasOperationalJob: Boolean(operationalJobHref),
+    hasLatestInvoice: Boolean(latestInvoice),
+    hasOpenInvoice: Boolean(openInvoice),
+    latestInvoicePaid: Boolean(
+      latestInvoice && latestInvoice.balanceDue.lte(0),
+    ),
+  });
+  const nextActionTarget = resolveContractorWorkflowActionTarget({
+    action: workflow.nextAction,
+    messagesHref,
+    phoneHref: lead.phoneE164 ? `tel:${lead.phoneE164}` : null,
+    createEstimateHref,
+    latestEstimateHref,
+    scheduleCalendarHref,
+    operationalJobHref,
+    invoiceHref,
+    overviewHref,
+  });
+  const nextAction: WorkflowAction = {
+    label: workflow.nextAction.label,
+    href: nextActionTarget.href,
+    external: nextActionTarget.external,
+  };
+  const followUpAction: WorkflowAction = hasMessagingWorkspace
+    ? { label: "Open Follow-up", href: messagesHref }
+    : { label: "Call Customer", href: `tel:${lead.phoneE164}`, external: true };
+
+  const contactSummary = latestMessage
+    ? latestMessage.direction === "INBOUND"
+      ? "Customer replied. You owe the next response."
+      : effectiveNextFollowUpAt
+        ? isOverdueFollowUp(effectiveNextFollowUpAt)
+          ? `Follow-up overdue since ${formatDateTime(effectiveNextFollowUpAt)}.`
+          : `Follow-up set for ${formatDateTime(effectiveNextFollowUpAt)}.`
+        : `Last outbound contact ${formatDateTime(latestMessage.createdAt)}.`
+    : lead.calls.length > 0
+      ? "Call activity exists, but no message thread is started yet."
+      : "No contact logged yet.";
+  const estimateSummary = latestEstimate
+    ? `${formatLabel(latestEstimate.status)} • ${latestEstimate.estimateNumber}`
+    : "No estimate yet.";
+  const scheduleSummary = scheduledJobEvent
+    ? `${formatLabel(scheduledJobEvent.status)} • ${formatDateTime(scheduledJobEvent.startAt)}`
+    : operationalJobHref
+      ? "Operational job created and ready to run."
+      : "No job scheduled yet.";
+  const invoiceSummary = latestInvoice
+    ? latestInvoice.balanceDue.lte(0)
+      ? `Paid • ${formatInvoiceNumber(latestInvoice.invoiceNumber)}`
+      : `Balance due ${formatCurrency(latestInvoice.balanceDue)}`
+    : "No invoice yet.";
 
   const returnPathFor = (tab: TabKey) =>
-    withOrgQuery(`/app/jobs/${lead.id}?tab=${tab}`, scope.orgId, scope.internalUser);
+    withOrgQuery(
+      `/app/jobs/${lead.id}?tab=${tab}`,
+      scope.orgId,
+      scope.internalUser,
+    );
 
   return (
     <div className="job-detail-shell">
       <section className="card job-detail-header">
         <Link href={backHref} className="table-link">
-          ← Back to Jobs
+          ← Back to Leads
         </Link>
         <div className="job-title-row" style={{ marginTop: 8 }}>
           <h2>{lead.contactName || lead.businessName || lead.phoneE164}</h2>
-          <span className={`badge job-hero-status status-${(primaryJobEvent?.status || lead.status).toLowerCase()}`}>
+          <span
+            className={`badge job-hero-status status-${primaryStatusValue.toLowerCase()}`}
+          >
             {primaryStatusLabel}
           </span>
         </div>
@@ -678,46 +1034,139 @@ export default async function ClientJobDetailPage({
             <span>Job Value</span>
             <strong>{jobValueLabel}</strong>
           </p>
-          <span className={`badge job-invoice-badge ${hasPaidInvoice ? "paid" : "unpaid"}`}>
+          <span
+            className={`badge job-invoice-badge ${hasPaidInvoice ? "paid" : "unpaid"}`}
+          >
             {hasPaidInvoice ? "Paid" : "Unpaid"}
           </span>
         </div>
-        {scope.internalUser ? <p className="muted">Portal preview: {lead.org.name}</p> : null}
+        {scope.internalUser ? (
+          <p className="muted">Portal preview: {lead.org.name}</p>
+        ) : null}
         <div className="quick-meta" style={{ marginTop: 10 }}>
           <span className={`badge priority-${lead.priority.toLowerCase()}`}>
             {formatLabel(lead.priority)} Priority
           </span>
-          {lead.nextFollowUpAt && isOverdueFollowUp(lead.nextFollowUpAt) ? (
+          {effectiveNextFollowUpAt &&
+          isOverdueFollowUp(effectiveNextFollowUpAt) ? (
             <span className="overdue-chip">Overdue</span>
           ) : null}
         </div>
+        {saved === "spam-blocked" ? (
+          <p className="form-status">
+            Caller blocked as spam. Future auto-text and forwarding will stay
+            suppressed.
+          </p>
+        ) : null}
+        {saved === "spam-blocked-retained" ? (
+          <p className="form-status">
+            Caller blocked as spam. This lead stayed in CRM because it already
+            has job, estimate, invoice, or calendar history.
+          </p>
+        ) : null}
 
         <div className="job-detail-action-row">
-          <a className="btn primary job-primary-action" href={`tel:${lead.phoneE164}`}>
+          {operationalJobHref ? (
+            <Link
+              className="btn primary job-primary-action"
+              href={operationalJobHref}
+            >
+              Open Operational Job
+            </Link>
+          ) : null}
+          <a
+            className={`btn ${operationalJobHref ? "secondary" : "primary"} job-primary-action`}
+            href={`tel:${lead.phoneE164}`}
+          >
             Call
           </a>
-          <Link className="btn secondary job-secondary-action" href={messagesHref}>
+          <Link
+            className="btn secondary job-secondary-action"
+            href={messagesHref}
+          >
             Open Messages
           </Link>
-          <a className="btn secondary job-secondary-action" href={`sms:${lead.phoneE164}`}>
+          <a
+            className="btn secondary job-secondary-action"
+            href={`sms:${lead.phoneE164}`}
+          >
             Text
           </a>
           {mapsHref ? (
-            <a className="btn secondary job-secondary-action" href={mapsHref} target="_blank" rel="noopener noreferrer">
+            <a
+              className="btn secondary job-secondary-action"
+              href={mapsHref}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               Maps
             </a>
           ) : null}
         </div>
-        <div className="job-detail-mobile-sticky-actions" aria-label="Job quick actions">
+        <p className="muted" style={{ marginTop: 10 }}>
+          {operationalJobHref
+            ? "Use this lead workspace for customer history and supporting context. Run day-to-day operations from the operational job."
+            : "Use this lead workspace for intake history, customer context, and supporting records."}
+        </p>
+        <form action={blockSpamLeadAction} style={{ marginTop: 10 }}>
+          <input type="hidden" name="leadId" value={lead.id} />
+          <input type="hidden" name="orgId" value={lead.orgId} />
+          <input
+            type="hidden"
+            name="returnPath"
+            value={withOrgQuery(
+              `/app/jobs/${lead.id}?tab=${currentTab}`,
+              lead.orgId,
+              scope.internalUser,
+            )}
+          />
+          <button
+            className="btn secondary"
+            type="submit"
+            style={{ borderColor: "#b91c1c", color: "#b91c1c" }}
+          >
+            Block Spam
+          </button>
+        </form>
+        <form action={deleteSpamLeadAction} style={{ marginTop: 10 }}>
+          <input type="hidden" name="leadId" value={lead.id} />
+          <input type="hidden" name="orgId" value={lead.orgId} />
+          <input
+            type="hidden"
+            name="returnPath"
+            value={withOrgQuery(
+              `/app/jobs/${lead.id}?tab=${currentTab}`,
+              lead.orgId,
+              scope.internalUser,
+            )}
+          />
+          <button
+            className="btn secondary"
+            type="submit"
+            style={{ borderColor: "#7f1d1d", color: "#7f1d1d" }}
+          >
+            Delete Spam Lead
+          </button>
+        </form>
+        <div
+          className="job-detail-mobile-sticky-actions"
+          aria-label="Job quick actions"
+        >
           <a className="btn secondary" href={`tel:${lead.phoneE164}`}>
             Call
           </a>
           <a className="btn secondary" href={`sms:${lead.phoneE164}`}>
             Text
           </a>
-          <Link className="btn primary" href={messagesHref}>
-            Open
-          </Link>
+          {operationalJobHref ? (
+            <Link className="btn primary" href={operationalJobHref}>
+              Open Operational Job
+            </Link>
+          ) : (
+            <Link className="btn primary" href={messagesHref}>
+              Open Messages
+            </Link>
+          )}
         </div>
 
         <JobFieldActions
@@ -727,48 +1176,93 @@ export default async function ClientJobDetailPage({
         />
 
         <article className="job-schedule-card">
-          <h3>Schedule</h3>
+          <h3>Schedule Snapshot</h3>
           {primaryJobEvent ? (
             <div className="stack-cell">
               <p>
                 <strong>{formatDateTime(primaryJobEvent.startAt)}</strong>
-                {primaryDurationMinutes ? ` • ${primaryDurationMinutes} min` : ""}
+                {primaryDurationMinutes
+                  ? ` • ${primaryDurationMinutes} min`
+                  : ""}
               </p>
               <p className="muted">Type: {formatLabel(primaryJobEvent.type)}</p>
               <p className="muted">
-                Assigned techs: {assignedTechNames.length > 0 ? assignedTechNames.join(", ") : "Unassigned"}
+                Assigned techs:{" "}
+                {assignedTechNames.length > 0
+                  ? assignedTechNames.join(", ")
+                  : "Unassigned"}
               </p>
             </div>
           ) : (
             <p className="muted">No job time scheduled yet.</p>
           )}
+          <div
+            className="portal-empty-actions"
+            style={{ justifyContent: "flex-start", marginTop: 10 }}
+          >
+            {operationalJobHref ? (
+              <Link className="btn secondary" href={operationalJobHref}>
+                {primaryJobEvent
+                  ? "Manage in Operational Job"
+                  : "Finish in Operational Job"}
+              </Link>
+            ) : (
+              <Link className="btn secondary" href={scheduleCalendarHref}>
+                {primaryJobEvent
+                  ? "Reschedule in Calendar"
+                  : "Schedule in Calendar"}
+              </Link>
+            )}
+          </div>
         </article>
 
         <JobStatusControls
-          jobId={lead.id}
-          eventId={primaryJobEvent?.id || null}
-          initialStatus={primaryJobEvent?.status || "SCHEDULED"}
+          operationalJobId={operationalJob?.id || null}
+          hasActiveBooking={bookingProjection.hasActiveBooking}
+          initialStatus={
+            operationalJob
+              ? dispatchStatusFromDb(operationalJob.dispatchStatus)
+              : "scheduled"
+          }
           offlineModeEnabled={lead.org.offlineModeEnabled}
         />
 
         <div className="tab-row job-detail-tabs" style={{ marginTop: 14 }}>
-          <Link href={overviewHref} className={`tab-chip ${currentTab === "overview" ? "active" : ""}`}>
-            Overview
+          <Link
+            href={overviewHref}
+            className={`tab-chip ${currentTab === "overview" ? "active" : ""}`}
+          >
+            Next Step
           </Link>
-          <Link href={messagesHref} className={`tab-chip ${currentTab === "messages" ? "active" : ""}`}>
-            Messages
+          <Link
+            href={messagesHref}
+            className={`tab-chip ${currentTab === "messages" ? "active" : ""}`}
+          >
+            Follow-up
           </Link>
-          <Link href={notesHref} className={`tab-chip ${currentTab === "notes" ? "active" : ""}`}>
+          <Link
+            href={notesHref}
+            className={`tab-chip ${currentTab === "notes" ? "active" : ""}`}
+          >
             Notes
           </Link>
-          <Link href={photosHref} className={`tab-chip ${currentTab === "photos" ? "active" : ""}`}>
+          <Link
+            href={photosHref}
+            className={`tab-chip ${currentTab === "photos" ? "active" : ""}`}
+          >
             Photos
           </Link>
-          <Link href={measurementsHref} className={`tab-chip ${currentTab === "measurements" ? "active" : ""}`}>
+          <Link
+            href={measurementsHref}
+            className={`tab-chip ${currentTab === "measurements" ? "active" : ""}`}
+          >
             Measurements
           </Link>
-          <Link href={invoiceHref} className={`tab-chip ${currentTab === "invoice" ? "active" : ""}`}>
-            Invoice
+          <Link
+            href={invoiceHref}
+            className={`tab-chip ${currentTab === "invoice" ? "active" : ""}`}
+          >
+            Invoices
           </Link>
         </div>
       </section>
@@ -776,7 +1270,66 @@ export default async function ClientJobDetailPage({
       {currentTab === "overview" ? (
         <>
           <section className="card">
-            <h2>Project Folder Summary</h2>
+            <div className="invoice-header-row">
+              <div className="stack-cell">
+                <h2>Next Step</h2>
+                <p className="muted">{workflow.stageDetail}</p>
+              </div>
+              <div className="quick-links">
+                {renderWorkflowAction(nextAction, "btn primary")}
+                {nextAction.href !== followUpAction.href
+                  ? renderWorkflowAction(followUpAction, "btn secondary")
+                  : null}
+                {latestEstimateHref &&
+                nextAction.href !== latestEstimateHref ? (
+                  <Link className="btn secondary" href={latestEstimateHref}>
+                    Open Estimate
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+            <div className="quick-meta" style={{ marginTop: 12 }}>
+              <span className="badge">{workflow.stageLabel}</span>
+              {latestEstimate ? (
+                <span className="badge">
+                  {formatLabel(latestEstimate.status)}
+                </span>
+              ) : null}
+              {scheduledJobEvent ? (
+                <span className="badge">
+                  {formatLabel(scheduledJobEvent.status)}
+                </span>
+              ) : null}
+              {latestInvoice ? (
+                <span
+                  className={`badge status-${latestInvoice.status.toLowerCase()}`}
+                >
+                  {formatLabel(latestInvoice.status)}
+                </span>
+              ) : null}
+            </div>
+            <dl className="detail-list" style={{ marginTop: 12 }}>
+              <div>
+                <dt>Contact</dt>
+                <dd>{contactSummary}</dd>
+              </div>
+              <div>
+                <dt>Estimate</dt>
+                <dd>{estimateSummary}</dd>
+              </div>
+              <div>
+                <dt>Schedule</dt>
+                <dd>{scheduleSummary}</dd>
+              </div>
+              <div>
+                <dt>Invoice</dt>
+                <dd>{invoiceSummary}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="card">
+            <h2>Lead Workspace Summary</h2>
             <dl className="detail-list" style={{ marginTop: 10 }}>
               <div>
                 <dt>Business</dt>
@@ -791,12 +1344,16 @@ export default async function ClientJobDetailPage({
                 <dd>{lead.phoneE164}</dd>
               </div>
               <div>
+                <dt>Location</dt>
+                <dd>{locationLabel || "-"}</dd>
+              </div>
+              <div>
                 <dt>City</dt>
-                <dd>{lead.city || "-"}</dd>
+                <dd>{displayCity}</dd>
               </div>
               <div>
                 <dt>Type</dt>
-                <dd>{lead.businessType || "-"}</dd>
+                <dd>{displayBusinessType || "-"}</dd>
               </div>
               <div>
                 <dt>Lead Source</dt>
@@ -804,7 +1361,7 @@ export default async function ClientJobDetailPage({
               </div>
               <div>
                 <dt>Next Follow-up</dt>
-                <dd>{formatDateTime(lead.nextFollowUpAt)}</dd>
+                <dd>{formatDateTime(effectiveNextFollowUpAt)}</dd>
               </div>
               <div>
                 <dt>Estimated Value</dt>
@@ -817,7 +1374,9 @@ export default async function ClientJobDetailPage({
             <article className="card">
               <h2>Proof View</h2>
               {lead.calls.length === 0 ? (
-                <p className="muted" style={{ marginTop: 10 }}>No call proof metadata yet.</p>
+                <p className="muted" style={{ marginTop: 10 }}>
+                  No call proof metadata yet.
+                </p>
               ) : (
                 <div className="table-wrap" style={{ marginTop: 12 }}>
                   <table className="data-table">
@@ -863,8 +1422,12 @@ export default async function ClientJobDetailPage({
                         <p>
                           <strong>{item.title}</strong>
                         </p>
-                        {item.details ? <p className="muted">{item.details}</p> : null}
-                        <p className="muted">{formatDateTime(item.timestamp)}</p>
+                        {item.details ? (
+                          <p className="muted">{item.details}</p>
+                        ) : null}
+                        <p className="muted">
+                          {formatDateTime(item.timestamp)}
+                        </p>
                       </div>
                     </li>
                   ))}
@@ -877,11 +1440,20 @@ export default async function ClientJobDetailPage({
 
       {currentTab === "messages" ? (
         <section className="card">
-          <h2>Messages</h2>
-          <p className="muted">Conversation thread for this job only.</p>
+          <h2>Follow-up</h2>
+          <p className="muted">
+            Text, call, and keep the customer moving toward an estimate or
+            booked job.
+          </p>
           <LeadMessageThread
             leadId={lead.id}
-            senderNumber={lead.org.twilioConfig?.phoneNumber || lead.org.smsFromNumberE164 || null}
+            senderNumber={
+              lead.org.twilioConfig?.phoneNumber ||
+              lead.org.smsFromNumberE164 ||
+              null
+            }
+            canSend={canComposeManualSms(twilioReadiness.code)}
+            composerNotice={getTwilioMessagingComposeNotice(twilioReadiness.code)}
             templates={lead.org.smsTemplates}
             initialMessages={lead.messages.map((message) => ({
               ...message,
@@ -895,12 +1467,22 @@ export default async function ClientJobDetailPage({
         <section className="grid two-col">
           <article className="card">
             <h2>Field Notes</h2>
-            <p className="muted">Drop job updates so crews and office stay aligned.</p>
+            <p className="muted">
+              Store supporting notes tied to this lead workspace.
+            </p>
 
-            <form action={addJobNoteAction} className="auth-form" style={{ marginTop: 12 }}>
+            <form
+              action={addJobNoteAction}
+              className="auth-form"
+              style={{ marginTop: 12 }}
+            >
               <input type="hidden" name="leadId" value={lead.id} />
               <input type="hidden" name="orgId" value={lead.orgId} />
-              <input type="hidden" name="returnPath" value={returnPathFor("notes")} />
+              <input
+                type="hidden"
+                name="returnPath"
+                value={returnPathFor("notes")}
+              />
 
               <label>
                 Note
@@ -916,22 +1498,31 @@ export default async function ClientJobDetailPage({
                 Add Note
               </button>
 
-              {saved === "note" ? <p className="form-status">Note saved.</p> : null}
-              {error === "note" ? <p className="form-status">Note is required and must be under 4000 chars.</p> : null}
+              {saved === "note" ? (
+                <p className="form-status">Note saved.</p>
+              ) : null}
+              {error === "note" ? (
+                <p className="form-status">
+                  Note is required and must be under 4000 chars.
+                </p>
+              ) : null}
             </form>
           </article>
 
           <article className="card">
             <h2>Notes History</h2>
             {lead.leadNotes.length === 0 ? (
-              <p className="muted" style={{ marginTop: 10 }}>No notes yet.</p>
+              <p className="muted" style={{ marginTop: 10 }}>
+                No notes yet.
+              </p>
             ) : (
               <ul className="notes-list" style={{ marginTop: 12 }}>
                 {lead.leadNotes.map((note) => (
                   <li key={note.id} className="notes-item">
                     <p>{note.body}</p>
                     <p className="muted">
-                      {formatDateTime(note.createdAt)} • {note.createdBy?.name || note.createdBy?.email || "Team"}
+                      {formatDateTime(note.createdAt)} •{" "}
+                      {note.createdBy?.name || note.createdBy?.email || "Team"}
                     </p>
                   </li>
                 ))}
@@ -945,7 +1536,9 @@ export default async function ClientJobDetailPage({
         <section className="grid two-col">
           <article className="card">
             <h2>Upload Site Photo</h2>
-            <p className="muted">Add progress photos directly inside this project folder.</p>
+            <p className="muted">
+              Add supporting photos directly inside this lead workspace.
+            </p>
 
             <JobPhotoUploader jobId={lead.id} />
           </article>
@@ -953,13 +1546,23 @@ export default async function ClientJobDetailPage({
           <article className="card">
             <h2>Photo Gallery</h2>
             {resolvedLeadPhotos.length === 0 ? (
-              <p className="muted" style={{ marginTop: 10 }}>No photos yet.</p>
+              <p className="muted" style={{ marginTop: 10 }}>
+                No photos yet.
+              </p>
             ) : (
               <div className="photo-grid" style={{ marginTop: 12 }}>
                 {resolvedLeadPhotos.map((photo) => (
                   <figure key={photo.id} className="photo-item">
                     {photo.resolvedUrl ? (
-                      <img src={photo.resolvedUrl} alt={photo.caption || photo.fileName} loading="lazy" />
+                      <Image
+                        src={photo.resolvedUrl}
+                        alt={photo.caption || photo.fileName}
+                        width={800}
+                        height={600}
+                        loading="lazy"
+                        unoptimized
+                        loader={({ src }) => src}
+                      />
                     ) : (
                       <div className="muted" style={{ padding: 12 }}>
                         Photo unavailable.
@@ -968,7 +1571,10 @@ export default async function ClientJobDetailPage({
                     <figcaption>
                       <p>{photo.caption || photo.fileName}</p>
                       <p className="muted">
-                        {formatDateTime(photo.createdAt)} • {photo.createdBy?.name || photo.createdBy?.email || "Team"}
+                        {formatDateTime(photo.createdAt)} •{" "}
+                        {photo.createdBy?.name ||
+                          photo.createdBy?.email ||
+                          "Team"}
                       </p>
                     </figcaption>
                   </figure>
@@ -983,16 +1589,32 @@ export default async function ClientJobDetailPage({
         <section className="grid two-col">
           <article className="card">
             <h2>Add Measurement</h2>
-            <p className="muted">Track dimensions and job measurements used for quoting and invoicing.</p>
+            <p className="muted">
+              Track dimensions and job measurements used for quoting and
+              invoicing.
+            </p>
 
-            <form action={addJobMeasurementAction} className="auth-form" style={{ marginTop: 12 }}>
+            <form
+              action={addJobMeasurementAction}
+              className="auth-form"
+              style={{ marginTop: 12 }}
+            >
               <input type="hidden" name="leadId" value={lead.id} />
               <input type="hidden" name="orgId" value={lead.orgId} />
-              <input type="hidden" name="returnPath" value={returnPathFor("measurements")} />
+              <input
+                type="hidden"
+                name="returnPath"
+                value={returnPathFor("measurements")}
+              />
 
               <label>
                 Label
-                <input name="label" maxLength={120} placeholder="Deck length" required />
+                <input
+                  name="label"
+                  maxLength={120}
+                  placeholder="Deck length"
+                  required
+                />
               </label>
 
               <label>
@@ -1007,16 +1629,25 @@ export default async function ClientJobDetailPage({
 
               <label>
                 Notes (optional)
-                <textarea name="notes" rows={3} maxLength={1000} placeholder="Measured from driveway edge." />
+                <textarea
+                  name="notes"
+                  rows={3}
+                  maxLength={1000}
+                  placeholder="Measured from driveway edge."
+                />
               </label>
 
               <button className="btn primary" type="submit">
                 Save Measurement
               </button>
 
-              {saved === "measurement" ? <p className="form-status">Measurement saved.</p> : null}
+              {saved === "measurement" ? (
+                <p className="form-status">Measurement saved.</p>
+              ) : null}
               {error === "measurement" ? (
-                <p className="form-status">Label and value are required with valid lengths.</p>
+                <p className="form-status">
+                  Label and value are required with valid lengths.
+                </p>
               ) : null}
             </form>
           </article>
@@ -1024,7 +1655,9 @@ export default async function ClientJobDetailPage({
           <article className="card">
             <h2>Measurement Log</h2>
             {lead.measurements.length === 0 ? (
-              <p className="muted" style={{ marginTop: 10 }}>No measurements yet.</p>
+              <p className="muted" style={{ marginTop: 10 }}>
+                No measurements yet.
+              </p>
             ) : (
               <div className="table-wrap" style={{ marginTop: 12 }}>
                 <table className="data-table">
@@ -1040,12 +1673,19 @@ export default async function ClientJobDetailPage({
                     {lead.measurements.map((row) => (
                       <tr key={row.id}>
                         <td>{row.label}</td>
-                        <td>{row.value}{row.unit ? ` ${row.unit}` : ""}</td>
+                        <td>
+                          {row.value}
+                          {row.unit ? ` ${row.unit}` : ""}
+                        </td>
                         <td>{row.notes || "-"}</td>
                         <td>
                           <div className="stack-cell">
                             <span>{formatDateTime(row.createdAt)}</span>
-                            <span className="muted">{row.createdBy?.name || row.createdBy?.email || "Team"}</span>
+                            <span className="muted">
+                              {row.createdBy?.name ||
+                                row.createdBy?.email ||
+                                "Team"}
+                            </span>
                           </div>
                         </td>
                       </tr>
@@ -1063,12 +1703,19 @@ export default async function ClientJobDetailPage({
           <div className="invoice-header-row">
             <div className="stack-cell">
               <h2>Invoices</h2>
-              <p className="muted">Create professional invoices from this project folder and track manual payments.</p>
+              <p className="muted">
+                Create professional invoices from this lead workspace and track
+                manual payments.
+              </p>
             </div>
             <form action={createInvoiceAction}>
               <input type="hidden" name="leadId" value={lead.id} />
               <input type="hidden" name="orgId" value={lead.orgId} />
-              <input type="hidden" name="returnPath" value={returnPathFor("invoice")} />
+              <input
+                type="hidden"
+                name="returnPath"
+                value={returnPathFor("invoice")}
+              />
               <button className="btn primary" type="submit">
                 Create Invoice
               </button>
@@ -1077,7 +1724,8 @@ export default async function ClientJobDetailPage({
 
           {lead.invoices.length === 0 ? (
             <p className="muted" style={{ marginTop: 12 }}>
-              No invoices yet. Click Create Invoice to generate one from this job.
+              No invoices yet. Click Create Invoice to generate one from this
+              lead workspace.
             </p>
           ) : (
             <div className="table-wrap" style={{ marginTop: 12 }}>
@@ -1095,7 +1743,11 @@ export default async function ClientJobDetailPage({
                 </thead>
                 <tbody>
                   {lead.invoices.map((invoice) => {
-                    const detailPath = withOrgQuery(`/app/invoices/${invoice.id}`, scope.orgId, scope.internalUser);
+                    const detailPath = withOrgQuery(
+                      `/app/invoices/${invoice.id}`,
+                      scope.orgId,
+                      scope.internalUser,
+                    );
                     const downloadablePdfPath = `/api/invoices/${invoice.id}/pdf`;
                     const settled = isInvoiceSettled(invoice);
                     const statusClass = getInvoiceStatusClass(invoice.status);
@@ -1108,7 +1760,11 @@ export default async function ClientJobDetailPage({
                           </Link>
                         </td>
                         <td>
-                          <span className={`badge status-${statusClass}`}>{formatLabel(invoice.status)}</span>
+                          <span
+                            className={`badge status-${statusClass}`}
+                          >
+                            {formatLabel(invoice.status)}
+                          </span>
                         </td>
                         <td>{formatCurrency(invoice.total)}</td>
                         <td>{formatCurrency(invoice.amountPaid)}</td>
@@ -1119,15 +1775,40 @@ export default async function ClientJobDetailPage({
                             <Link className="btn secondary" href={detailPath}>
                               Open
                             </Link>
-                            <a className="btn secondary" href={downloadablePdfPath}>
+                            <a
+                              className="btn secondary"
+                              href={downloadablePdfPath}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
                               PDF
                             </a>
                             <form action={quickMarkInvoicePaidAction}>
-                              <input type="hidden" name="leadId" value={lead.id} />
-                              <input type="hidden" name="orgId" value={lead.orgId} />
-                              <input type="hidden" name="returnPath" value={returnPathFor("invoice")} />
-                              <input type="hidden" name="invoiceId" value={invoice.id} />
-                              <button className="btn secondary" type="submit" disabled={settled}>
+                              <input
+                                type="hidden"
+                                name="leadId"
+                                value={lead.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="orgId"
+                                value={lead.orgId}
+                              />
+                              <input
+                                type="hidden"
+                                name="returnPath"
+                                value={returnPathFor("invoice")}
+                              />
+                              <input
+                                type="hidden"
+                                name="invoiceId"
+                                value={invoice.id}
+                              />
+                              <button
+                                className="btn secondary"
+                                type="submit"
+                                disabled={settled}
+                              >
                                 Mark Paid
                               </button>
                             </form>
@@ -1141,8 +1822,17 @@ export default async function ClientJobDetailPage({
             </div>
           )}
 
-          {saved === "invoice-paid" ? <p className="form-status">Invoice marked paid.</p> : null}
-          {error === "invoice-paid" ? <p className="form-status">Could not mark invoice as paid.</p> : null}
+          {error === "invoice-empty" ? (
+            <p className="form-status">
+              Add an estimated amount before creating an invoice from this job.
+            </p>
+          ) : null}
+          {saved === "invoice-paid" ? (
+            <p className="form-status">Invoice marked paid.</p>
+          ) : null}
+          {error === "invoice-paid" ? (
+            <p className="form-status">Could not mark invoice as paid.</p>
+          ) : null}
         </section>
       ) : null}
     </div>

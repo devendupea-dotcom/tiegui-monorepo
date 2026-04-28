@@ -2,11 +2,18 @@ import type { TwilioConfigStatus } from "@prisma/client";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
+import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
+import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { requireInternalUser } from "@/lib/session";
 import { sendOutboundSms } from "@/lib/sms";
-import { decryptTwilioAuthToken, encryptTwilioAuthToken, maskSecretTail } from "@/lib/twilio-config-crypto";
+import {
+  decryptTwilioAuthToken,
+  encryptTwilioAuthToken,
+  maskSid,
+  maskSecretTail,
+} from "@/lib/twilio-config-crypto";
 import { validateTwilioOrgConfig } from "@/lib/twilio-org";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +24,110 @@ const STATUS_OPTIONS: Array<{ value: TwilioConfigStatus; label: string }> = [
   { value: "PAUSED", label: "PAUSED" },
 ];
 
+const APP_BASE_URL = "https://app.tieguisolutions.com";
+const TWILIO_WEBHOOKS = [
+  {
+    label: "Inbound SMS",
+    method: "POST",
+    url: `${APP_BASE_URL}/api/webhooks/twilio/sms`,
+  },
+  {
+    label: "Outbound SMS status callback",
+    method: "POST",
+    url: `${APP_BASE_URL}/api/webhooks/twilio/sms/status`,
+  },
+  {
+    label: "Voice incoming call",
+    method: "POST",
+    url: `${APP_BASE_URL}/api/webhooks/twilio/voice`,
+  },
+  {
+    label: "Voice after-call callback",
+    method: "POST",
+    url: `${APP_BASE_URL}/api/webhooks/twilio/after-call`,
+  },
+] as const;
+
 function getString(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function boolEnv(key: string): boolean {
+  return Boolean(normalizeEnvValue(process.env[key]));
+}
+
+function enabledEnv(key: string): boolean {
+  return normalizeEnvValue(process.env[key]) === "true";
+}
+
+function maskPhone(value: string | null | undefined): string {
+  const normalized = (value || "").trim();
+  const digits = normalized.replace(/\D/g, "");
+  if (digits.length < 4) return normalized || "-";
+  return `${normalized.startsWith("+") ? "+" : ""}***${digits.slice(-4)}`;
+}
+
+function previewText(value: string | null | undefined, maxLength = 90): string {
+  const trimmed = (value || "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return "-";
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function metadataString(metadataJson: unknown, keys: string[]): string | null {
+  const metadata = asRecord(metadataJson);
+  if (!metadata) return null;
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return `${value}`;
+    }
+  }
+  return null;
+}
+
+function formatStatusBadge(value: string, ok: boolean) {
+  return (
+    <span className={`badge ${ok ? "status-success" : "status-overdue"}`}>
+      {value}
+    </span>
+  );
+}
+
+function getFailureReason(input: {
+  providerMessageSid: string | null;
+  communicationEvents: Array<{
+    providerStatus: string | null;
+    metadataJson: unknown;
+  }>;
+}): string {
+  for (const event of input.communicationEvents) {
+    const reason = metadataString(event.metadataJson, [
+      "failureReason",
+      "failureLabel",
+      "deliveryNotice",
+      "providerErrorMessage",
+      "providerErrorCode",
+      "dispatchFailureReason",
+      "errorMessage",
+      "error",
+    ]);
+    if (reason) return reason;
+    if (event.providerStatus) return event.providerStatus;
+  }
+
+  return input.providerMessageSid
+    ? "Provider accepted the message, then reported failure."
+    : "Failed before Twilio accepted the message.";
 }
 
 function parseStatus(value: string): TwilioConfigStatus | null {
@@ -48,13 +157,18 @@ async function saveTwilioConfigAction(formData: FormData) {
   const messagingServiceSid = getString(formData.get("messagingServiceSid"));
   const authTokenRaw = getString(formData.get("twilioAuthToken"));
   const phoneNumberRaw = getString(formData.get("phoneNumber"));
+  const voiceForwardingNumberRaw = getString(
+    formData.get("voiceForwardingNumber"),
+  );
   const status = parseStatus(getString(formData.get("status")));
 
   if (!twilioSubaccountSid.startsWith("AC")) {
     redirect(statusUrl(orgId, { error: "Account SID must start with AC." }));
   }
   if (!messagingServiceSid.startsWith("MG")) {
-    redirect(statusUrl(orgId, { error: "Messaging Service SID must start with MG." }));
+    redirect(
+      statusUrl(orgId, { error: "Messaging Service SID must start with MG." }),
+    );
   }
   if (!status) {
     redirect(statusUrl(orgId, { error: "Invalid Twilio status." }));
@@ -63,6 +177,15 @@ async function saveTwilioConfigAction(formData: FormData) {
   const phoneNumber = normalizeE164(phoneNumberRaw);
   if (!phoneNumber) {
     redirect(statusUrl(orgId, { error: "Phone number must be valid E.164." }));
+  }
+
+  const voiceForwardingNumber = voiceForwardingNumberRaw
+    ? normalizeE164(voiceForwardingNumberRaw)
+    : null;
+  if (voiceForwardingNumberRaw && !voiceForwardingNumber) {
+    redirect(
+      statusUrl(orgId, { error: "Forwarding number must be valid E.164." }),
+    );
   }
 
   const existing = await prisma.organizationTwilioConfig.findUnique({
@@ -75,7 +198,11 @@ async function saveTwilioConfigAction(formData: FormData) {
   });
 
   if (!existing && !authTokenRaw) {
-    redirect(statusUrl(orgId, { error: "Auth token is required for first-time setup." }));
+    redirect(
+      statusUrl(orgId, {
+        error: "Auth token is required for first-time setup.",
+      }),
+    );
   }
 
   let tokenToEncrypt: string | null = null;
@@ -83,9 +210,16 @@ async function saveTwilioConfigAction(formData: FormData) {
     tokenToEncrypt = authTokenRaw;
   } else if (existing) {
     try {
-      tokenToEncrypt = decryptTwilioAuthToken(existing.twilioAuthTokenEncrypted);
+      tokenToEncrypt = decryptTwilioAuthToken(
+        existing.twilioAuthTokenEncrypted,
+      );
     } catch {
-      redirect(statusUrl(orgId, { error: "Unable to decrypt existing token. Check TWILIO_TOKEN_ENCRYPTION_KEY." }));
+      redirect(
+        statusUrl(orgId, {
+          error:
+            "Unable to decrypt existing token. Check TWILIO_TOKEN_ENCRYPTION_KEY.",
+        }),
+      );
     }
   }
 
@@ -97,7 +231,11 @@ async function saveTwilioConfigAction(formData: FormData) {
   try {
     encryptedToken = encryptTwilioAuthToken(tokenToEncrypt);
   } catch {
-    redirect(statusUrl(orgId, { error: "Unable to encrypt token. Check TWILIO_TOKEN_ENCRYPTION_KEY." }));
+    redirect(
+      statusUrl(orgId, {
+        error: "Unable to encrypt token. Check TWILIO_TOKEN_ENCRYPTION_KEY.",
+      }),
+    );
   }
 
   const saved = await prisma.$transaction(async (tx) => {
@@ -109,6 +247,7 @@ async function saveTwilioConfigAction(formData: FormData) {
         twilioAuthTokenEncrypted: encryptedToken,
         messagingServiceSid,
         phoneNumber,
+        voiceForwardingNumber,
         status,
       },
       update: {
@@ -116,6 +255,7 @@ async function saveTwilioConfigAction(formData: FormData) {
         twilioAuthTokenEncrypted: encryptedToken,
         messagingServiceSid,
         phoneNumber,
+        voiceForwardingNumber,
         status,
       },
       select: {
@@ -142,6 +282,7 @@ async function saveTwilioConfigAction(formData: FormData) {
           twilioSubaccountSid,
           messagingServiceSid,
           phoneNumber,
+          voiceForwardingNumber,
           tokenUpdated: Boolean(authTokenRaw),
         },
       },
@@ -197,20 +338,31 @@ async function validateTwilioConfigAction(formData: FormData) {
     },
   });
 
-  const subaccountSid = twilioSubaccountSid || existing?.twilioSubaccountSid || "";
-  const messagingSid = messagingServiceSid || existing?.messagingServiceSid || "";
+  const subaccountSid =
+    twilioSubaccountSid || existing?.twilioSubaccountSid || "";
+  const messagingSid =
+    messagingServiceSid || existing?.messagingServiceSid || "";
   const phoneNumber = phoneNumberRaw || existing?.phoneNumber || "";
   let authToken = authTokenRaw;
   if (!authToken && existing) {
     try {
       authToken = decryptTwilioAuthToken(existing.twilioAuthTokenEncrypted);
     } catch {
-      redirect(statusUrl(orgId, { error: "Unable to decrypt saved token. Check TWILIO_TOKEN_ENCRYPTION_KEY." }));
+      redirect(
+        statusUrl(orgId, {
+          error:
+            "Unable to decrypt saved token. Check TWILIO_TOKEN_ENCRYPTION_KEY.",
+        }),
+      );
     }
   }
 
   if (!subaccountSid || !messagingSid || !phoneNumber || !authToken) {
-    redirect(statusUrl(orgId, { error: "Provide Twilio fields (or save config) before validation." }));
+    redirect(
+      statusUrl(orgId, {
+        error: "Provide Twilio fields (or save config) before validation.",
+      }),
+    );
   }
 
   const validation = await validateTwilioOrgConfig({
@@ -258,10 +410,14 @@ async function sendTestSmsAction(formData: FormData) {
 
   const actor = await requireInternalUser(`/hq/orgs/${orgId}/twilio`);
   const destinationRaw = getString(formData.get("testToNumber"));
-  const body = getString(formData.get("testBody")) || "TieGui test SMS: Twilio org routing is active.";
+  const body =
+    getString(formData.get("testBody")) ||
+    "TieGui test SMS: Twilio org routing is active.";
   const destination = normalizeE164(destinationRaw);
   if (!destination) {
-    redirect(statusUrl(orgId, { error: "Test destination must be valid E.164." }));
+    redirect(
+      statusUrl(orgId, { error: "Test destination must be valid E.164." }),
+    );
   }
 
   const result = await sendOutboundSms({
@@ -298,13 +454,14 @@ async function sendTestSmsAction(formData: FormData) {
   redirect(statusUrl(orgId, { tested: "1", notice: result.notice || "sent" }));
 }
 
-export default async function HqOrgTwilioPage({
-  params,
-  searchParams,
-}: {
-  params: { orgId: string };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function HqOrgTwilioPage(
+  props: {
+    params: Promise<{ orgId: string }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   await requireInternalUser(`/hq/orgs/${params.orgId}/twilio`);
 
   const organization = await prisma.organization.findUnique({
@@ -319,6 +476,7 @@ export default async function HqOrgTwilioPage({
           twilioAuthTokenEncrypted: true,
           messagingServiceSid: true,
           phoneNumber: true,
+          voiceForwardingNumber: true,
           status: true,
           updatedAt: true,
         },
@@ -348,18 +506,233 @@ export default async function HqOrgTwilioPage({
 
   const error = getString((searchParams?.error as string) || null);
   const saved = getString((searchParams?.saved as string) || null) === "1";
-  const validated = getString((searchParams?.validated as string) || null) === "1";
+  const validated =
+    getString((searchParams?.validated as string) || null) === "1";
   const tested = getString((searchParams?.tested as string) || null) === "1";
   const notice = getString((searchParams?.notice as string) || null);
 
   let maskedToken = "";
   if (organization.twilioConfig?.twilioAuthTokenEncrypted) {
     try {
-      maskedToken = maskSecretTail(decryptTwilioAuthToken(organization.twilioConfig.twilioAuthTokenEncrypted), 4);
+      maskedToken = maskSecretTail(
+        decryptTwilioAuthToken(
+          organization.twilioConfig.twilioAuthTokenEncrypted,
+        ),
+        4,
+      );
     } catch {
       maskedToken = "(unavailable)";
     }
   }
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [
+    messageCounts,
+    latestInboundSms,
+    latestOutboundSms,
+    latestStatusCallback,
+    latestVoiceCall,
+    recentFailedSms,
+    recentUnmatchedStatusCallbacks,
+  ] = await Promise.all([
+    prisma.message.groupBy({
+      by: ["direction", "status"],
+      where: {
+        orgId: organization.id,
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      _count: { status: true },
+    }),
+    prisma.message.findFirst({
+      where: {
+        orgId: organization.id,
+        direction: "INBOUND",
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        createdAt: true,
+        fromNumberE164: true,
+        body: true,
+        status: true,
+      },
+    }),
+    prisma.message.findFirst({
+      where: {
+        orgId: organization.id,
+        direction: "OUTBOUND",
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        createdAt: true,
+        toNumberE164: true,
+        body: true,
+        status: true,
+        type: true,
+      },
+    }),
+    prisma.communicationEvent.findFirst({
+      where: {
+        orgId: organization.id,
+        channel: "SMS",
+        type: "OUTBOUND_SMS_SENT",
+        providerMessageSid: { not: null },
+        providerStatus: {
+          in: ["queued", "sent", "delivered", "undelivered", "failed"],
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        createdAt: true,
+        providerStatus: true,
+        providerMessageSid: true,
+        metadataJson: true,
+      },
+    }),
+    prisma.call.findFirst({
+      where: { orgId: organization.id },
+      orderBy: { startedAt: "desc" },
+      select: {
+        startedAt: true,
+        status: true,
+        fromNumberE164: true,
+        toNumberE164: true,
+        twilioCallSid: true,
+      },
+    }),
+    prisma.message.findMany({
+      where: {
+        orgId: organization.id,
+        direction: "OUTBOUND",
+        status: "FAILED",
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: {
+        id: true,
+        createdAt: true,
+        type: true,
+        toNumberE164: true,
+        body: true,
+        providerMessageSid: true,
+        lead: {
+          select: {
+            id: true,
+            contactName: true,
+            businessName: true,
+            status: true,
+          },
+        },
+        communicationEvents: {
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            providerStatus: true,
+            metadataJson: true,
+          },
+        },
+      },
+    }),
+    prisma.communicationEvent.findMany({
+      where: {
+        orgId: organization.id,
+        channel: "SMS",
+        type: "OUTBOUND_SMS_SENT",
+        summary: "Unmatched outbound SMS status callback",
+        providerMessageSid: { not: null },
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: {
+        id: true,
+        createdAt: true,
+        providerStatus: true,
+        providerMessageSid: true,
+        metadataJson: true,
+      },
+    }),
+  ]);
+
+  const countMessages = (direction: "INBOUND" | "OUTBOUND", status?: string) =>
+    messageCounts
+      .filter((item) => item.direction === direction && (!status || item.status === status))
+      .reduce((sum, item) => sum + item._count.status, 0);
+  const outbound30d = countMessages("OUTBOUND");
+  const inbound30d = countMessages("INBOUND");
+  const failed30d = countMessages("OUTBOUND", "FAILED");
+  const delivered30d = countMessages("OUTBOUND", "DELIVERED");
+  const sent30d = countMessages("OUTBOUND", "SENT");
+  const envSnapshot = {
+    tokenEncryptionKeyPresent: boolEnv("TWILIO_TOKEN_ENCRYPTION_KEY"),
+    sendEnabled: enabledEnv("TWILIO_SEND_ENABLED"),
+    validateSignature: enabledEnv("TWILIO_VALIDATE_SIGNATURE"),
+    voiceAfterCallOverridePresent: boolEnv("TWILIO_VOICE_AFTER_CALL_URL"),
+  };
+  const readinessRows = [
+    {
+      label: "Config saved",
+      ok: Boolean(organization.twilioConfig),
+      detail: organization.twilioConfig
+        ? `${maskSid(organization.twilioConfig.twilioSubaccountSid)} / ${maskSid(organization.twilioConfig.messagingServiceSid)}`
+        : "No org Twilio config yet",
+    },
+    {
+      label: "Status active",
+      ok: organization.twilioConfig?.status === "ACTIVE",
+      detail: organization.twilioConfig?.status || "Not configured",
+    },
+    {
+      label: "Token encryption key",
+      ok: envSnapshot.tokenEncryptionKeyPresent,
+      detail: envSnapshot.tokenEncryptionKeyPresent ? "Present in deployment" : "Missing in this runtime",
+    },
+    {
+      label: "Live send flag",
+      ok: envSnapshot.sendEnabled,
+      detail: envSnapshot.sendEnabled ? "TWILIO_SEND_ENABLED=true" : "Queue-only or disabled here",
+    },
+    {
+      label: "Webhook signature validation",
+      ok: envSnapshot.validateSignature,
+      detail: envSnapshot.validateSignature ? "TWILIO_VALIDATE_SIGNATURE=true" : "Signature validation disabled here",
+    },
+    {
+      label: "Inbound webhook seen",
+      ok: Boolean(latestInboundSms),
+      detail: latestInboundSms
+        ? formatDateTimeForDisplay(latestInboundSms.createdAt, { dateStyle: "medium", timeStyle: "short" })
+        : "No inbound SMS recorded yet",
+    },
+    {
+      label: "Status callback seen",
+      ok: Boolean(latestStatusCallback),
+      detail: latestStatusCallback
+        ? `${latestStatusCallback.providerStatus || "status"} · ${formatDateTimeForDisplay(latestStatusCallback.createdAt, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}`
+        : "No Twilio status callback recorded yet",
+    },
+    {
+      label: "Unmatched status callbacks",
+      ok: recentUnmatchedStatusCallbacks.length === 0,
+      detail:
+        recentUnmatchedStatusCallbacks.length === 0
+          ? "None recorded in the last 30 days"
+          : `${recentUnmatchedStatusCallbacks.length} recent callback(s) need investigation`,
+    },
+    {
+      label: "Voice activity seen",
+      ok: Boolean(latestVoiceCall),
+      detail: latestVoiceCall
+        ? `${latestVoiceCall.status} · ${formatDateTimeForDisplay(latestVoiceCall.startedAt, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}`
+        : "No voice call recorded yet",
+    },
+  ];
 
   return (
     <>
@@ -368,24 +741,331 @@ export default async function HqOrgTwilioPage({
           ← Back to Business Folder
         </Link>
         <h2 style={{ marginTop: 10 }}>Twilio Config · {organization.name}</h2>
-        <p className="muted">Per-org Twilio account setup for inbound routing, outbound messaging, and test sends.</p>
+        <p className="muted">
+          Per-org Twilio account setup for inbound routing, outbound messaging,
+          and test sends.
+        </p>
 
         {error ? <p className="form-error">{error}</p> : null}
         {saved ? <p className="form-status">Twilio config saved.</p> : null}
-        {validated ? <p className="form-status">Twilio validation passed.</p> : null}
-        {tested ? <p className="form-status">Test SMS sent {notice ? `(${notice})` : ""}.</p> : null}
+        {validated ? (
+          <p className="form-status">Twilio validation passed.</p>
+        ) : null}
+        {tested ? (
+          <p className="form-status">
+            Test SMS sent {notice ? `(${notice})` : ""}.
+          </p>
+        ) : null}
+      </section>
+
+      <section className="card">
+        <h3>Internal Twilio Launch Readiness</h3>
+        <p className="muted">
+          Admin-operated setup for this business. Customers should only see
+          live, pending, paused, or setup-needed states.
+        </p>
+        <div className="table-wrap" style={{ marginTop: 10 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>Status</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {readinessRows.map((row) => (
+                <tr key={row.label}>
+                  <td>{row.label}</td>
+                  <td>{formatStatusBadge(row.ok ? "Ready" : "Needs attention", row.ok)}</td>
+                  <td>{row.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Traffic Health</h3>
+        <div className="table-wrap" style={{ marginTop: 10 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Window</th>
+                <th>Inbound</th>
+                <th>Outbound</th>
+                <th>Sent</th>
+                <th>Delivered</th>
+                <th>Failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Last 30 days</td>
+                <td>{inbound30d}</td>
+                <td>{outbound30d}</td>
+                <td>{sent30d}</td>
+                <td>{delivered30d}</td>
+                <td>{formatStatusBadge(`${failed30d}`, failed30d === 0)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="table-wrap" style={{ marginTop: 16 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Signal</th>
+                <th>Latest</th>
+                <th>Context</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Inbound SMS</td>
+                <td>
+                  {latestInboundSms
+                    ? formatDateTimeForDisplay(latestInboundSms.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "-"}
+                </td>
+                <td>
+                  {latestInboundSms
+                    ? `${maskPhone(latestInboundSms.fromNumberE164)} · ${previewText(latestInboundSms.body)}`
+                    : "No inbound SMS recorded."}
+                </td>
+              </tr>
+              <tr>
+                <td>Outbound SMS</td>
+                <td>
+                  {latestOutboundSms
+                    ? formatDateTimeForDisplay(latestOutboundSms.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "-"}
+                </td>
+                <td>
+                  {latestOutboundSms
+                    ? `${latestOutboundSms.type} / ${latestOutboundSms.status || "UNKNOWN"} to ${maskPhone(
+                        latestOutboundSms.toNumberE164,
+                      )} · ${previewText(latestOutboundSms.body)}`
+                    : "No outbound SMS recorded."}
+                </td>
+              </tr>
+              <tr>
+                <td>Status callback</td>
+                <td>
+                  {latestStatusCallback
+                    ? formatDateTimeForDisplay(latestStatusCallback.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "-"}
+                </td>
+                <td>
+                  {latestStatusCallback
+                    ? `${latestStatusCallback.providerStatus || "unknown"} · ${maskSid(
+                        latestStatusCallback.providerMessageSid,
+                      )}`
+                    : "No outbound status callback recorded."}
+                </td>
+              </tr>
+              <tr>
+                <td>Voice call</td>
+                <td>
+                  {latestVoiceCall
+                    ? formatDateTimeForDisplay(latestVoiceCall.startedAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "-"}
+                </td>
+                <td>
+                  {latestVoiceCall
+                    ? `${latestVoiceCall.status} · ${maskPhone(latestVoiceCall.fromNumberE164)} → ${maskPhone(
+                        latestVoiceCall.toNumberE164,
+                      )}`
+                    : "No voice call recorded."}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Twilio Webhooks</h3>
+        <p className="muted">
+          Paste these URLs into the Twilio phone number or Messaging Service
+          settings for this business.
+        </p>
+        <div className="table-wrap" style={{ marginTop: 10 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Use</th>
+                <th>Method</th>
+                <th>URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {TWILIO_WEBHOOKS.map((webhook) => (
+                <tr key={webhook.url}>
+                  <td>{webhook.label}</td>
+                  <td>
+                    <code>{webhook.method}</code>
+                  </td>
+                  <td>
+                    <code>{webhook.url}</code>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {envSnapshot.voiceAfterCallOverridePresent ? (
+          <p className="form-status" style={{ marginTop: 10 }}>
+            Voice after-call override is configured in this runtime.
+          </p>
+        ) : null}
+      </section>
+
+      <section className="card">
+        <h3>Unmatched Status Callbacks</h3>
+        {recentUnmatchedStatusCallbacks.length === 0 ? (
+          <p className="muted">No unmatched Twilio status callbacks in the last 30 days.</p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 10 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Status</th>
+                  <th>Message SID</th>
+                  <th>Reason</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentUnmatchedStatusCallbacks.map((callback) => (
+                  <tr key={callback.id}>
+                    <td>
+                      {formatDateTimeForDisplay(callback.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </td>
+                    <td>{callback.providerStatus || "unknown"}</td>
+                    <td>{maskSid(callback.providerMessageSid)}</td>
+                    <td>
+                      {metadataString(callback.metadataJson, [
+                        "failureReason",
+                        "failureLabel",
+                        "providerErrorMessage",
+                        "providerErrorCode",
+                      ]) || "No provider error detail."}
+                    </td>
+                    <td>
+                      {metadataString(callback.metadataJson, [
+                        "failureOperatorActionLabel",
+                        "failureOperatorDetail",
+                      ]) || "Review manually"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <h3>Recent Failed SMS</h3>
+        {recentFailedSms.length === 0 ? (
+          <p className="muted">No outbound SMS failures in the last 30 days.</p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 10 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Type</th>
+                  <th>Lead</th>
+                  <th>Reason</th>
+                  <th>Action</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentFailedSms.map((message) => {
+                  const leadLabel =
+                    message.lead.contactName ||
+                    message.lead.businessName ||
+                    maskPhone(message.toNumberE164);
+                  return (
+                    <tr key={message.id}>
+                      <td>
+                        {formatDateTimeForDisplay(message.createdAt, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </td>
+                      <td>{message.type}</td>
+                      <td>
+                        <Link
+                          className="table-link"
+                          href={`/hq/leads/${message.lead.id}`}
+                        >
+                          {leadLabel}
+                        </Link>
+                      </td>
+                      <td>
+                        {getFailureReason({
+                          providerMessageSid: message.providerMessageSid,
+                          communicationEvents: message.communicationEvents,
+                        })}
+                      </td>
+                      <td>
+                        {message.communicationEvents
+                          .map((event) =>
+                            metadataString(event.metadataJson, [
+                              "failureOperatorActionLabel",
+                              "failureOperatorDetail",
+                            ]),
+                          )
+                          .find(Boolean) || "Review manually"}
+                      </td>
+                      <td>{previewText(message.body, 72)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="card">
         <h3>Organization Twilio Credentials</h3>
-        <form action={saveTwilioConfigAction} className="stack" style={{ marginTop: 12 }}>
+        <form
+          action={saveTwilioConfigAction}
+          className="stack"
+          style={{ marginTop: 12 }}
+        >
           <input type="hidden" name="orgId" value={organization.id} />
           <div className="form-grid">
             <label>
               Twilio Account SID
               <input
                 name="twilioSubaccountSid"
-                defaultValue={organization.twilioConfig?.twilioSubaccountSid || ""}
+                defaultValue={
+                  organization.twilioConfig?.twilioSubaccountSid || ""
+                }
                 placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                 required
               />
@@ -394,7 +1074,9 @@ export default async function HqOrgTwilioPage({
               Messaging Service SID
               <input
                 name="messagingServiceSid"
-                defaultValue={organization.twilioConfig?.messagingServiceSid || ""}
+                defaultValue={
+                  organization.twilioConfig?.messagingServiceSid || ""
+                }
                 placeholder="MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                 required
               />
@@ -409,8 +1091,23 @@ export default async function HqOrgTwilioPage({
               />
             </label>
             <label>
+              Voice Forwarding Number (E.164)
+              <input
+                name="voiceForwardingNumber"
+                defaultValue={
+                  organization.twilioConfig?.voiceForwardingNumber || ""
+                }
+                placeholder="+12065550199"
+              />
+            </label>
+            <label>
               Status
-              <select name="status" defaultValue={organization.twilioConfig?.status || "PENDING_A2P"}>
+              <select
+                name="status"
+                defaultValue={
+                  organization.twilioConfig?.status || "PENDING_A2P"
+                }
+              >
                 {STATUS_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
@@ -424,21 +1121,32 @@ export default async function HqOrgTwilioPage({
                 name="twilioAuthToken"
                 type="password"
                 autoComplete="new-password"
-                placeholder={maskedToken ? `Leave blank to keep token (${maskedToken})` : "Enter auth token"}
+                placeholder={
+                  maskedToken
+                    ? `Leave blank to keep token (${maskedToken})`
+                    : "Enter auth token"
+                }
               />
             </label>
           </div>
 
           <p className="muted" style={{ marginTop: 0 }}>
-            Use the Twilio account SID, auth token, messaging service SID, and phone number that all belong to the
-            same Twilio account. Calls to the Twilio line ring this number first. Leave it blank to fall back to the
-            first owner or admin phone on file.
+            Use the Twilio account SID, auth token, messaging service SID, and
+            phone number that all belong to the same Twilio account. Calls to
+            the Twilio line ring this number first. Leave it blank to fall back
+            to the first owner or admin phone on file. That same destination is
+            also used for internal schedule alerts and pre-visit reminders.
           </p>
+
           <div className="quick-links">
             <button type="submit" className="btn primary">
               Save Config
             </button>
-            <button type="submit" formAction={validateTwilioConfigAction} className="btn secondary">
+            <button
+              type="submit"
+              formAction={validateTwilioConfigAction}
+              className="btn secondary"
+            >
               Validate
             </button>
           </div>
@@ -448,10 +1156,14 @@ export default async function HqOrgTwilioPage({
       <section className="card">
         <h3>Send Test SMS</h3>
         <p className="muted">
-          Uses this organization&apos;s Twilio account + Messaging Service credentials. Works in ACTIVE or
-          PENDING_A2P mode.
+          Uses this organization&apos;s Twilio account + Messaging Service
+          credentials. Works in ACTIVE or PENDING_A2P mode.
         </p>
-        <form action={sendTestSmsAction} className="stack" style={{ marginTop: 12 }}>
+        <form
+          action={sendTestSmsAction}
+          className="stack"
+          style={{ marginTop: 12 }}
+        >
           <input type="hidden" name="orgId" value={organization.id} />
           <div className="form-grid">
             <label>
@@ -494,12 +1206,21 @@ export default async function HqOrgTwilioPage({
               <tbody>
                 {organization.twilioConfigAuditLogs.map((entry) => (
                   <tr key={entry.id}>
-                    <td>{new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(entry.createdAt)}</td>
+                    <td>
+                      {formatDateTimeForDisplay(entry.createdAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </td>
                     <td>{entry.action}</td>
                     <td>
                       {entry.previousStatus || "-"} → {entry.nextStatus || "-"}
                     </td>
-                    <td>{entry.actorUser?.name || entry.actorUser?.email || "System"}</td>
+                    <td>
+                      {entry.actorUser?.name ||
+                        entry.actorUser?.email ||
+                        "System"}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { config } from "dotenv";
+import { loadPrismaEnv } from "./load-prisma-env.mjs";
 
-config({ path: resolve(process.cwd(), ".env.local") });
+loadPrismaEnv();
 
 const prismaCliPath = resolve(process.cwd(), "../../node_modules/prisma/build/index.js");
 const child = spawn(process.execPath, [prismaCliPath, "migrate", "deploy", "--schema", "prisma/schema.prisma"], {

@@ -17,11 +17,13 @@ import {
 } from "@/lib/calendar/permissions";
 import { localDateFromUtc, parseUtcDateTime } from "@/lib/calendar/dates";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
+import { syncLeadBookingState } from "@/lib/lead-booking";
+import { resolveWorkspaceUserIds } from "@/lib/workspace-users";
 
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: { holdId: string };
+  params: Promise<{ holdId: string }>;
 };
 
 type ConfirmHoldPayload = {
@@ -58,9 +60,6 @@ function parseEventStatus(value: unknown) {
   const allowed: CalendarEventStatus[] = [
     "SCHEDULED",
     "CONFIRMED",
-    "EN_ROUTE",
-    "ON_SITE",
-    "IN_PROGRESS",
     "COMPLETED",
     "CANCELLED",
     "NO_SHOW",
@@ -70,7 +69,8 @@ function parseEventStatus(value: unknown) {
   return allowed.includes(normalized as CalendarEventStatus) ? (normalized as CalendarEventStatus) : "CONFIRMED";
 }
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireCalendarActor();
     const hold = await prisma.calendarHold.findUnique({
@@ -99,15 +99,13 @@ export async function POST(req: Request, { params }: RouteContext) {
     const requestedWorkers = parseWorkerIds(body.workerIds);
     const workerIds = requestedWorkers.length > 0 ? requestedWorkers : [hold.workerUserId];
 
-    const validWorkers = await prisma.user.findMany({
-      where: {
-        id: { in: workerIds },
-        OR: [{ orgId: hold.orgId }, { role: "INTERNAL" }],
-      },
-      select: { id: true },
+    const validWorkerIds = await resolveWorkspaceUserIds({
+      organizationId: hold.orgId,
+      requestedUserIds: workerIds,
+      includeInternal: true,
     });
 
-    if (validWorkers.length !== workerIds.length) {
+    if (validWorkerIds.length !== workerIds.length) {
       throw new CalendarApiError("One or more worker assignments are invalid.", 400);
     }
 
@@ -145,32 +143,60 @@ export async function POST(req: Request, { params }: RouteContext) {
       }
     }
 
-    const event = await prisma.event.create({
-      data: {
-        orgId: hold.orgId,
-        leadId: body.leadId || hold.leadId || null,
-        type: normalizeEventType(body.type),
-        status: parseEventStatus(body.status),
-        busy,
-        allDay: body.allDay === true,
-        title: body.title?.trim() || hold.title || "Scheduled Job",
-        description: body.description?.trim() || null,
-        customerName: body.customerName?.trim() || hold.customerName || null,
-        addressLine: body.addressLine?.trim() || hold.addressLine || null,
-        startAt,
-        endAt,
-        assignedToUserId: workerIds[0] || null,
-        createdByUserId: actor.id,
-        workerAssignments: {
-          createMany: {
-            data: workerIds.map((workerUserId) => ({
-              orgId: hold.orgId,
-              workerUserId,
-            })),
+    const event = await prisma.$transaction(async (tx) => {
+      const nextEvent = await tx.event.create({
+        data: {
+          orgId: hold.orgId,
+          leadId: body.leadId || hold.leadId || null,
+          type: normalizeEventType(body.type),
+          status: parseEventStatus(body.status),
+          busy,
+          allDay: body.allDay === true,
+          title: body.title?.trim() || hold.title || "Scheduled Job",
+          description: body.description?.trim() || null,
+          customerName: body.customerName?.trim() || hold.customerName || null,
+          addressLine: body.addressLine?.trim() || hold.addressLine || null,
+          startAt,
+          endAt,
+          assignedToUserId: workerIds[0] || null,
+          createdByUserId: actor.id,
+          workerAssignments: {
+            createMany: {
+              data: workerIds.map((workerUserId) => ({
+                orgId: hold.orgId,
+                workerUserId,
+              })),
+            },
           },
         },
-      },
-      select: calendarEventSelect,
+        select: calendarEventSelect,
+      });
+
+      const linkedJobId = await syncLeadBookingState(tx, {
+        orgId: hold.orgId,
+        leadId: nextEvent.leadId,
+        eventId: nextEvent.id,
+        type: nextEvent.type,
+        status: nextEvent.status,
+        startAt: nextEvent.startAt,
+        endAt: nextEvent.endAt,
+        title: nextEvent.title,
+        customerName: nextEvent.customerName,
+        addressLine: nextEvent.addressLine,
+        createdByUserId: nextEvent.createdByUserId,
+      });
+
+      await tx.calendarHold.update({
+        where: { id: hold.id },
+        data: {
+          status: "CONFIRMED",
+        },
+      });
+
+      return {
+        ...nextEvent,
+        jobId: linkedJobId ?? nextEvent.jobId,
+      };
     });
 
     if (event.provider === "LOCAL" && event.assignedToUserId) {
@@ -181,13 +207,6 @@ export async function POST(req: Request, { params }: RouteContext) {
         action: "UPSERT_EVENT",
       });
     }
-
-    await prisma.calendarHold.update({
-      where: { id: hold.id },
-      data: {
-        status: "CONFIRMED",
-      },
-    });
 
     const settings = await getOrgCalendarSettings(hold.orgId);
     const availabilityByWorker: Record<string, string[]> = {};

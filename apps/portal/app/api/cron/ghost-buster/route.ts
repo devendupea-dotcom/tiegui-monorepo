@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import type { LeadStatus } from "@prisma/client";
+import { ensureTimeZone, getLocalMinutesInDay } from "@/lib/calendar/dates";
+import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
+import { containsLegacyTemplatePollution } from "@/lib/inbox-message-display";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
 
@@ -13,12 +16,11 @@ const STALE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const CONTACTED_BUCKET_STATUSES: LeadStatus[] = ["NEW", "CALLED_NO_ANSWER", "VOICEMAIL", "INTERESTED", "FOLLOW_UP"];
 
 function isCronAuthorized(req: Request): boolean {
-  const secret = normalizeEnvValue(process.env.CRON_SECRET);
-  if (!secret) {
+  const expected = normalizeEnvValue(process.env.CRON_SECRET);
+  if (!expected) {
     return false;
   }
-  const header = req.headers.get("authorization")?.trim() || "";
-  return header === `Bearer ${secret}`;
+  return isValidCronSecret(req, expected);
 }
 
 function clampNudges(value: number | null | undefined): number {
@@ -28,16 +30,7 @@ function clampNudges(value: number | null | undefined): number {
 }
 
 function minuteOfDayInTimeZone(value: Date, timeZone: string): number {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const parts = formatter.formatToParts(value);
-  const hour = Number(parts.find((part) => part.type === "hour")?.value || "0");
-  const minute = Number(parts.find((part) => part.type === "minute")?.value || "0");
-  return hour * 60 + minute;
+  return getLocalMinutesInDay(value, ensureTimeZone(timeZone));
 }
 
 function isInsideQuietHours(input: {
@@ -58,14 +51,15 @@ function isInsideQuietHours(input: {
 }
 
 function buildNudgeMessage(template: string | null | undefined, leadName: string | null): string {
-  const base = (template || "").trim() || DEFAULT_NUDGE_TEMPLATE;
+  const candidate = (template || "").trim();
+  const base = candidate && !containsLegacyTemplatePollution(candidate) ? candidate : DEFAULT_NUDGE_TEMPLATE;
   const safeName = (leadName || "").trim() || "there";
   return base
     .replaceAll("{{name}}", safeName)
     .replaceAll("{name}", safeName);
 }
 
-export async function POST(req: Request) {
+async function handleGhostBusterCron(req: Request) {
   if (!isCronAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
@@ -227,6 +221,10 @@ export async function POST(req: Request) {
           body: nudgeBody,
         });
 
+        if (providerResult.suppressed) {
+          continue;
+        }
+
         if (providerResult.status === "FAILED") {
           failures += 1;
           await prisma.internalCronRunLog.create({
@@ -348,4 +346,12 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
+}
+
+export async function GET(req: Request) {
+  return handleGhostBusterCron(req);
+}
+
+export async function POST(req: Request) {
+  return handleGhostBusterCron(req);
 }

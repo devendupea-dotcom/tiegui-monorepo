@@ -8,13 +8,13 @@ import {
 } from "../_lib/offline-outbox";
 
 type JobStatusControlsProps = {
-  jobId: string;
-  eventId: string | null;
+  operationalJobId: string | null;
+  hasActiveBooking: boolean;
   initialStatus: string;
   offlineModeEnabled: boolean;
 };
 
-type MutableStatus = "SCHEDULED" | "EN_ROUTE" | "ON_SITE" | "COMPLETED" | "CANCELLED";
+type MutableStatus = "scheduled" | "on_the_way" | "on_site" | "completed" | "canceled";
 
 type StatusOption = {
   value: MutableStatus;
@@ -22,23 +22,27 @@ type StatusOption = {
 };
 
 const STATUS_OPTIONS: StatusOption[] = [
-  { value: "SCHEDULED", label: "Scheduled" },
-  { value: "EN_ROUTE", label: "En Route" },
-  { value: "ON_SITE", label: "On Site" },
-  { value: "COMPLETED", label: "Completed" },
-  { value: "CANCELLED", label: "Canceled" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "on_the_way", label: "On The Way" },
+  { value: "on_site", label: "On Site" },
+  { value: "completed", label: "Completed" },
+  { value: "canceled", label: "Canceled" },
 ];
 
 function normalizeStatus(value: string): MutableStatus {
-  const normalized = value.trim().toUpperCase();
+  const normalized = value.trim().toLowerCase();
   return STATUS_OPTIONS.some((option) => option.value === normalized)
     ? (normalized as MutableStatus)
-    : "SCHEDULED";
+    : "scheduled";
 }
 
-export default function JobStatusControls({ jobId, eventId, initialStatus, offlineModeEnabled }: JobStatusControlsProps) {
+export default function JobStatusControls({
+  operationalJobId,
+  hasActiveBooking,
+  initialStatus,
+  offlineModeEnabled,
+}: JobStatusControlsProps) {
   const [currentStatus, setCurrentStatus] = useState<MutableStatus>(normalizeStatus(initialStatus));
-  const [currentEventId, setCurrentEventId] = useState<string | null>(eventId);
   const [saving, setSaving] = useState(false);
   const [pendingRetryStatus, setPendingRetryStatus] = useState<MutableStatus | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -62,7 +66,11 @@ export default function JobStatusControls({ jobId, eventId, initialStatus, offli
     let cancelled = false;
 
     async function refreshPendingCount() {
-      const next = await getOfflineOutboxCount(jobId);
+      if (!operationalJobId) {
+        setPendingSyncCount(0);
+        return;
+      }
+      const next = await getOfflineOutboxCount(operationalJobId);
       if (!cancelled) {
         setPendingSyncCount(next);
       }
@@ -77,7 +85,7 @@ export default function JobStatusControls({ jobId, eventId, initialStatus, offli
       cancelled = true;
       unsubscribe();
     };
-  }, [jobId]);
+  }, [operationalJobId]);
 
   useEffect(() => {
     function onFocusIn(event: FocusEvent) {
@@ -119,25 +127,41 @@ export default function JobStatusControls({ jobId, eventId, initialStatus, offli
 
   async function pushStatus(nextStatus: MutableStatus) {
     if (saving) return;
+    if (!operationalJobId) {
+      setStatusMessage("Create or link an operational job before changing execution status.");
+      setStatusToast({
+        tone: "error",
+        message: "Schedule or link an operational job first.",
+      });
+      return;
+    }
+    if (!hasActiveBooking && ["on_the_way", "on_site", "completed"].includes(nextStatus)) {
+      setStatusMessage("Schedule the work in Calendar before moving it into execution.");
+      setStatusToast({
+        tone: "error",
+        message: "A real booking is required before advancing execution.",
+      });
+      return;
+    }
+
     setSaving(true);
     setCurrentStatus(nextStatus);
     setStatusMessage(null);
     setStatusToast(null);
 
     try {
-      const response = await fetch(`/api/jobs/${jobId}/status`, {
+      const response = await fetch(`/api/dispatch/jobs/${operationalJobId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           status: nextStatus,
-          eventId: currentEventId || undefined,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
         | {
             ok?: boolean;
             error?: string;
-            event?: { id?: string; status?: string };
+            job?: { status?: string };
           }
         | null;
 
@@ -151,31 +175,26 @@ export default function JobStatusControls({ jobId, eventId, initialStatus, offli
         return;
       }
 
-      if (payload.event?.id) {
-        setCurrentEventId(payload.event.id);
-      }
-
-      if (payload.event?.status) {
-        setCurrentStatus(normalizeStatus(payload.event.status));
+      if (payload.job?.status) {
+        setCurrentStatus(normalizeStatus(payload.job.status));
       }
 
       setPendingRetryStatus(null);
       setStatusMessage("Status saved.");
-      setStatusToast({
-        tone: "ok",
-        message: `${STATUS_OPTIONS.find((option) => option.value === normalizeStatus(payload.event?.status || nextStatus))?.label || "Status"} saved`,
-      });
+        setStatusToast({
+          tone: "ok",
+          message: `${STATUS_OPTIONS.find((option) => option.value === normalizeStatus(payload.job?.status || nextStatus))?.label || "Status"} saved`,
+        });
     } catch {
       if (offlineModeEnabled) {
         try {
           await enqueueOfflineMutation({
             action: "updateJobStatus",
-            jobId,
-            endpoint: `/api/jobs/${jobId}/status`,
+            jobId: operationalJobId,
+            endpoint: `/api/dispatch/jobs/${operationalJobId}`,
             method: "PATCH",
             body: {
               status: nextStatus,
-              eventId: currentEventId || undefined,
             },
           });
           setPendingRetryStatus(null);
@@ -244,8 +263,8 @@ export default function JobStatusControls({ jobId, eventId, initialStatus, offli
         <button
           type="button"
           className="btn primary job-complete-btn"
-          onClick={() => void pushStatus("COMPLETED")}
-          disabled={saving || currentStatus === "COMPLETED"}
+          onClick={() => void pushStatus("completed")}
+          disabled={saving || currentStatus === "completed"}
         >
           Mark Complete
         </button>

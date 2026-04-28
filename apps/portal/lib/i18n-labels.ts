@@ -1,8 +1,11 @@
 import { formatLabel } from "./hq";
+import type enMessages from "@/messages/en.json";
 
-type TranslationFn = (key: string) => string;
+type StatusTranslationKey = `status.${keyof typeof enMessages.status}`;
+type PriorityTranslationKey = `priority.${keyof typeof enMessages.priority}`;
+type TranslationFn = (key: StatusTranslationKey | PriorityTranslationKey) => string;
 
-const STATUS_KEY_MAP: Record<string, string> = {
+const STATUS_KEY_MAP = {
   NEW: "status.new",
   CALLED_NO_ANSWER: "status.called_no_answer",
   VOICEMAIL: "status.voicemail",
@@ -39,13 +42,13 @@ const STATUS_KEY_MAP: Record<string, string> = {
   RINGING: "status.ringing",
   ORGANIC: "status.organic",
   UNKNOWN: "status.unknown",
-};
+} satisfies Record<string, StatusTranslationKey>;
 
-const PRIORITY_KEY_MAP: Record<string, string> = {
+const PRIORITY_KEY_MAP = {
   HIGH: "priority.high",
   MEDIUM: "priority.medium",
   LOW: "priority.low",
-};
+} satisfies Record<string, PriorityTranslationKey>;
 
 function normalizeEnumValue(value: string): string {
   return value.trim().toUpperCase();
@@ -53,12 +56,16 @@ function normalizeEnumValue(value: string): string {
 
 export function translateStatusLabel(value: string, t: TranslationFn): string {
   const normalized = normalizeEnumValue(value);
-  const key = STATUS_KEY_MAP[normalized];
+  const key = Object.prototype.hasOwnProperty.call(STATUS_KEY_MAP, normalized)
+    ? STATUS_KEY_MAP[normalized as keyof typeof STATUS_KEY_MAP]
+    : undefined;
   return key ? t(key) : formatLabel(normalized);
 }
 
 export function translatePriorityLabel(value: string, t: TranslationFn): string {
   const normalized = normalizeEnumValue(value);
-  const key = PRIORITY_KEY_MAP[normalized];
+  const key = Object.prototype.hasOwnProperty.call(PRIORITY_KEY_MAP, normalized)
+    ? PRIORITY_KEY_MAP[normalized as keyof typeof PRIORITY_KEY_MAP]
+    : undefined;
   return key ? t(key) : formatLabel(normalized);
 }

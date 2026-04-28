@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { saveIntegrationAccount } from "@/lib/integrations/account-store";
 import { exchangeJobberCodeForTokens } from "@/lib/integrations/jobberClient";
 import { consumeIntegrationOAuthState } from "@/lib/integrations/oauth-state";
-import { assertOrgAccess, requireIntegrationSessionUser } from "@/lib/integrations/scope";
+import { assertIntegrationAdminAccess, requireIntegrationSessionUser } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
 
   try {
     const user = await requireIntegrationSessionUser();
-    assertOrgAccess(user, oauthState.orgId);
+    await assertIntegrationAdminAccess(user, oauthState.orgId);
 
     const token = await exchangeJobberCodeForTokens({
       code,

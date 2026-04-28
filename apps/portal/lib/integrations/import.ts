@@ -320,6 +320,7 @@ async function importJobber(ctx: ImportContext) {
       }
 
       let jobId: string | null = null;
+      // Portable invoice imports still use the external jobId from the source system.
       if (invoice.jobId) {
         jobId = jobIdByExternal.get(invoice.jobId) || null;
         if (!jobId) {

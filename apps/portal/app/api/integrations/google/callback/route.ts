@@ -3,7 +3,7 @@ import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
 import { saveGoogleAccount } from "@/lib/integrations/google-account-store";
 import { consumeGoogleOAuthState } from "@/lib/integrations/google-oauth-state";
 import { exchangeGoogleCodeForTokens, listGoogleCalendars } from "@/lib/integrations/googleClient";
-import { assertOrgAccess, requireIntegrationSessionUser } from "@/lib/integrations/scope";
+import { assertIntegrationAdminAccess, requireIntegrationSessionUser } from "@/lib/integrations/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +34,7 @@ export async function GET(req: Request) {
       return NextResponse.redirect(new URL("/app/settings/integrations?error=google-invalid-user", url.origin));
     }
 
-    assertOrgAccess(user, oauthState.orgId);
+    await assertIntegrationAdminAccess(user, oauthState.orgId);
 
     const token = await exchangeGoogleCodeForTokens({
       code,

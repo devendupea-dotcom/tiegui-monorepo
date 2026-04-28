@@ -7,12 +7,13 @@ import {
 } from "@/lib/app-api-permissions";
 
 type RouteContext = {
-  params: { jobId: string };
+  params: Promise<{ jobId: string }>;
 };
 
 const IDEMPOTENT_ROUTE = "/api/jobs/[jobId]/notes";
 
-export async function POST(req: Request, { params }: RouteContext) {
+export async function POST(req: Request, props: RouteContext) {
+  const params = await props.params;
   try {
     const actor = await requireAppApiActor();
     const idempotencyKey = req.headers.get("x-idempotency-key")?.trim() || "";

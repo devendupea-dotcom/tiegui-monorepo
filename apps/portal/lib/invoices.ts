@@ -1,7 +1,10 @@
-import { Prisma, type BillingInvoiceStatus } from "@prisma/client";
+import { Prisma, type BillingInvoiceStatus, type InvoiceTerms } from "@prisma/client";
+import { jobReferencesEstimate } from "@/lib/estimate-job-linking";
+import { operationalJobCandidateSelect } from "@/lib/operational-jobs";
 
 const ZERO = new Prisma.Decimal(0);
 const ONE_HUNDRED = new Prisma.Decimal(100);
+export const DEFAULT_INVOICE_TERMS: InvoiceTerms = "DUE_ON_RECEIPT";
 
 export const billingInvoiceStatusOptions: BillingInvoiceStatus[] = [
   "DRAFT",
@@ -11,7 +14,329 @@ export const billingInvoiceStatusOptions: BillingInvoiceStatus[] = [
   "OVERDUE",
 ];
 
-export const invoicePaymentMethodOptions = ["CASH", "CHECK", "CARD", "TRANSFER", "OTHER"] as const;
+export const invoicePaymentMethodOptions = [
+  "CASH",
+  "CHECK",
+  "CARD",
+  "STRIPE",
+  "TRANSFER",
+  "OTHER",
+] as const;
+export const manualInvoicePaymentMethodOptions = [
+  "CASH",
+  "CHECK",
+  "CARD",
+  "TRANSFER",
+  "OTHER",
+] as const;
+export const invoiceTermsOptions: InvoiceTerms[] = [DEFAULT_INVOICE_TERMS, "NET_7", "NET_15", "NET_30"];
+
+type InvoiceLegacyLeadRef = {
+  id?: string | null;
+  contactName?: string | null;
+  businessName?: string | null;
+  phoneE164?: string | null;
+} | null;
+
+type InvoiceSourceJobRef = {
+  id?: string | null;
+  leadId?: string | null;
+  customerName?: string | null;
+  serviceType?: string | null;
+  projectType?: string | null;
+} | null;
+
+type InvoiceActionLeadRef = {
+  id?: string | null;
+  fbClickId?: string | null;
+  fbBrowserId?: string | null;
+} | null;
+
+type InvoiceActionSourceJobRef = {
+  id?: string | null;
+  leadId?: string | null;
+  lead?: InvoiceActionLeadRef;
+} | null;
+
+export const invoiceSourceJobLinkSelect = {
+  id: true,
+  orgId: true,
+  legacyLeadId: true,
+  sourceEstimateId: true,
+  sourceJobId: true,
+  customerId: true,
+} satisfies Prisma.InvoiceSelect;
+
+export type InvoiceSourceJobLinkRecord = Prisma.InvoiceGetPayload<{
+  select: typeof invoiceSourceJobLinkSelect;
+}>;
+
+type InvoiceSourceJobLinkClient = Pick<Prisma.TransactionClient, "invoice" | "job">;
+
+type InvoiceSourceJobCandidateRef = Prisma.JobGetPayload<{
+  select: typeof operationalJobCandidateSelect;
+}>;
+
+export type InvoiceSourceJobResolution = {
+  sourceJobId: string | null;
+  matchedBy: "existing" | "estimate" | "lead" | null;
+  reason: "existing" | "matched_estimate" | "matched_lead" | "ambiguous_estimate" | "ambiguous_lead" | "none";
+};
+
+function uniqueSourceJobCandidates(candidates: InvoiceSourceJobCandidateRef[]): InvoiceSourceJobCandidateRef[] {
+  return Array.from(new Map(candidates.map((candidate) => [candidate.id, candidate])).values());
+}
+
+export function selectConservativeInvoiceSourceJobCandidate(input: {
+  candidates: InvoiceSourceJobCandidateRef[];
+  sourceEstimateId?: string | null;
+  legacyLeadId?: string | null;
+  customerId?: string | null;
+}): InvoiceSourceJobResolution {
+  if (input.candidates.length === 0) {
+    return {
+      sourceJobId: null,
+      matchedBy: null,
+      reason: "none",
+    };
+  }
+
+  const compatibleCandidates = uniqueSourceJobCandidates(
+    input.candidates.filter((candidate) => !candidate.customerId || !input.customerId || candidate.customerId === input.customerId),
+  );
+
+  if (input.sourceEstimateId) {
+    const estimateMatches = compatibleCandidates.filter(
+      (candidate) => jobReferencesEstimate(candidate, input.sourceEstimateId),
+    );
+
+    if (estimateMatches.length === 1) {
+      return {
+        sourceJobId: estimateMatches[0]?.id || null,
+        matchedBy: "estimate",
+        reason: "matched_estimate",
+      };
+    }
+
+    if (estimateMatches.length > 1) {
+      return {
+        sourceJobId: null,
+        matchedBy: null,
+        reason: "ambiguous_estimate",
+      };
+    }
+  }
+
+  if (input.legacyLeadId) {
+    const leadMatches = compatibleCandidates.filter((candidate) => candidate.leadId === input.legacyLeadId);
+    if (leadMatches.length === 1) {
+      return {
+        sourceJobId: leadMatches[0]?.id || null,
+        matchedBy: "lead",
+        reason: "matched_lead",
+      };
+    }
+
+    if (leadMatches.length > 1) {
+      return {
+        sourceJobId: null,
+        matchedBy: null,
+        reason: "ambiguous_lead",
+      };
+    }
+  }
+
+  return {
+    sourceJobId: null,
+    matchedBy: null,
+    reason: "none",
+  };
+}
+
+export function buildInvoiceWorkerLeadAccessWhere(input: {
+  actorId: string;
+  invoiceId?: string | null;
+}): Prisma.LeadWhereInput {
+  const clauses: Prisma.LeadWhereInput[] = [
+    { assignedToUserId: input.actorId },
+    { createdByUserId: input.actorId },
+    { events: { some: { assignedToUserId: input.actorId } } },
+    { events: { some: { workerAssignments: { some: { workerUserId: input.actorId } } } } },
+  ];
+
+  if (input.invoiceId) {
+    clauses.push({ invoices: { some: { id: input.invoiceId } } });
+  }
+
+  return {
+    OR: clauses,
+  };
+}
+
+function formatLegacyInvoiceLeadLabel(lead: InvoiceLegacyLeadRef): string | null {
+  if (!lead) return null;
+  return lead.contactName || lead.businessName || lead.phoneE164 || null;
+}
+
+function formatOperationalInvoiceJobLabel(job: InvoiceSourceJobRef): string | null {
+  if (!job) return null;
+  const customer = job.customerName?.trim() || "";
+  const service = job.serviceType?.trim() || job.projectType?.trim() || "";
+  if (customer && service) {
+    return `${customer} • ${service}`;
+  }
+  return customer || service || null;
+}
+
+export function getInvoiceReadJobContext(input: {
+  legacyLeadId?: string | null;
+  sourceJobId?: string | null;
+  legacyLead?: InvoiceLegacyLeadRef;
+  sourceJob?: InvoiceSourceJobRef;
+}) {
+  const operationalJobId = input.sourceJobId || input.sourceJob?.id || null;
+  const crmLeadId = input.legacyLeadId || input.sourceJob?.leadId || input.legacyLead?.id || null;
+  const operationalLabel = formatOperationalInvoiceJobLabel(input.sourceJob || null);
+  const crmLabel = formatLegacyInvoiceLeadLabel(input.legacyLead || null);
+
+  return {
+    operationalJobId,
+    crmLeadId,
+    operationalLabel,
+    crmLabel,
+    primaryLabel: operationalLabel || crmLabel || null,
+    primaryKind: operationalJobId ? "operational" : crmLeadId ? "crm" : null,
+  };
+}
+
+export function getInvoiceActionContext(input: {
+  legacyLeadId?: string | null;
+  sourceJobId?: string | null;
+  legacyLead?: InvoiceActionLeadRef;
+  sourceJob?: InvoiceActionSourceJobRef;
+}) {
+  const operationalJobId = input.sourceJobId || input.sourceJob?.id || null;
+  const operationalLeadId = input.sourceJob?.leadId || input.sourceJob?.lead?.id || null;
+  const legacyLeadId = input.legacyLeadId || input.legacyLead?.id || null;
+  const leadId = operationalLeadId || legacyLeadId || null;
+  const leadTrackingSource = input.sourceJob?.lead || input.legacyLead || null;
+
+  return {
+    operationalJobId,
+    operationalLeadId,
+    legacyLeadId,
+    leadId,
+    fbClickId: leadTrackingSource?.fbClickId || null,
+    fbBrowserId: leadTrackingSource?.fbBrowserId || null,
+  };
+}
+
+export function getInvoiceActionRevalidationPaths(input: {
+  invoiceId: string;
+  leadId?: string | null;
+}): string[] {
+  const paths = [`/app/invoices/${input.invoiceId}`, "/app/invoices"];
+  if (input.leadId) {
+    paths.push(`/app/jobs/${input.leadId}`);
+  }
+  return paths;
+}
+
+export async function resolveInvoiceSourceJobLink(
+  db: InvoiceSourceJobLinkClient,
+  invoice: InvoiceSourceJobLinkRecord,
+): Promise<InvoiceSourceJobResolution> {
+  if (invoice.sourceJobId) {
+    return {
+      sourceJobId: invoice.sourceJobId,
+      matchedBy: "existing",
+      reason: "existing",
+    };
+  }
+
+  const clauses: Prisma.JobWhereInput[] = [];
+
+  if (invoice.sourceEstimateId) {
+    clauses.push({
+      orgId: invoice.orgId,
+      sourceEstimateId: invoice.sourceEstimateId,
+    });
+    clauses.push({
+      orgId: invoice.orgId,
+      linkedEstimateId: invoice.sourceEstimateId,
+    });
+  }
+
+  if (invoice.legacyLeadId) {
+    clauses.push({
+      orgId: invoice.orgId,
+      leadId: invoice.legacyLeadId,
+    });
+  }
+
+  if (clauses.length === 0) {
+    return {
+      sourceJobId: null,
+      matchedBy: null,
+      reason: "none",
+    };
+  }
+
+  const candidates = await db.job.findMany({
+    where: clauses.length === 1 ? clauses[0] : { OR: clauses },
+    select: operationalJobCandidateSelect,
+    orderBy: [{ updatedAt: "desc" }],
+    take: 12,
+  });
+
+  return selectConservativeInvoiceSourceJobCandidate({
+    candidates,
+    sourceEstimateId: invoice.sourceEstimateId,
+    legacyLeadId: invoice.legacyLeadId,
+    customerId: invoice.customerId,
+  });
+}
+
+export async function ensureInvoiceSourceJobLink(
+  db: InvoiceSourceJobLinkClient,
+  invoiceOrId: string | InvoiceSourceJobLinkRecord,
+): Promise<InvoiceSourceJobResolution & { updated: boolean }> {
+  const invoice =
+    typeof invoiceOrId === "string"
+      ? await db.invoice.findUnique({
+          where: { id: invoiceOrId },
+          select: invoiceSourceJobLinkSelect,
+        })
+      : invoiceOrId;
+
+  if (!invoice) {
+    throw new Error("Invoice not found.");
+  }
+
+  const resolution = await resolveInvoiceSourceJobLink(db, invoice);
+  if (!resolution.sourceJobId || invoice.sourceJobId === resolution.sourceJobId) {
+    return {
+      ...resolution,
+      updated: false,
+    };
+  }
+
+  await db.invoice.update({
+    where: { id: invoice.id },
+    data: {
+      sourceJobId: resolution.sourceJobId,
+    },
+  });
+
+  return {
+    ...resolution,
+    updated: true,
+  };
+}
+
+export function normalizeInvoiceTerms(value: unknown): InvoiceTerms {
+  return invoiceTermsOptions.includes(value as InvoiceTerms) ? (value as InvoiceTerms) : DEFAULT_INVOICE_TERMS;
+}
 
 export function toMoneyDecimal(value: Prisma.Decimal | number | string | null | undefined): Prisma.Decimal {
   if (value === null || value === undefined || value === "") {
@@ -72,7 +397,12 @@ export function deriveInvoiceStatus(input: {
   const paid = roundMoney(input.amountPaid);
   const total = roundMoney(input.total);
 
-  if (total.lte(0) || paid.gte(total)) {
+  // Zero-dollar invoices should stay editable instead of auto-flipping to PAID.
+  if (total.lte(0)) {
+    return input.currentStatus === "DRAFT" ? "DRAFT" : "SENT";
+  }
+
+  if (paid.gte(total)) {
     return "PAID";
   }
 
@@ -91,6 +421,12 @@ export function deriveInvoiceStatus(input: {
   return "SENT";
 }
 
+export function shouldRenderInvoicePaidIndicator(input: {
+  status: BillingInvoiceStatus;
+}): boolean {
+  return input.status === "PAID";
+}
+
 export function formatCurrency(value: Prisma.Decimal | number | string | null | undefined): string {
   const amount = Number(toMoneyDecimal(value).toString());
   return new Intl.NumberFormat("en-US", {
@@ -101,24 +437,72 @@ export function formatCurrency(value: Prisma.Decimal | number | string | null | 
   }).format(amount);
 }
 
-export function formatInvoiceNumber(invoiceNumber: number): string {
-  return `INV-${String(invoiceNumber).padStart(5, "0")}`;
+export function formatInvoiceNumber(invoiceNumber: string): string {
+  return String(invoiceNumber || "").trim();
 }
 
-export async function reserveNextInvoiceNumber(tx: Prisma.TransactionClient, orgId: string): Promise<number> {
-  const updatedOrg = await tx.organization.update({
-    where: { id: orgId },
-    data: {
-      invoiceSequence: {
-        increment: 1,
-      },
-    },
-    select: {
-      invoiceSequence: true,
-    },
-  });
+export function computeInvoiceDueDate(issueDate: Date, terms: InvoiceTerms): Date {
+  const normalized = new Date(issueDate);
+  const addDays = (days: number) => new Date(normalized.getTime() + days * 24 * 60 * 60 * 1000);
 
-  return updatedOrg.invoiceSequence;
+  switch (terms) {
+    case "NET_7":
+      return addDays(7);
+    case "NET_15":
+      return addDays(15);
+    case "NET_30":
+      return addDays(30);
+    case "DUE_ON_RECEIPT":
+    default:
+      return normalized;
+  }
+}
+
+function buildInvoiceNumberCode(prefix: string, issueDate: Date, sequence: number): string {
+  const year = issueDate.getUTCFullYear();
+  return `${prefix}-${year}-${String(sequence).padStart(4, "0")}`;
+}
+
+export async function reserveNextInvoiceNumber(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  issueDate = new Date(),
+): Promise<string> {
+  // Uses optimistic concurrency to avoid duplicate invoice numbers without relying on DB locks.
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const org = await tx.organization.findUnique({
+      where: { id: orgId },
+      select: {
+        invoicePrefix: true,
+        invoiceNextNumber: true,
+      },
+    });
+
+    if (!org) {
+      throw new Error("Organization not found.");
+    }
+
+    const prefix = (org.invoicePrefix || "INV").trim() || "INV";
+    const reserved = org.invoiceNextNumber;
+
+    const updated = await tx.organization.updateMany({
+      where: {
+        id: orgId,
+        invoiceNextNumber: reserved,
+      },
+      data: {
+        invoiceNextNumber: {
+          increment: 1,
+        },
+      },
+    });
+
+    if (updated.count === 1) {
+      return buildInvoiceNumberCode(prefix, issueDate, reserved);
+    }
+  }
+
+  throw new Error("Failed to reserve invoice number. Try again.");
 }
 
 export async function recomputeInvoiceTotals(tx: Prisma.TransactionClient, invoiceId: string) {
@@ -137,6 +521,15 @@ export async function recomputeInvoiceTotals(tx: Prisma.TransactionClient, invoi
   if (!invoice) {
     throw new Error("Invoice not found.");
   }
+
+  await ensureInvoiceSourceJobLink(tx, {
+    id: invoice.id,
+    orgId: invoice.orgId,
+    legacyLeadId: invoice.legacyLeadId,
+    sourceEstimateId: invoice.sourceEstimateId,
+    sourceJobId: invoice.sourceJobId,
+    customerId: invoice.customerId,
+  });
 
   for (const lineItem of invoice.lineItems) {
     const lineTotal = computeLineTotal(lineItem.quantity, lineItem.unitPrice);
@@ -196,7 +589,7 @@ export async function recomputeInvoiceTotals(tx: Prisma.TransactionClient, invoi
           addressLine: true,
         },
       },
-      job: {
+      legacyLead: {
         select: {
           id: true,
           contactName: true,
@@ -215,116 +608,4 @@ export async function recomputeInvoiceTotals(tx: Prisma.TransactionClient, invoi
   });
 }
 
-function escapePdfText(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-}
-
-function createSimplePdf(lines: string[]): Buffer {
-  const safeLines = lines.map((line) => line.slice(0, 120));
-  const contentParts: string[] = ["BT", "/F1 11 Tf", "50 760 Td", "14 TL"];
-
-  for (let index = 0; index < safeLines.length; index += 1) {
-    const escaped = escapePdfText(safeLines[index] || "");
-    if (index === 0) {
-      contentParts.push(`(${escaped}) Tj`);
-    } else {
-      contentParts.push("T*");
-      contentParts.push(`(${escaped}) Tj`);
-    }
-  }
-
-  contentParts.push("ET");
-  const content = `${contentParts.join("\n")}\n`;
-  const contentLength = Buffer.byteLength(content, "utf8");
-
-  const objects = [
-    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
-    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
-    `4 0 obj\n<< /Length ${contentLength} >>\nstream\n${content}endstream\nendobj\n`,
-    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
-  ];
-
-  let pdf = "%PDF-1.4\n";
-  const offsets: number[] = [0];
-  for (const object of objects) {
-    offsets.push(Buffer.byteLength(pdf, "utf8"));
-    pdf += object;
-  }
-
-  const xrefOffset = Buffer.byteLength(pdf, "utf8");
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += "0000000000 65535 f \n";
-  for (let index = 1; index <= objects.length; index += 1) {
-    pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-  return Buffer.from(pdf, "utf8");
-}
-
-export function buildInvoicePdfDocument(input: {
-  invoiceNumber: number;
-  status: BillingInvoiceStatus;
-  issueDate: Date;
-  dueDate: Date;
-  orgName: string;
-  customerName: string;
-  customerPhone?: string | null;
-  customerEmail?: string | null;
-  customerAddress?: string | null;
-  jobLabel?: string | null;
-  lineItems: Array<{ description: string; quantity: Prisma.Decimal; unitPrice: Prisma.Decimal; lineTotal: Prisma.Decimal }>;
-  subtotal: Prisma.Decimal;
-  taxRate: Prisma.Decimal;
-  taxAmount: Prisma.Decimal;
-  total: Prisma.Decimal;
-  amountPaid: Prisma.Decimal;
-  balanceDue: Prisma.Decimal;
-  notes?: string | null;
-}) {
-  const dateFormat = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-
-  const lines: string[] = [
-    `${input.orgName} - Invoice ${formatInvoiceNumber(input.invoiceNumber)}`,
-    `Status: ${input.status}`,
-    `Issue Date: ${dateFormat.format(input.issueDate)}    Due Date: ${dateFormat.format(input.dueDate)}`,
-    "",
-    `Bill To: ${input.customerName}`,
-    input.customerPhone ? `Phone: ${input.customerPhone}` : "",
-    input.customerEmail ? `Email: ${input.customerEmail}` : "",
-    input.customerAddress ? `Address: ${input.customerAddress}` : "",
-    input.jobLabel ? `Job: ${input.jobLabel}` : "",
-    "",
-    "Line Items",
-    "Description | Qty | Unit Price | Line Total",
-    "------------------------------------------------------------",
-    ...input.lineItems.map(
-      (item) =>
-        `${item.description} | ${item.quantity.toString()} | ${formatCurrency(item.unitPrice)} | ${formatCurrency(item.lineTotal)}`,
-    ),
-    "",
-    `Subtotal: ${formatCurrency(input.subtotal)}`,
-    `Tax (${taxRateToPercent(input.taxRate)}%): ${formatCurrency(input.taxAmount)}`,
-    `Total: ${formatCurrency(input.total)}`,
-    `Amount Paid: ${formatCurrency(input.amountPaid)}`,
-    `Balance Due: ${formatCurrency(input.balanceDue)}`,
-  ];
-
-  if (input.notes?.trim()) {
-    lines.push("", "Notes:");
-    for (const line of input.notes.split("\n")) {
-      lines.push(line.trim());
-    }
-  }
-
-  if (lines.length > 52) {
-    lines.splice(52, lines.length - 52, "... (truncated for PDF page limit)");
-  }
-
-  return createSimplePdf(lines.filter(Boolean));
-}
+// PDF generation moved to server-only module: lib/invoice-pdf.tsx

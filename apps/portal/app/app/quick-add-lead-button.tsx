@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CalendarAccessRole } from "@prisma/client";
+import {
+  DEFAULT_CALENDAR_TIMEZONE,
+  formatDateTimeForDisplay,
+  toUtcFromLocalDateTime,
+} from "@/lib/calendar/dates";
+import { normalizeE164 } from "@/lib/phone";
 
 type QuickAddLeadButtonProps = {
   defaultOrgId: string | null;
@@ -34,6 +40,29 @@ type LeadCreateResult = {
   lead?: { id: string };
   possibleMatches?: PossibleCustomerMatch[];
 };
+
+function toPacificIsoString(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const [date, timeWithMaybeSeconds] = trimmed.split("T");
+  const time = (timeWithMaybeSeconds || "").slice(0, 5);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+    return null;
+  }
+
+  try {
+    return toUtcFromLocalDateTime({
+      date,
+      time,
+      timeZone: DEFAULT_CALENDAR_TIMEZONE,
+    }).toISOString();
+  } catch {
+    return null;
+  }
+}
 
 type LeadMatchLookupResult = {
   ok?: boolean;
@@ -78,9 +107,6 @@ export default function QuickAddLeadButton({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const canOpen =
-    internalUser || calendarAccessRole === "OWNER" || calendarAccessRole === "ADMIN" || calendarAccessRole === "WORKER";
-
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +128,7 @@ export default function QuickAddLeadButton({
   const [advancedForceCreateOpen, setAdvancedForceCreateOpen] = useState(false);
   const [forceCreateDuplicate, setForceCreateDuplicate] = useState(false);
   const [confirmDuplicateCreate, setConfirmDuplicateCreate] = useState(false);
+  const [suppressQuickAddAutoOpen, setSuppressQuickAddAutoOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; href: string } | null>(null);
 
   const quickAddRequested = searchParams.get("quickAdd") === "1";
@@ -111,6 +138,10 @@ export default function QuickAddLeadButton({
     if (queryOrgId) return queryOrgId;
     return defaultOrgId || "";
   }, [defaultOrgId, searchParams]);
+
+  const canOpen =
+    Boolean(resolvedOrgId)
+    && (internalUser || calendarAccessRole === "OWNER" || calendarAccessRole === "ADMIN" || calendarAccessRole === "WORKER");
 
   function clearQuickAddParams() {
     const params = new URLSearchParams(searchParams.toString());
@@ -141,16 +172,32 @@ export default function QuickAddLeadButton({
     setQuickWorkerId(queryWorkerId);
   }
 
-  function openModal() {
+  function resetDraft() {
+    setSubmitting(false);
     setError(null);
+    setName("");
+    setPhone("");
+    setEmail("");
+    setAddress("");
+    setNote("");
+    setSourceType("ORGANIC");
+    setSourceDetail("");
+    setShowMoreFields(false);
+    setScheduleNow(false);
+    setStartLocal("");
+    setDurationMinutes(30);
+    setQuickWorkerId("");
     setPossibleMatches([]);
     setSelectedMatchId("");
     setLookingUpMatches(false);
-    setShowMoreFields(false);
     setAdvancedForceCreateOpen(false);
     setForceCreateDuplicate(false);
     setConfirmDuplicateCreate(false);
-    setQuickWorkerId("");
+  }
+
+  function openModal() {
+    setSuppressQuickAddAutoOpen(false);
+    resetDraft();
     setOpen(true);
     if (quickAddRequested) {
       primeFromQuery();
@@ -159,34 +206,37 @@ export default function QuickAddLeadButton({
 
   function closeModal() {
     setOpen(false);
-    setSubmitting(false);
-    setError(null);
-    setPossibleMatches([]);
-    setSelectedMatchId("");
-    setLookingUpMatches(false);
-    setShowMoreFields(false);
-    setAdvancedForceCreateOpen(false);
-    setForceCreateDuplicate(false);
-    setConfirmDuplicateCreate(false);
-    setQuickWorkerId("");
+    resetDraft();
     if (quickAddRequested) {
+      setSuppressQuickAddAutoOpen(true);
       clearQuickAddParams();
     }
   }
 
   useEffect(() => {
+    if (!quickAddRequested) {
+      setSuppressQuickAddAutoOpen(false);
+    }
+  }, [quickAddRequested]);
+
+  useEffect(() => {
     if (!canOpen) return;
-    if (!quickAddRequested || open) return;
+    if (!quickAddRequested || open || suppressQuickAddAutoOpen) return;
     openModal();
     // We intentionally react only to query transitions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canOpen, quickAddRequested, open]);
+  }, [canOpen, quickAddRequested, open, suppressQuickAddAutoOpen]);
 
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 7000);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  const normalizedPhone = normalizeE164(phone);
+  const duplicateConfirmationRequired = possibleMatches.length > 0 && forceCreateDuplicate && !confirmDuplicateCreate;
+  const canSaveLead = Boolean(name.trim() && normalizedPhone) && !duplicateConfirmationRequired;
+  const canSaveAndScheduleLead = canSaveLead && scheduleNow && Boolean(startLocal);
 
   useEffect(() => {
     if (!open) {
@@ -291,6 +341,7 @@ export default function QuickAddLeadButton({
     const hasPossibleMatch = possibleMatches.length > 0;
     const explicitForceCreate = forceCreateDuplicate || options?.ignorePossibleMatch === true;
     if (hasPossibleMatch && explicitForceCreate && !confirmDuplicateCreate) {
+      setAdvancedForceCreateOpen(true);
       setError("Confirm duplicate creation before saving.");
       return;
     }
@@ -302,10 +353,17 @@ export default function QuickAddLeadButton({
     setError(null);
 
     try {
+      const scheduledStartAt = finalSchedule ? toPacificIsoString(startLocal) : null;
+      if (finalSchedule && !scheduledStartAt) {
+        setError("Pick a valid Pacific Time start.");
+        setSubmitting(false);
+        return;
+      }
+
       const payload: Record<string, unknown> = {
         orgId: resolvedOrgId || undefined,
         name: name.trim(),
-        phone: phone.trim(),
+        phone: normalizedPhone || phone.trim(),
         email: email.trim() || undefined,
         address: address.trim() || undefined,
         note: note.trim() || undefined,
@@ -323,7 +381,7 @@ export default function QuickAddLeadButton({
 
       if (finalSchedule) {
         payload.schedule = {
-          startAt: new Date(startLocal).toISOString(),
+          startAt: scheduledStartAt,
           durationMinutes,
           type: "JOB",
           status: "SCHEDULED",
@@ -358,14 +416,14 @@ export default function QuickAddLeadButton({
       closeModal();
       router.refresh();
       if (finalSchedule) {
-        const bookedAt = startLocal ? new Date(startLocal) : null;
+        const bookedAt = scheduledStartAt ? new Date(scheduledStartAt) : null;
         const bookedLabel =
           bookedAt && !Number.isNaN(bookedAt.getTime())
-            ? new Intl.DateTimeFormat("en-US", {
+            ? formatDateTimeForDisplay(bookedAt, {
                 weekday: "short",
                 hour: "numeric",
                 minute: "2-digit",
-              }).format(bookedAt)
+              })
             : "scheduled time";
         setToast({
           message: `Booked for ${bookedLabel}`,
@@ -384,8 +442,6 @@ export default function QuickAddLeadButton({
   if (!canOpen) {
     return null;
   }
-
-  const duplicateConfirmationRequired = possibleMatches.length > 0 && forceCreateDuplicate && !confirmDuplicateCreate;
 
   return (
     <>
@@ -423,6 +479,8 @@ export default function QuickAddLeadButton({
                 <input
                   required
                   value={phone}
+                  type="tel"
+                  inputMode="tel"
                   onChange={(event) => setPhone(event.target.value)}
                   placeholder="+12065550100"
                 />
@@ -594,13 +652,13 @@ export default function QuickAddLeadButton({
                   <button type="button" className="btn secondary" onClick={closeModal} disabled={submitting}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn secondary" disabled={submitting || duplicateConfirmationRequired}>
+                  <button type="submit" className="btn secondary" disabled={submitting || !canSaveLead}>
                     {submitting ? "Saving..." : "Save Lead"}
                   </button>
                   <button
                     type="button"
                     className="btn primary"
-                    disabled={submitting || duplicateConfirmationRequired}
+                    disabled={submitting || !canSaveAndScheduleLead}
                     onClick={() => void submitLead("schedule")}
                   >
                     {submitting ? "Saving..." : "Save + Schedule"}

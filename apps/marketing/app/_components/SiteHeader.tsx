@@ -3,90 +3,96 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { NAV_CTA_LABEL, NAV_LINKS } from "../_content";
+import { siteCopy } from "../../content/siteCopy";
+import ButtonLink from "./ui/ButtonLink";
+import PageShell from "./ui/PageShell";
 
 export default function SiteHeader() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
-    document.body.classList.toggle("modal-open", mobileMenuOpen);
+    if (!menuOpen) return undefined;
+
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleEsc);
+
     return () => {
-      document.body.classList.remove("modal-open");
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleEsc);
     };
-  }, [mobileMenuOpen]);
-
-  useEffect(() => {
-    // Close the mobile drawer on route change to avoid "blank screens" caused by a lingering overlay.
-    setMobileMenuOpen(false);
-    document.body.classList.remove("modal-open");
-  }, [pathname]);
-
-  useEffect(() => {
-    if (!mobileMenuOpen) return undefined;
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMobileMenuOpen(false);
-    };
-    window.addEventListener("keydown", handleKeydown);
-    return () => window.removeEventListener("keydown", handleKeydown);
-  }, [mobileMenuOpen]);
+  }, [menuOpen]);
 
   return (
-    <header className="nav navbar">
-      <div className="container nav-inner">
-        <Link className="brand" href="/" aria-label="TieGui Home">
-          <Image src="/logo/tiegui-tiger.png" alt="" className="brand-logo" width={1536} height={1024} priority />
-          <span className="brand-name">TieGui Solutions</span>
-        </Link>
-        <nav className="links" aria-label="Primary navigation">
-          {NAV_LINKS.map((link) => (
-            <Link key={link.href} href={link.href}>{link.label}</Link>
-          ))}
-        </nav>
-        <div className="nav-actions">
-          <Link className="nav-cta" href="/contact">
-            {NAV_CTA_LABEL}
+    <header className="site-header">
+      <PageShell className="site-header__shell">
+        <div className="site-header__inner">
+          <Link href="/" className="site-brand" aria-label="TieGui Solutions home">
+            <Image
+              src="/logo/tiegui-mark.png"
+              alt={siteCopy.brand.markAlt}
+              width={120}
+              height={120}
+              className="site-brand__mark"
+              priority
+            />
+            <span className="site-brand__text">{siteCopy.brand.name}</span>
           </Link>
-          <button
-            className="nav-toggle"
-            type="button"
-            aria-label="Toggle menu"
-            aria-expanded={mobileMenuOpen}
-            onClick={() => setMobileMenuOpen((prev) => !prev)}
-          >
-            <span />
-            <span />
-            <span />
-          </button>
+
+          <nav className="site-nav" aria-label="Primary">
+            {siteCopy.nav.links.map((link) => (
+              <Link key={link.href} href={link.href} className="site-nav__link">
+                {link.label}
+              </Link>
+            ))}
+          </nav>
+
+          <div className="site-header__actions">
+            <ButtonLink href={siteCopy.nav.primaryCta.href} label={siteCopy.nav.primaryCta.label} className="site-header__cta" />
+            <button
+              type="button"
+              className="site-header__menu-toggle"
+              onClick={() => setMenuOpen((current) => !current)}
+              aria-expanded={menuOpen}
+              aria-label="Toggle navigation menu"
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+          </div>
         </div>
-      </div>
+      </PageShell>
+
       <button
-        className={`drawer-backdrop${mobileMenuOpen ? " open" : ""}`}
         type="button"
-        aria-label="Close menu"
-        onClick={() => setMobileMenuOpen(false)}
+        className={`site-mobile-backdrop${menuOpen ? " is-open" : ""}`}
+        aria-label="Close navigation menu"
+        onClick={() => setMenuOpen(false)}
       />
-      <aside className={`mobile-drawer${mobileMenuOpen ? " open" : ""}`} aria-hidden={!mobileMenuOpen}>
-        <div className="drawer-header">
-          <div className="drawer-title">Menu</div>
-          <button className="drawer-close" type="button" onClick={() => setMobileMenuOpen(false)}>
-            ×
+
+      <aside className={`site-mobile-nav${menuOpen ? " is-open" : ""}`} aria-hidden={!menuOpen}>
+        <div className="site-mobile-nav__top">
+          <p className="site-mobile-nav__title">Navigation</p>
+          <button type="button" className="site-mobile-nav__close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
+            X
           </button>
         </div>
-        <nav className="drawer-links">
-          <Link href="/" onClick={() => setMobileMenuOpen(false)}>
-            Home
-          </Link>
-          {NAV_LINKS.map((link) => (
-            <Link key={link.href} href={link.href} onClick={() => setMobileMenuOpen(false)}>
+        <nav className="site-mobile-nav__links" aria-label="Mobile primary">
+          {siteCopy.nav.links.map((link) => (
+            <Link key={link.href} href={link.href} onClick={() => setMenuOpen(false)}>
               {link.label}
             </Link>
           ))}
         </nav>
-        <Link className="cta-button drawer-cta" href="/contact" onClick={() => setMobileMenuOpen(false)}>
-          {NAV_CTA_LABEL}
-        </Link>
+        <ButtonLink
+          href={siteCopy.nav.primaryCta.href}
+          label={siteCopy.nav.primaryCta.label}
+          className="site-mobile-nav__cta"
+        />
       </aside>
     </header>
   );

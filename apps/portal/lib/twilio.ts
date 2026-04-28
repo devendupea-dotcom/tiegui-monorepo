@@ -72,6 +72,24 @@ function safeEqual(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+export function isProductionTwilioRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  return normalizeEnvValue(env.NODE_ENV) === "production" || normalizeEnvValue(env.VERCEL_ENV) === "production";
+}
+
+export function resolveTwilioWebhookValidationMode(
+  env: NodeJS.ProcessEnv = process.env,
+): "validate" | "bypass" | "reject" {
+  if (normalizeEnvValue(env.TWILIO_VALIDATE_SIGNATURE) === "true") {
+    return "validate";
+  }
+
+  if (!isProductionTwilioRuntime(env) && normalizeEnvValue(env.TWILIO_ALLOW_UNSIGNED_WEBHOOKS) === "true") {
+    return "bypass";
+  }
+
+  return "reject";
+}
+
 function buildCandidateUrls(req: Request): string[] {
   const asReceived = new URL(req.url);
 
@@ -111,9 +129,18 @@ export function validateTwilioWebhook(
   formData: FormData,
   options?: { authToken?: string | null },
 ): ValidationResult {
-  const shouldValidate = normalizeEnvValue(process.env.TWILIO_VALIDATE_SIGNATURE) === "true";
-  if (!shouldValidate) {
+  const validationMode = resolveTwilioWebhookValidationMode();
+  if (validationMode === "bypass") {
     return { ok: true };
+  }
+
+  if (validationMode === "reject") {
+    return {
+      ok: false,
+      status: 500,
+      error:
+        "Twilio webhook signature validation is not enabled. Set TWILIO_VALIDATE_SIGNATURE=true for live webhooks.",
+    };
   }
 
   const authToken = options?.authToken || normalizeEnvValue(process.env.TWILIO_AUTH_TOKEN);

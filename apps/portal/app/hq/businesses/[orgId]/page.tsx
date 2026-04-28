@@ -157,13 +157,14 @@ async function archiveSmsTemplateAction(formData: FormData) {
   redirect(`/hq/businesses/${orgId}?tab=messages&saved=template-removed`);
 }
 
-export default async function HqBusinessFolderPage({
-  params,
-  searchParams,
-}: {
-  params: { orgId: string };
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default async function HqBusinessFolderPage(
+  props: {
+    params: Promise<{ orgId: string }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const tab = getTab(searchParams?.tab);
   const saved = getParam(searchParams?.saved);
   const error = getParam(searchParams?.error);
@@ -194,6 +195,9 @@ export default async function HqBusinessFolderPage({
           </Link>
           <Link className="btn secondary" href={`/hq/orgs/${organization.id}/twilio`}>
             Twilio Config
+          </Link>
+          <Link className="btn secondary" href={`/hq/orgs/${organization.id}/website-leads`}>
+            Website Lead Sources
           </Link>
         </div>
 
@@ -228,7 +232,17 @@ async function OverviewTab({ orgId }: { orgId: string }) {
 
   const [leadsCount, bookedCount, dueCount, callsCount, messagesCount, eventsCount, organization, settings, cronState] = await Promise.all([
     prisma.lead.count({ where: { orgId } }),
-    prisma.lead.count({ where: { orgId, status: "BOOKED", updatedAt: { gte: start30 } } }),
+    prisma.event.findMany({
+      where: {
+        orgId,
+        leadId: { not: null },
+        type: { in: ["JOB", "ESTIMATE"] },
+        status: { in: ["SCHEDULED", "CONFIRMED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS"] },
+        startAt: { gte: start30 },
+      },
+      distinct: ["leadId"],
+      select: { leadId: true },
+    }),
     prisma.lead.count({ where: { orgId, nextFollowUpAt: { lte: now } } }),
     prisma.call.count({ where: { orgId } }),
     prisma.message.count({ where: { orgId } }),
@@ -330,7 +344,7 @@ async function OverviewTab({ orgId }: { orgId: string }) {
         </article>
         <article className="card kpi-card">
           <h2>Booked (30d)</h2>
-          <p className="kpi-value">{bookedCount}</p>
+          <p className="kpi-value">{bookedCount.length}</p>
         </article>
         <article className="card kpi-card">
           <h2>Follow-ups Due</h2>
