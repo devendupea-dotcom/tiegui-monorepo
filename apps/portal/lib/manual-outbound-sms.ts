@@ -9,6 +9,8 @@ import type { AppApiActor } from "@/lib/app-api-permissions";
 import { normalizeE164 } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
+import { recoverUnmatchedOutboundSmsStatusCallbacks } from "@/lib/sms-status-reconciliation";
+import { maskSid } from "@/lib/twilio-config-crypto";
 import {
   canComposeManualSms,
   getTwilioMessagingComposeNotice,
@@ -283,6 +285,20 @@ export async function sendManualLeadSms(input: {
 
     return message;
   });
+
+  try {
+    await recoverUnmatchedOutboundSmsStatusCallbacks({
+      orgId: input.lead.orgId,
+      providerMessageSid: providerResult.providerMessageSid,
+    });
+  } catch (error) {
+    console.warn(
+      `[sms:manual] failed to recover unmatched status callback providerMessageSid=${maskSid(
+        providerResult.providerMessageSid,
+      )}`,
+      error,
+    );
+  }
 
   return {
     ok: true,
