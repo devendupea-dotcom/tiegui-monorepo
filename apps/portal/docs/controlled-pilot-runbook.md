@@ -26,7 +26,7 @@
 - New organizations using live SMS without their own readiness gate.
 - Twilio/A2P changes outside the already active Velocity config.
 
-Customers that do not want Twilio can still use TieGui for leads, jobs, scheduling, estimates, invoices, files, website intake, and internal notes, but they are outside this SMS-controlled rollout readiness gate. Do not include SMS, missed-call recovery, text intake, or delivery receipts in that customer's launch scope until Twilio/A2P is intentionally approved and smoked.
+Customers that do not want Twilio can still use TieGui in `NO_SMS` mode for leads, jobs, scheduling, estimates, invoices, files, website intake, and internal notes. Do not include SMS, missed-call recovery, text intake, or delivery receipts in that customer's launch scope.
 
 ## Preflight Checklist
 
@@ -273,7 +273,8 @@ Required operator steps:
 
 - open `/hq/businesses/[orgId]` and confirm the Controlled Rollout Readiness card has zero blockers
 - run `npm run report:rollout-readiness --workspace=portal -- --org-id <org-id>` against the target DB
-- complete one manual outbound, inbound reply, delivery callback, STOP, and START/UNSTOP smoke
+- for `LIVE_SMS` orgs, complete one manual outbound, inbound reply, delivery callback, STOP, and START/UNSTOP smoke
+- for `NO_SMS` orgs, confirm the readiness card says `No SMS / no Twilio`, has zero blockers, and does not require Twilio smoke
 - confirm `/hq/messaging` has no unresolved failed SMS, unmatched callbacks, or overdue queue blockers
 - confirm `/hq/leads/[leadId]/sms-debug` is safe and masked for the smoke lead
 - document Stripe/billing as manual/limited unless the org has a complete Stripe connection

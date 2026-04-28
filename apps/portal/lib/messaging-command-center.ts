@@ -1,4 +1,4 @@
-import type { TwilioConfigStatus } from "@prisma/client";
+import type { MessagingLaunchMode, TwilioConfigStatus } from "@prisma/client";
 import {
   resolveTwilioMessagingReadiness,
   type TwilioMessagingEnvironmentSnapshot,
@@ -37,6 +37,7 @@ export type MessagingCommandCenterLatestSignals = {
 export type MessagingCommandCenterOrgInput = {
   orgId: string;
   orgName: string;
+  messagingLaunchMode?: MessagingLaunchMode | null;
   twilioConfig:
     | {
         phoneNumber: string | null;
@@ -57,6 +58,7 @@ export type MessagingCommandCenterOrgReport = {
   orgId: string;
   orgName: string;
   readinessCode: TwilioMessagingReadinessCode;
+  messagingLaunchMode: MessagingLaunchMode;
   canSend: boolean;
   hasTwilioConfig: boolean;
   traffic: MessagingCommandCenterTraffic;
@@ -64,7 +66,7 @@ export type MessagingCommandCenterOrgReport = {
   issues: MessagingCommandCenterIssue[];
   criticalIssueCount: number;
   warningIssueCount: number;
-  state: "ready" | "blocked" | "warning" | "not_configured";
+  state: "ready" | "blocked" | "warning" | "not_configured" | "sms_disabled";
 };
 
 export type MessagingCommandCenterSummary = {
@@ -73,6 +75,7 @@ export type MessagingCommandCenterSummary = {
   blocked: number;
   warning: number;
   notConfigured: number;
+  smsDisabled: number;
   failed30d: number;
   unmatchedStatusCallbacks30d: number;
   overdueQueueCount: number;
@@ -156,6 +159,8 @@ export function buildMessagingCommandCenterOrgReport(
   input: MessagingCommandCenterOrgInput,
 ): MessagingCommandCenterOrgReport {
   const now = input.now || new Date();
+  const messagingLaunchMode = input.messagingLaunchMode || "LIVE_SMS";
+  const noSmsMode = messagingLaunchMode === "NO_SMS";
   const staleStatusCallbackMs =
     (input.staleStatusCallbackHours ?? 72) * 60 * 60 * 1000;
   const readiness = resolveTwilioMessagingReadiness({
@@ -169,12 +174,12 @@ export function buildMessagingCommandCenterOrgReport(
   });
 
   const issues: MessagingCommandCenterIssue[] = [];
-  const primaryReadinessIssue = readinessIssue(readiness.code);
+  const primaryReadinessIssue = noSmsMode ? null : readinessIssue(readiness.code);
   if (primaryReadinessIssue) {
     issues.push(primaryReadinessIssue);
   }
 
-  if (!input.env.validateSignature) {
+  if (!noSmsMode && !input.env.validateSignature) {
     issues.push(
       issue(
         "critical",
@@ -189,7 +194,8 @@ export function buildMessagingCommandCenterOrgReport(
   if (
     input.traffic.outbound30d > 0 &&
     !input.latest.statusCallbackAt &&
-    readiness.hasConfig
+    readiness.hasConfig &&
+    !noSmsMode
   ) {
     issues.push(
       issue(
@@ -205,6 +211,7 @@ export function buildMessagingCommandCenterOrgReport(
   if (
     input.latest.statusCallbackAt &&
     input.traffic.outbound30d > 0 &&
+    !noSmsMode &&
     now.getTime() - input.latest.statusCallbackAt.getTime() >
       staleStatusCallbackMs
   ) {
@@ -262,7 +269,9 @@ export function buildMessagingCommandCenterOrgReport(
     (item) => item.severity === "warning",
   ).length;
   const state =
-    readiness.code === "NOT_CONFIGURED"
+    noSmsMode && criticalIssueCount === 0 && warningIssueCount === 0
+      ? "sms_disabled"
+      : readiness.code === "NOT_CONFIGURED"
       ? "not_configured"
       : criticalIssueCount > 0
         ? "blocked"
@@ -274,7 +283,8 @@ export function buildMessagingCommandCenterOrgReport(
     orgId: input.orgId,
     orgName: input.orgName,
     readinessCode: readiness.code,
-    canSend: readiness.canSend && criticalIssueCount === 0,
+    messagingLaunchMode,
+    canSend: !noSmsMode && readiness.canSend && criticalIssueCount === 0,
     hasTwilioConfig: readiness.hasConfig,
     traffic: input.traffic,
     latest: input.latest,
@@ -298,7 +308,13 @@ export function buildMessagingCommandCenterReport(input: {
       }),
     )
     .sort((a, b) => {
-      const stateRank = { blocked: 0, warning: 1, not_configured: 2, ready: 3 };
+      const stateRank = {
+        blocked: 0,
+        warning: 1,
+        not_configured: 2,
+        sms_disabled: 3,
+        ready: 4,
+      };
       const stateDelta = stateRank[a.state] - stateRank[b.state];
       if (stateDelta !== 0) return stateDelta;
       const criticalDelta = b.criticalIssueCount - a.criticalIssueCount;
@@ -318,6 +334,7 @@ export function buildMessagingCommandCenterReport(input: {
       warning: orgs.filter((org) => org.state === "warning").length,
       notConfigured: orgs.filter((org) => org.state === "not_configured")
         .length,
+      smsDisabled: orgs.filter((org) => org.state === "sms_disabled").length,
       failed30d: orgs.reduce((sum, org) => sum + org.traffic.failed30d, 0),
       unmatchedStatusCallbacks30d: orgs.reduce(
         (sum, org) => sum + org.traffic.unmatchedStatusCallbacks30d,

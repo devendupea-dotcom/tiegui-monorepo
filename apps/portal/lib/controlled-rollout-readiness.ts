@@ -13,7 +13,7 @@ import {
 } from "@/lib/twilio-readiness";
 
 export type ControlledRolloutItemStatus = "ready" | "manual" | "blocked";
-export type ControlledMessagingLaunchMode = "LIVE_SMS";
+export type ControlledMessagingLaunchMode = "LIVE_SMS" | "NO_SMS";
 
 export type ControlledRolloutReadinessItem = {
   key: string;
@@ -29,6 +29,7 @@ export type ControlledRolloutReadinessInput = {
     id: string;
     name: string;
     portalVertical?: string | null;
+    messagingLaunchMode?: ControlledMessagingLaunchMode | null;
     createdAt: Date;
   };
   env: TwilioMessagingEnvironmentSnapshot & {
@@ -197,7 +198,9 @@ export function buildControlledRolloutReadinessReport(
   ]);
   const activeWorkerCount = activeRoleCount(input.memberships, ["WORKER"]);
   const activeReadOnlyCount = activeRoleCount(input.memberships, ["READ_ONLY"]);
-  const messagingLaunchMode: ControlledMessagingLaunchMode = "LIVE_SMS";
+  const messagingLaunchMode: ControlledMessagingLaunchMode =
+    input.org.messagingLaunchMode || "LIVE_SMS";
+  const noSmsMode = messagingLaunchMode === "NO_SMS";
   const twilio = resolveTwilioMessagingReadiness({
     twilioConfig: input.twilioConfig
       ? {
@@ -208,10 +211,11 @@ export function buildControlledRolloutReadinessReport(
     env: input.env,
   });
   const twilioReady =
-    twilio.canSend &&
-    input.env.validateSignature &&
-    Boolean(input.twilioConfig?.messagingServiceSid) &&
-    Boolean(input.twilioConfig?.twilioSubaccountSid);
+    noSmsMode ||
+    (twilio.canSend &&
+      input.env.validateSignature &&
+      Boolean(input.twilioConfig?.messagingServiceSid) &&
+      Boolean(input.twilioConfig?.twilioSubaccountSid));
   const recentManualOutbound = hasRecent(
     input.smsSignals.latestManualOutboundAt,
     now,
@@ -276,11 +280,14 @@ export function buildControlledRolloutReadinessReport(
       label: "Twilio / A2P readiness",
       status: twilioReady ? "ready" : "blocked",
       blocking: !twilioReady,
-      detail: input.twilioConfig
-        ? `Status ${input.twilioConfig.status}; sender ${maskPhone(input.twilioConfig.phoneNumber)}; service ${maskSid(input.twilioConfig.messagingServiceSid)}; account ${maskSid(input.twilioConfig.twilioSubaccountSid)}.`
-        : "No org Twilio config is saved.",
-      action:
-        "Confirm A2P approval, Messaging Service SID, sender number, token encryption key, send enabled, and signature validation.",
+      detail: noSmsMode
+        ? "No-SMS mode is selected. Twilio, A2P, live SMS sends, inbound SMS, and SMS callbacks are not required for this customer launch."
+        : input.twilioConfig
+          ? `Status ${input.twilioConfig.status}; sender ${maskPhone(input.twilioConfig.phoneNumber)}; service ${maskSid(input.twilioConfig.messagingServiceSid)}; account ${maskSid(input.twilioConfig.twilioSubaccountSid)}.`
+          : "No org Twilio config is saved.",
+      action: noSmsMode
+        ? "Launch the customer with leads, jobs, scheduling, estimates, invoices, files, and reporting. Keep SMS automation disabled unless they opt into Twilio later."
+        : "Confirm A2P approval, Messaging Service SID, sender number, token encryption key, send enabled, and signature validation.",
     }),
     item({
       key: "website-lead-source",
@@ -302,55 +309,70 @@ export function buildControlledRolloutReadinessReport(
     item({
       key: "sms-consent",
       label: "SMS consent model",
-      status: "ready",
+      status: noSmsMode ? "manual" : "ready",
       blocking: false,
-      detail: `${input.smsConsent.total} consent row(s): ${input.smsConsent.optedIn} opted in, ${input.smsConsent.optedOut} opted out, ${input.smsConsent.unknown} unknown.`,
-      action:
-        "Before launch, run STOP/START smoke and confirm explicit OPTED_IN can override legacy DNC fallback only as intended.",
+      detail: noSmsMode
+        ? "No-SMS mode skips live consent smoke. Existing consent rows remain preserved for a future Twilio activation."
+        : `${input.smsConsent.total} consent row(s): ${input.smsConsent.optedIn} opted in, ${input.smsConsent.optedOut} opted out, ${input.smsConsent.unknown} unknown.`,
+      action: noSmsMode
+        ? "Do not promise SMS follow-up, text intake, missed-call recovery, or delivery receipts for this customer."
+        : "Before launch, run STOP/START smoke and confirm explicit OPTED_IN can override legacy DNC fallback only as intended.",
     }),
     item({
       key: "manual-outbound-smoke",
       label: "Manual outbound SMS smoke",
-      status: recentManualOutbound ? "ready" : "blocked",
-      blocking: !recentManualOutbound,
-      detail: recentManualOutbound
+      status: noSmsMode ? "manual" : recentManualOutbound ? "ready" : "blocked",
+      blocking: !noSmsMode && !recentManualOutbound,
+      detail: noSmsMode
+        ? "Skipped because this customer is launching without Twilio/SMS."
+        : recentManualOutbound
         ? `Latest manual outbound smoke within ${smokeWindowDays} days.`
         : `No manual outbound SMS smoke found within ${smokeWindowDays} days.`,
-      action:
-        "Send one consent-safe manual SMS from inbox or lead composer and verify one Message/CommunicationEvent row.",
+      action: noSmsMode
+        ? "Use internal notes, lead activity, estimates, invoices, and scheduling instead of SMS."
+        : "Send one consent-safe manual SMS from inbox or lead composer and verify one Message/CommunicationEvent row.",
     }),
     item({
       key: "inbound-smoke",
       label: "Inbound reply smoke",
-      status: recentInbound ? "ready" : "blocked",
-      blocking: !recentInbound,
-      detail: recentInbound
+      status: noSmsMode ? "manual" : recentInbound ? "ready" : "blocked",
+      blocking: !noSmsMode && !recentInbound,
+      detail: noSmsMode
+        ? "Skipped because this customer is launching without inbound SMS."
+        : recentInbound
         ? `Latest inbound SMS is within ${smokeWindowDays} days.`
         : `No inbound SMS found within ${smokeWindowDays} days.`,
-      action:
-        "Reply from the safe test phone or simulate a signed inbound webhook and verify org/thread routing.",
+      action: noSmsMode
+        ? "Route customer communication outside TieGui SMS until Twilio is intentionally enabled."
+        : "Reply from the safe test phone or simulate a signed inbound webhook and verify org/thread routing.",
     }),
     item({
       key: "status-callback-smoke",
       label: "Delivery callback smoke",
-      status: recentStatusCallback ? "ready" : "blocked",
-      blocking: !recentStatusCallback,
-      detail: recentStatusCallback
+      status: noSmsMode ? "manual" : recentStatusCallback ? "ready" : "blocked",
+      blocking: !noSmsMode && !recentStatusCallback,
+      detail: noSmsMode
+        ? "Skipped because no Twilio delivery callbacks are expected in No-SMS mode."
+        : recentStatusCallback
         ? `Latest delivery status callback is within ${smokeWindowDays} days.`
         : `No delivery status callback found within ${smokeWindowDays} days.`,
-      action:
-        "Confirm Twilio status callback URL reaches /api/webhooks/twilio/sms/status and reconciles a known SID.",
+      action: noSmsMode
+        ? "If the customer later buys SMS, switch to Live SMS mode and run the full callback smoke before sending."
+        : "Confirm Twilio status callback URL reaches /api/webhooks/twilio/sms/status and reconciles a known SID.",
     }),
     item({
       key: "stop-start-smoke",
       label: "STOP/START smoke",
-      status: recentStop && recentStart ? "ready" : "blocked",
-      blocking: !(recentStop && recentStart),
-      detail: recentStop && recentStart
+      status: noSmsMode ? "manual" : recentStop && recentStart ? "ready" : "blocked",
+      blocking: !noSmsMode && !(recentStop && recentStart),
+      detail: noSmsMode
+        ? "Skipped because the customer is not receiving or sending SMS through TieGui."
+        : recentStop && recentStart
         ? `STOP and START/UNSTOP signals were both seen within ${smokeWindowDays} days.`
         : "STOP and START/UNSTOP have not both been verified recently.",
-      action:
-        "Run signed STOP then START/UNSTOP smoke, confirm SmsConsent transitions, and verify outbound block/override behavior.",
+      action: noSmsMode
+        ? "Do not enable text automation until Twilio is configured and consent smoke passes."
+        : "Run signed STOP then START/UNSTOP smoke, confirm SmsConsent transitions, and verify outbound block/override behavior.",
     }),
     item({
       key: "messaging-blockers",
@@ -472,6 +494,7 @@ export async function loadControlledRolloutReadinessReport(input: {
         id: true,
         name: true,
         portalVertical: true,
+        messagingLaunchMode: true,
         createdAt: true,
         twilioConfig: {
           select: {
@@ -618,6 +641,7 @@ export async function loadControlledRolloutReadinessReport(input: {
       id: org.id,
       name: org.name,
       portalVertical: org.portalVertical,
+      messagingLaunchMode: org.messagingLaunchMode,
       createdAt: org.createdAt,
     },
     env: {

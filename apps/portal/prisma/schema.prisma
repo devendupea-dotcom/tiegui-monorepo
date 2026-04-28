@@ -68,6 +68,7 @@ model Organization {
   onboardingCompletedAt             DateTime?
   onboardingSkippedAt               DateTime?
   smsFromNumberE164                 String?
+  messagingLaunchMode               MessagingLaunchMode @default(LIVE_SMS)
   smsMonthlyLimit                   Int             @default(3000)
   smsHardStop                       Boolean         @default(true)
   aiMonthlyBudgetCents              Int             @default(1000)
@@ -2928,6 +2929,11 @@ enum TwilioConfigStatus {
   PENDING_A2P
   ACTIVE
   PAUSED
+}
+
+enum MessagingLaunchMode {
+  LIVE_SMS
+  NO_SMS
 }
 
 enum TwilioConfigAuditAction {

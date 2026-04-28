@@ -96,6 +96,67 @@ async function updateOrgSmsSettingsAction(formData: FormData) {
   redirect(`/hq/businesses/${orgId}?tab=messages&saved=sms`);
 }
 
+async function updateOrgMessagingLaunchModeAction(formData: FormData) {
+  "use server";
+
+  const orgId = String(formData.get("orgId") || "").trim();
+  const mode =
+    String(formData.get("messagingLaunchMode") || "").trim() === "NO_SMS"
+      ? "NO_SMS"
+      : "LIVE_SMS";
+
+  if (!orgId) {
+    redirect("/hq/businesses");
+  }
+
+  await requireInternalUser(`/hq/businesses/${orgId}`);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.organization.update({
+      where: { id: orgId },
+      data:
+        mode === "NO_SMS"
+          ? {
+              messagingLaunchMode: "NO_SMS",
+              smsFromNumberE164: null,
+              missedCallAutoReplyOn: false,
+              intakeAutomationEnabled: false,
+              autoReplyEnabled: false,
+              followUpsEnabled: false,
+              autoBookingEnabled: false,
+            }
+          : {
+              messagingLaunchMode: "LIVE_SMS",
+            },
+    });
+
+    if (mode === "NO_SMS") {
+      await tx.organizationMessagingSettings.upsert({
+        where: { orgId },
+        create: {
+          orgId,
+          autoReplyEnabled: false,
+          followUpsEnabled: false,
+          autoBookingEnabled: false,
+          dispatchSmsEnabled: false,
+        },
+        update: {
+          autoReplyEnabled: false,
+          followUpsEnabled: false,
+          autoBookingEnabled: false,
+          dispatchSmsEnabled: false,
+        },
+      });
+    }
+  });
+
+  revalidatePath(`/hq/businesses/${orgId}`);
+  revalidatePath(`/hq/messaging`);
+  revalidatePath(`/app`);
+
+  redirect(`/hq/businesses/${orgId}?saved=messaging-mode`);
+}
+
 async function createSmsTemplateAction(formData: FormData) {
   "use server";
 
@@ -410,7 +471,9 @@ async function OverviewTab({ orgId }: { orgId: string }) {
               <p className="muted">
                 Messaging mode:{" "}
                 <strong>
-                  Live SMS / Twilio
+                  {rolloutReadiness.summary.messagingLaunchMode === "NO_SMS"
+                    ? "No SMS / no Twilio"
+                    : "Live SMS / Twilio"}
                 </strong>
               </p>
             </div>
@@ -435,7 +498,9 @@ async function OverviewTab({ orgId }: { orgId: string }) {
             <article className="kpi-card">
               <h3>Messaging</h3>
               <p className="kpi-value" style={{ fontSize: "1.4rem" }}>
-                {rolloutReadiness.summary.twilioStatus}
+                {rolloutReadiness.summary.messagingLaunchMode === "NO_SMS"
+                  ? "No SMS"
+                  : rolloutReadiness.summary.twilioStatus}
               </p>
             </article>
             <article className="kpi-card">
@@ -457,6 +522,28 @@ async function OverviewTab({ orgId }: { orgId: string }) {
           </div>
 
           <div className="quick-links" style={{ marginTop: 12 }}>
+            <form action={updateOrgMessagingLaunchModeAction}>
+              <input type="hidden" name="orgId" value={orgId} />
+              <input type="hidden" name="messagingLaunchMode" value="LIVE_SMS" />
+              <button
+                className="btn secondary"
+                type="submit"
+                disabled={rolloutReadiness.summary.messagingLaunchMode === "LIVE_SMS"}
+              >
+                Use Live SMS
+              </button>
+            </form>
+            <form action={updateOrgMessagingLaunchModeAction}>
+              <input type="hidden" name="orgId" value={orgId} />
+              <input type="hidden" name="messagingLaunchMode" value="NO_SMS" />
+              <button
+                className="btn secondary"
+                type="submit"
+                disabled={rolloutReadiness.summary.messagingLaunchMode === "NO_SMS"}
+              >
+                Launch Without SMS
+              </button>
+            </form>
             <Link className="btn secondary" href={rolloutReadiness.links.hqMessaging}>
               Open /hq/messaging
             </Link>

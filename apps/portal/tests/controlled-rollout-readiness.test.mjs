@@ -10,6 +10,7 @@ function baseInput(overrides = {}) {
       id: "org_1",
       name: "Velocity Landscapes LLC",
       portalVertical: "CONTRACTOR",
+      messagingLaunchMode: "LIVE_SMS",
       createdAt: new Date("2026-04-01T12:00:00.000Z"),
     },
     env: {
@@ -189,4 +190,39 @@ test("website lead source and Stripe can stay manual without blocking SMS rollou
   assert.equal(item(report, "website-lead-source").blocking, false);
   assert.equal(item(report, "billing-mode").status, "manual");
   assert.equal(item(report, "billing-mode").blocking, false);
+});
+
+test("no-SMS mode can launch without Twilio config or SMS smoke", () => {
+  const report = buildControlledRolloutReadinessReport(
+    baseInput({
+      org: {
+        ...baseInput().org,
+        messagingLaunchMode: "NO_SMS",
+      },
+      twilioConfig: null,
+      smsSignals: {
+        latestManualOutboundAt: null,
+        latestInboundAt: null,
+        latestStatusCallbackAt: null,
+        latestStopAt: null,
+        latestStartAt: null,
+        failedSms30d: 0,
+        unmatchedCallbacks30d: 0,
+        recoveredCallbacks30d: 0,
+        overdueQueueCount: 0,
+        leadDebugCandidateId: null,
+      },
+    }),
+  );
+
+  assert.equal(report.readyForControlledCustomer, true);
+  assert.equal(report.summary.messagingLaunchMode, "NO_SMS");
+  assert.equal(report.summary.twilioStatus, "NOT_CONFIGURED");
+  assert.equal(item(report, "twilio-ready").status, "ready");
+  assert.equal(item(report, "twilio-ready").blocking, false);
+  assert.equal(item(report, "manual-outbound-smoke").status, "manual");
+  assert.equal(item(report, "manual-outbound-smoke").blocking, false);
+  assert.equal(item(report, "inbound-smoke").status, "manual");
+  assert.equal(item(report, "status-callback-smoke").status, "manual");
+  assert.equal(item(report, "stop-start-smoke").status, "manual");
 });
