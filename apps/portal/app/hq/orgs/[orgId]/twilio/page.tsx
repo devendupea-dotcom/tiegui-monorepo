@@ -73,6 +73,16 @@ function previewText(value: string | null | undefined, maxLength = 90): string {
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
 }
 
+function displayText(value: string | number | boolean | Date | null | undefined): string {
+  if (value instanceof Date) {
+    return formatDateTimeForDisplay(value, { dateStyle: "medium", timeStyle: "short" });
+  }
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return Number.isFinite(value) ? `${value}` : "-";
+  const text = String(value || "").trim();
+  return text || "-";
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -481,6 +491,7 @@ export default async function HqOrgTwilioPage(
           updatedAt: true,
         },
       },
+      smsRegistrationApplication: true,
       twilioConfigAuditLogs: {
         orderBy: { createdAt: "desc" },
         take: 12,
@@ -733,6 +744,70 @@ export default async function HqOrgTwilioPage(
         : "No voice call recorded yet",
     },
   ];
+  const smsRegistration = organization.smsRegistrationApplication;
+  const smsRegistrationBusinessRows = smsRegistration
+    ? [
+        ["Status", smsRegistration.status],
+        ["Submitted", smsRegistration.submittedAt],
+        ["Legal business name", smsRegistration.businessName],
+        ["Brand / DBA", smsRegistration.brandName],
+        ["Business type", smsRegistration.businessType],
+        ["Industry", smsRegistration.businessIndustry],
+        ["EIN status", smsRegistration.businessRegistrationIdentifier],
+        ["Company type", smsRegistration.companyType],
+        ["Website", smsRegistration.websiteUrl],
+        ["Social links", smsRegistration.socialMediaProfileUrls],
+        ["Address name", smsRegistration.customerName],
+        ["Street", smsRegistration.street],
+        ["Street 2", smsRegistration.streetSecondary],
+        ["City", smsRegistration.city],
+        ["State/region", smsRegistration.region],
+        ["Postal code", smsRegistration.postalCode],
+        ["Country", smsRegistration.isoCountry],
+      ] as const
+    : [];
+  const smsRegistrationContactRows = smsRegistration
+    ? [
+        ["Authorized first name", smsRegistration.authorizedFirstName],
+        ["Authorized last name", smsRegistration.authorizedLastName],
+        ["Job title", smsRegistration.authorizedTitle],
+        ["Job position", smsRegistration.authorizedJobPosition],
+        ["Phone", smsRegistration.authorizedPhoneE164],
+        ["Email", smsRegistration.authorizedEmail],
+        ["Brand contact email", smsRegistration.brandContactEmail],
+      ] as const
+    : [];
+  const smsRegistrationCampaignRows = smsRegistration
+    ? [
+        ["Use case", smsRegistration.campaignUseCase],
+        ["Campaign description", smsRegistration.campaignDescription],
+        ["Opt-in flow", smsRegistration.messageFlow],
+        ["Privacy policy", smsRegistration.privacyPolicyUrl],
+        ["Terms", smsRegistration.termsOfServiceUrl],
+        ["Opt-in proof", smsRegistration.optInProofUrl],
+        ["Includes links", smsRegistration.hasEmbeddedLinks],
+        ["Includes phone numbers", smsRegistration.hasEmbeddedPhone],
+        ["Opt-in keywords", smsRegistration.optInKeywords],
+        ["Opt-in reply", smsRegistration.optInMessage],
+        ["Opt-out keywords", smsRegistration.optOutKeywords],
+        ["Opt-out reply", smsRegistration.optOutMessage],
+        ["Help keywords", smsRegistration.helpKeywords],
+        ["Help reply", smsRegistration.helpMessage],
+        ["Estimated monthly texts", smsRegistration.estimatedMonthlyMessages],
+        ["Existing Twilio number", smsRegistration.desiredSenderNumberE164],
+        ["Customer consent confirmed", smsRegistration.customerConsentConfirmed],
+        ["Submission authorized", smsRegistration.registrationSubmissionAuthorized],
+      ] as const
+    : [];
+  const smsRegistrationSamples = smsRegistration
+    ? [
+        smsRegistration.sampleMessage1,
+        smsRegistration.sampleMessage2,
+        smsRegistration.sampleMessage3,
+        smsRegistration.sampleMessage4,
+        smsRegistration.sampleMessage5,
+      ].filter((sample): sample is string => Boolean(sample))
+    : [];
 
   return (
     <>
@@ -1047,6 +1122,96 @@ export default async function HqOrgTwilioPage(
               </tbody>
             </table>
           </div>
+        )}
+      </section>
+
+      <section className="card">
+        <h3>Customer SMS Registration Intake</h3>
+        <p className="muted">
+          Customer-submitted A2P/Twilio application answers. If the customer deletes the intake from onboarding, this section clears.
+        </p>
+        {!smsRegistration ? (
+          <p className="muted" style={{ marginTop: 10 }}>
+            No texting approval application has been saved yet.
+          </p>
+        ) : (
+          <>
+            <div className="table-wrap" style={{ marginTop: 10 }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Business field</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {smsRegistrationBusinessRows.map(([label, value]) => (
+                    <tr key={label}>
+                      <td>{label}</td>
+                      <td>{displayText(value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-wrap" style={{ marginTop: 16 }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Contact field</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {smsRegistrationContactRows.map(([label, value]) => (
+                    <tr key={label}>
+                      <td>{label}</td>
+                      <td>{displayText(value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-wrap" style={{ marginTop: 16 }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Campaign field</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {smsRegistrationCampaignRows.map(([label, value]) => (
+                    <tr key={label}>
+                      <td>{label}</td>
+                      <td>{displayText(value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-wrap" style={{ marginTop: 16 }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Sample</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {smsRegistrationSamples.map((sample, index) => (
+                    <tr key={`${index}-${sample.slice(0, 16)}`}>
+                      <td>Sample {index + 1}</td>
+                      <td>{sample}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
 

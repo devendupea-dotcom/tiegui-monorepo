@@ -4504,6 +4504,37 @@ html[data-mobile-mode="1"] textarea {
   display: none;
 }
 
+.onboarding-sms-application {
+  border: 1px solid color-mix(in srgb, var(--surface-card-border) 72%, var(--brand-gold) 28%);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--surface-2) 6%);
+  padding: 12px;
+  display: grid;
+  gap: 14px;
+}
+
+.onboarding-sms-application-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.onboarding-sms-application-header h4,
+.onboarding-sms-delete h4 {
+  margin: 0;
+  color: var(--text);
+}
+
+.onboarding-sms-delete {
+  border: 1px dashed color-mix(in srgb, var(--tone-danger-border, #ef4444) 34%, var(--surface-card-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tone-danger-surface, #fee2e2) 10%, transparent);
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
 .onboarding-promise {
   margin-top: -2px;
   font-weight: 600;
