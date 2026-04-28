@@ -3,6 +3,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { Prisma } from "@prisma/client";
 import type { ConversationStage, MessageStatus } from "@prisma/client";
 import { buildMissedCallOpeningMessages } from "@/lib/missed-call-opening";
+import { maybeSendOwnerLeadReviewNotification } from "@/lib/org-owner-notifications";
 import { prisma } from "@/lib/prisma";
 import { computeAvailabilityForWorker, getOrgCalendarSettings } from "@/lib/calendar/availability";
 import { enqueueGoogleSyncJob } from "@/lib/integrations/google-sync";
@@ -10,6 +11,7 @@ import { syncLeadBookingState } from "@/lib/lead-booking";
 import {
   ACTIVE_CONVERSATION_FOLLOW_UP_STAGES,
   getAutomatedFollowUpThrottleUntil,
+  getConversationalFollowUpSkipReason,
   shouldSkipQueuedFollowUp,
   shouldSuppressMissedCallKickoff,
 } from "@/lib/sms-automation-guards";
@@ -487,6 +489,14 @@ async function activateHumanTakeover(input: {
       messageType: "AUTOMATION",
     });
   }
+
+  await maybeSendOwnerLeadReviewNotification({
+    orgId: input.organization.id,
+    leadId: input.lead.id,
+    conversationStateId: input.stateId,
+    reason: "Human takeover",
+    inboundBody: input.inboundBody,
+  });
 }
 
 export async function startConversationalSmsFromMissedCall(input: {
@@ -1619,6 +1629,52 @@ export async function processDueConversationalFollowUps(input?: { maxLeads?: num
           data: { nextFollowUpAt: null },
         }),
       ]);
+      continue;
+    }
+
+    const followUpSkipReason = getConversationalFollowUpSkipReason({
+      leadStatus: lead.status,
+      lastInboundAt: liveState.lastInboundAt,
+      messages: liveState.lead.messages,
+      conversationState: {
+        stage: liveState.stage,
+        pausedUntil: liveState.pausedUntil,
+        stoppedAt: liveState.stoppedAt,
+      },
+      now,
+    });
+    if (followUpSkipReason) {
+      skipped += 1;
+      await prisma.$transaction([
+        prisma.leadConversationState.update({
+          where: { id: liveState.id },
+          data: { nextFollowUpAt: null },
+        }),
+        prisma.lead.update({
+          where: { id: lead.id },
+          data: { nextFollowUpAt: null },
+        }),
+      ]);
+      await auditConversation({
+        orgId: org.id,
+        leadId: lead.id,
+        conversationStateId: liveState.id,
+        action: "FOLLOWUP_SCHEDULED",
+        metadataJson: {
+          skipped: true,
+          reason: followUpSkipReason,
+        },
+      });
+      if (/human review|waiting on a reply/i.test(followUpSkipReason)) {
+        await maybeSendOwnerLeadReviewNotification({
+          orgId: org.id,
+          leadId: lead.id,
+          conversationStateId: liveState.id,
+          reason: followUpSkipReason.includes("human review")
+            ? "Automation promised human review"
+            : "Customer waiting on reply",
+        });
+      }
       continue;
     }
 

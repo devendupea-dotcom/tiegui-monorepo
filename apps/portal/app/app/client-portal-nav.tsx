@@ -19,6 +19,7 @@ type NavLink = {
 
 type NavSection = {
   labelKey: AppNavMessageKey;
+  internalOnly?: boolean;
   links: NavLink[];
 };
 
@@ -55,32 +56,22 @@ const navSections: NavSection[] = [
         ),
       },
       {
-        href: "/app/jobs/records",
-        labelKey: "jobRecords",
-        builderLabelKey: "buildProjects",
-        icon: (
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />
-          </svg>
-        ),
-      },
-      {
-        href: "/app/dispatch",
-        labelKey: "dispatch",
-        builderLabelKey: "buildSchedule",
-        icon: (
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M5 5h14v5H5zM5 14h6v5H5zM13 14h6v5h-6zM9 10v4M15 10v4" />
-          </svg>
-        ),
-      },
-      {
         href: "/app/calendar",
         labelKey: "calendar",
         builderLabelKey: "timeline",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 3v3M17 3v3M5 6h14a2 2 0 0 1 2 2v11H3V8a2 2 0 0 1 2-2Zm-2 6h4v4h-4z" />
+          </svg>
+        ),
+      },
+      {
+        href: "/app/builder",
+        labelKey: "builderPortal",
+        builderOnly: true,
+        icon: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 11 12 4l8 7v9H4zM9 20v-6h6v6M7 11h10" />
           </svg>
         ),
       },
@@ -106,6 +97,46 @@ const navSections: NavSection[] = [
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 3h10l3 3v15H4V3h3zm3 0v4h4V3M8 12h8M8 16h8" />
+          </svg>
+        ),
+      },
+    ],
+  },
+  {
+    labelKey: "workspaceSection",
+    links: [
+      {
+        href: "/app/settings",
+        labelKey: "settings",
+        icon: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m12 8 1.4-2.6 2.9 1-.5 3 2 2 3-.5 1 2.9L19 15l-2 2 .5 3-2.9 1L12 18l-2.6 1.4-2.9-1 .5-3-2-2-3 .5-1-2.9L5 11l2-2-.5-3 2.9-1zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z" />
+          </svg>
+        ),
+      },
+    ],
+  },
+  {
+    labelKey: "advancedSection",
+    internalOnly: true,
+    links: [
+      {
+        href: "/app/jobs/records",
+        labelKey: "jobRecords",
+        builderLabelKey: "buildProjects",
+        icon: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />
+          </svg>
+        ),
+      },
+      {
+        href: "/app/dispatch",
+        labelKey: "dispatch",
+        builderLabelKey: "buildSchedule",
+        icon: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 5h14v5H5zM5 14h6v5H5zM13 14h6v5h-6zM9 10v4M15 10v4" />
           </svg>
         ),
       },
@@ -137,41 +168,12 @@ const navSections: NavSection[] = [
           </svg>
         ),
       },
-    ],
-  },
-  {
-    labelKey: "captureSection",
-    links: [
       {
         href: "/app/field-notes",
         labelKey: "fieldNotes",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 3h9l4 4v14H6zM15 3v5h4M9 11h6M9 15h6M9 19h4" />
-          </svg>
-        ),
-      },
-    ],
-  },
-  {
-    labelKey: "workspaceSection",
-    links: [
-      {
-        href: "/app/builder",
-        labelKey: "builderPortal",
-        builderOnly: true,
-        icon: (
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 11 12 4l8 7v9H4zM9 20v-6h6v6M7 11h10" />
-          </svg>
-        ),
-      },
-      {
-        href: "/app/settings",
-        labelKey: "settings",
-        icon: (
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="m12 8 1.4-2.6 2.9 1-.5 3 2 2 3-.5 1 2.9L19 15l-2 2 .5 3-2.9 1L12 18l-2.6 1.4-2.9-1 .5-3-2-2-3 .5-1-2.9L5 11l2-2-.5-3 2.9-1zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z" />
           </svg>
         ),
       },
@@ -200,17 +202,21 @@ function withPortalQuery(
 
 type ClientPortalNavProps = {
   calendarAccessRole: CalendarAccessRole;
+  defaultOrgId?: string | null;
+  internalUser?: boolean;
   portalVertical?: string | null;
 };
 
 export default function ClientPortalNav({
   calendarAccessRole,
+  defaultOrgId,
+  internalUser = false,
   portalVertical,
 }: ClientPortalNavProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const t = useTranslations("appNav");
-  const orgId = searchParams.get("orgId");
+  const orgId = searchParams.get("orgId") || defaultOrgId || null;
   const mobileMode = searchParams.get("mobile") === "1";
   const workerScoped =
     calendarAccessRole === "WORKER" || calendarAccessRole === "READ_ONLY";
@@ -218,56 +224,58 @@ export default function ClientPortalNav({
 
   return (
     <nav className="app-nav" aria-label={t("navigationLabel")}>
-      {navSections.map((section) => (
-        <div key={section.labelKey} className="app-nav-section">
-          <p className="app-nav-section-label">
-            {t(
-              section.labelKey === "revenueSection" && workerScoped
-                ? "recordsSection"
-                : section.labelKey,
-            )}
-          </p>
-          <div className="app-nav-section-links">
-            {section.links
-              .filter((link) => builderWorkspace || !link.builderOnly)
-              .map((link) => {
-              const active =
-                link.href === "/app"
-                  ? pathname === "/app"
-                  : link.href === "/app/jobs"
-                    ? pathname === "/app/jobs" ||
-                      (pathname.startsWith("/app/jobs/") &&
-                        !pathname.startsWith("/app/jobs/records"))
-                    : pathname === link.href ||
-                      pathname.startsWith(`${link.href}/`);
+      {navSections
+        .filter((section) => !section.internalOnly || internalUser)
+        .map((section) => (
+          <div key={section.labelKey} className="app-nav-section">
+            <p className="app-nav-section-label">
+              {t(
+                section.labelKey === "revenueSection" && workerScoped
+                  ? "recordsSection"
+                  : section.labelKey,
+              )}
+            </p>
+            <div className="app-nav-section-links">
+              {section.links
+                .filter((link) => builderWorkspace || !link.builderOnly)
+                .map((link) => {
+                  const active =
+                    link.href === "/app"
+                      ? pathname === "/app"
+                      : link.href === "/app/jobs"
+                        ? pathname === "/app/jobs" ||
+                          (pathname.startsWith("/app/jobs/") &&
+                            !pathname.startsWith("/app/jobs/records"))
+                        : pathname === link.href ||
+                          pathname.startsWith(`${link.href}/`);
 
-              const labelKey =
-                builderWorkspace && link.builderLabelKey
-                  ? link.builderLabelKey
-                  : link.labelKey;
+                  const labelKey =
+                    builderWorkspace && link.builderLabelKey
+                      ? link.builderLabelKey
+                      : link.labelKey;
 
-              return (
-                <Link
-                  key={link.href}
-                  href={withPortalQuery(link.href, orgId, mobileMode)}
-                  prefetch={false}
-                  className={`app-nav-link ${active ? "active" : ""}`}
-                  aria-label={t(labelKey)}
-                >
-                  <span
-                    className="app-nav-icon"
-                    role="img"
-                    aria-label={`${t(labelKey)} icon`}
-                  >
-                    {link.icon}
-                  </span>
-                  <span className="app-nav-label">{t(labelKey)}</span>
-                </Link>
-              );
-            })}
+                  return (
+                    <Link
+                      key={link.href}
+                      href={withPortalQuery(link.href, orgId, mobileMode)}
+                      prefetch={false}
+                      className={`app-nav-link ${active ? "active" : ""}`}
+                      aria-label={t(labelKey)}
+                    >
+                      <span
+                        className="app-nav-icon"
+                        role="img"
+                        aria-label={`${t(labelKey)} icon`}
+                      >
+                        {link.icon}
+                      </span>
+                      <span className="app-nav-label">{t(labelKey)}</span>
+                    </Link>
+                  );
+                })}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
     </nav>
   );
 }

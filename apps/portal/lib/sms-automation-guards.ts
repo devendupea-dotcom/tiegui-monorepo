@@ -1,4 +1,4 @@
-import type { ConversationStage, ConversationTimeframe } from "@prisma/client";
+import type { ConversationStage, ConversationTimeframe, MessageDirection, MessageType } from "@prisma/client";
 
 const MISSED_CALL_RESTART_COOLDOWN_MINUTES = 30;
 export const MIN_AUTOMATED_FOLLOW_UP_GAP_MINUTES = 90;
@@ -52,6 +52,13 @@ export type FollowUpStateSnapshot = {
 export type FollowUpStateCurrent = FollowUpStateSnapshot & {
   pausedUntil: Date | null;
   stoppedAt: Date | null;
+};
+
+export type GhostBusterMessageSnapshot = {
+  direction: MessageDirection;
+  type: MessageType;
+  createdAt: Date;
+  body?: string | null;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -252,6 +259,115 @@ export function getQueuedSmsSkipReason(input: {
 
   if (["HUMAN_TAKEOVER", "BOOKED", "CLOSED"].includes(input.conversationState.stage)) {
     return `Skipped automation because the conversation is in ${input.conversationState.stage}.`;
+  }
+
+  return null;
+}
+
+export function getGhostBusterSkipReason(input: {
+  leadStatus: string;
+  lastInboundAt: Date | null;
+  messages: readonly GhostBusterMessageSnapshot[];
+  conversationState: DispatchConversationSnapshot | null;
+  now: Date;
+}): string | null {
+  if (input.leadStatus === "DNC") {
+    return "Lead is opted out (DNC/STOP).";
+  }
+
+  if (!input.lastInboundAt) {
+    return "Skipped ghost nudge because the lead has no latest inbound message.";
+  }
+
+  if (input.conversationState?.stoppedAt) {
+    return "Skipped ghost nudge because the conversation is stopped.";
+  }
+
+  if (input.conversationState?.pausedUntil && input.conversationState.pausedUntil.getTime() > input.now.getTime()) {
+    return "Skipped ghost nudge because the conversation is paused for human follow-up.";
+  }
+
+  if (input.conversationState && ["HUMAN_TAKEOVER", "BOOKED", "CLOSED"].includes(input.conversationState.stage)) {
+    return `Skipped ghost nudge because the conversation is in ${input.conversationState.stage}.`;
+  }
+
+  const latestInboundAt = input.lastInboundAt.getTime();
+  const messagesAfterLatestInbound = input.messages.filter((message) => message.createdAt.getTime() >= latestInboundAt);
+  const latestManualOutbound = messagesAfterLatestInbound
+    .filter((message) => message.direction === "OUTBOUND" && message.type === "MANUAL")
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0];
+
+  if (!latestManualOutbound) {
+    const hasAutomationOnlyResponse = messagesAfterLatestInbound.some(
+      (message) => message.direction === "OUTBOUND" && message.type !== "MANUAL",
+    );
+
+    return hasAutomationOnlyResponse
+      ? "Skipped ghost nudge because the latest inbound request has only automated replies."
+      : "Skipped ghost nudge because the latest inbound request has not received a human reply.";
+  }
+
+  const newerInboundAfterManualReply = messagesAfterLatestInbound.some(
+    (message) =>
+      message.direction === "INBOUND" && message.createdAt.getTime() > latestManualOutbound.createdAt.getTime(),
+  );
+
+  if (newerInboundAfterManualReply) {
+    return "Skipped ghost nudge because the customer replied after the latest human response.";
+  }
+
+  return null;
+}
+
+function isHumanReviewAckBody(body: string | null | undefined): boolean {
+  const normalized = `${body || ""}`.toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /\b(someone|office|team|estimator|owner|manager|cesar)\b.{0,80}\b(follow up|contact|call|get back|review)\b/.test(
+    normalized,
+  ) ||
+    /\b(i['’]?ll|we['’]?ll)\b.{0,80}\b(review|get back|follow up|contact|call)\b/.test(normalized) ||
+    /\b(follow up shortly|contact you shortly|call you shortly|get back to you)\b/.test(normalized);
+}
+
+export function getConversationalFollowUpSkipReason(input: {
+  leadStatus: string;
+  lastInboundAt: Date | null;
+  messages: readonly GhostBusterMessageSnapshot[];
+  conversationState: DispatchConversationSnapshot | null;
+  now: Date;
+}): string | null {
+  const baseSkip = getQueuedSmsSkipReason({
+    jobCreatedAt: new Date(0),
+    leadStatus: input.leadStatus,
+    leadLastInboundAt: null,
+    messageType: "AUTOMATION",
+    conversationState: input.conversationState,
+    now: input.now,
+  });
+  if (baseSkip) {
+    return baseSkip.replace("Skipped automation", "Skipped conversational follow-up");
+  }
+
+  const latestInboundAt = input.lastInboundAt?.getTime() ?? 0;
+  const latestOutboundAfterInbound = input.messages
+    .filter((message) => message.direction === "OUTBOUND" && message.createdAt.getTime() >= latestInboundAt)
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0];
+
+  if (!latestOutboundAfterInbound) {
+    return input.lastInboundAt
+      ? "Skipped conversational follow-up because the latest customer message is waiting on a reply."
+      : "Skipped conversational follow-up because there is no outbound prompt to follow up on.";
+  }
+
+  if (latestOutboundAfterInbound.type === "MANUAL") {
+    return "Skipped conversational follow-up because a human already replied after the latest customer message.";
+  }
+
+  if (isHumanReviewAckBody(latestOutboundAfterInbound.body)) {
+    return "Skipped conversational follow-up because the latest automated reply promised human review.";
   }
 
   return null;

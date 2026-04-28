@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildSmsComplianceReply,
+  ensureAutomatedSmsCompliance,
   ensureSmsA2POpenerDisclosure,
   ensureSmsOptOutHint,
   parseSmsComplianceKeyword,
@@ -21,6 +22,43 @@ test("ensureSmsOptOutHint does not duplicate the opt-out instruction when it alr
 test("ensureSmsOptOutHint uses the Spanish opt-out instruction when the locale is Spanish", () => {
   const body = ensureSmsOptOutHint("Hola, habla Acme Roofing. Perdón que perdimos tu llamada.", "ES");
   assert.match(body, /Responde STOP para dejar de recibir mensajes\.$/);
+});
+
+test("ensureAutomatedSmsCompliance appends opt-out language to AI and system messages", () => {
+  const aiBody = ensureAutomatedSmsCompliance({
+    body: "Thanks, can you send the project address?",
+    locale: "EN",
+    messageType: "AUTOMATION",
+  });
+  const nudgeBody = ensureAutomatedSmsCompliance({
+    body: "Following up from Acme Roofing.",
+    locale: "EN",
+    messageType: "SYSTEM_NUDGE",
+  });
+
+  assert.match(aiBody, /Reply STOP to opt out\.$/);
+  assert.match(nudgeBody, /Reply STOP to opt out\.$/);
+});
+
+test("ensureAutomatedSmsCompliance leaves manual operator texts unchanged", () => {
+  const body = ensureAutomatedSmsCompliance({
+    body: "I can come by Thursday afternoon.",
+    locale: "EN",
+    messageType: "MANUAL",
+  });
+
+  assert.equal(body, "I can come by Thursday afternoon.");
+});
+
+test("ensureAutomatedSmsCompliance does not duplicate existing A2P disclosure", () => {
+  const opener = ensureSmsA2POpenerDisclosure("Acme Roofing missed your call.", "EN");
+  const body = ensureAutomatedSmsCompliance({
+    body: opener,
+    locale: "EN",
+    messageType: "AUTOMATION",
+  });
+
+  assert.equal(body, opener);
 });
 
 test("ensureSmsA2POpenerDisclosure appends the opener-only disclosure for English funnels", () => {

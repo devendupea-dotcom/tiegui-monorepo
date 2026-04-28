@@ -9,6 +9,7 @@ const START_KEYWORDS = new Set(["START", "UNSTOP"]);
 const HELP_KEYWORDS = new Set(["HELP"]);
 
 export type SmsComplianceKeyword = "STOP" | "START" | "HELP";
+export type SmsComplianceMessageType = "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -52,6 +53,19 @@ export function ensureSmsOptOutHint(body: string, locale: ResolvedMessageLocale)
   }
 
   return `${trimmed}\n\n${getSmsOptOutHint(locale)}`;
+}
+
+export function ensureAutomatedSmsCompliance(input: {
+  body: string;
+  locale: ResolvedMessageLocale;
+  messageType: SmsComplianceMessageType;
+}): string {
+  const trimmed = input.body.trim();
+  if (input.messageType === "MANUAL") {
+    return trimmed;
+  }
+
+  return ensureSmsOptOutHint(trimmed, input.locale);
 }
 
 export function getSmsA2POpenerDisclosure(variant: "EN" | "BILINGUAL"): string {

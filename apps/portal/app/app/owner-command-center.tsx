@@ -126,6 +126,7 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
     summaryWeek,
     newestLeads,
     upcomingJobs,
+    reviewLeads,
     organization,
     collectionReportRows,
     recentFailedCollectionAttempts,
@@ -172,6 +173,43 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
             contactName: true,
             businessName: true,
             phoneE164: true,
+          },
+        },
+      },
+    }),
+    prisma.leadConversationState.findMany({
+      where: {
+        orgId: scope.orgId,
+        stage: "HUMAN_TAKEOVER",
+        stoppedAt: null,
+      },
+      orderBy: [{ updatedAt: "desc" }],
+      take: 5,
+      select: {
+        id: true,
+        updatedAt: true,
+        workSummary: true,
+        lastInboundAt: true,
+        lead: {
+          select: {
+            id: true,
+            contactName: true,
+            businessName: true,
+            phoneE164: true,
+            city: true,
+            messages: {
+              where: {
+                direction: "INBOUND",
+              },
+              orderBy: {
+                createdAt: "desc",
+              },
+              take: 1,
+              select: {
+                body: true,
+                createdAt: true,
+              },
+            },
           },
         },
       },
@@ -262,6 +300,7 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
     summaryMonth.systemHealth.calendar === "CONNECTED" &&
     summaryMonth.systemHealth.integrations === "CONFIGURED";
   const missedCallRecoveryCount = summaryWeek.missedCallsRecoveredCount || 0;
+  const reviewQueueCount = reviewLeads.length;
   const todayLabel = formatDateTimeForDisplay(now, {
     weekday: "long",
     month: "long",
@@ -302,6 +341,41 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
       <section className="dashboard-main-grid">
         <div className="dashboard-stack">
           <WorkflowGuidanceCard orgId={scope.orgId} internalUser={scope.internalUser} />
+
+          {reviewQueueCount > 0 ? (
+            <PanelCard
+              eyebrow={t("dashboard.owner.reviewQueue.eyebrow")}
+              title={t("dashboard.owner.reviewQueue.title", { count: reviewQueueCount })}
+              subtitle={t("dashboard.owner.reviewQueue.subtitle")}
+              actionHref={inboxHref}
+              actionLabel={t("dashboard.owner.reviewQueue.action")}
+            >
+              <ul className="dashboard-list">
+                {reviewLeads.map((state) => {
+                  const lead = state.lead;
+                  const leadLabel = lead.contactName || lead.businessName || lead.phoneE164;
+                  const latestInbound = lead.messages[0] || null;
+                  return (
+                    <li key={state.id} className="dashboard-list-row">
+                      <div className="dashboard-list-primary">
+                        <Link className="dashboard-list-link" href={withOrgQuery(`/app/jobs/${lead.id}?tab=messages`, scope.orgId, scope.internalUser)}>
+                          {leadLabel}
+                        </Link>
+                        <div className="dashboard-list-meta">
+                          <StatusPill tone="warn">{t("dashboard.owner.reviewQueue.status")}</StatusPill>
+                          <span>{state.workSummary || lead.city || lead.phoneE164}</span>
+                          <span>{latestInbound?.body || t("dashboard.owner.reviewQueue.noPreview")}</span>
+                        </div>
+                      </div>
+                      <span className="dashboard-list-time">
+                        {formatDateLabel(latestInbound?.createdAt || state.lastInboundAt || state.updatedAt, locale)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </PanelCard>
+          ) : null}
 
           <PanelCard
             eyebrow={t("dashboard.owner.leadEngine.eyebrow")}

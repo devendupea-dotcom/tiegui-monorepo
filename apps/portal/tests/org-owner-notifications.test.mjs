@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOwnerBookingNotificationSms,
+  buildOwnerLeadReviewNotificationSms,
   formatOwnerReminderLeadTime,
   selectOrgDispatchNotificationCandidate,
 } from "../lib/org-owner-notification-core.ts";
@@ -47,6 +48,34 @@ test("owner booking reminder SMS calls out estimate reminders", () => {
     /Reminder - estimate for Pat Doe starts in about 2 hours/,
   );
   assert.match(message, /123 Main St\./);
+});
+
+test("owner lead review notification SMS explains the paused conversation", () => {
+  const message = buildOwnerLeadReviewNotificationSms({
+    orgName: "Velocity Landscapes",
+    customerName: "Cindy",
+    phoneE164: "+12535550123",
+    reason: "Customer waiting on reply",
+    inboundBody: "Hi I am working on a landscaping project in need of a quote. Do you have any availability?",
+  });
+
+  assert.match(message, /^Velocity Landscapes: Review needed for Cindy\./);
+  assert.match(message, /Customer waiting on reply\./);
+  assert.match(message, /Latest: "/);
+  assert.match(message, /Open TieGui Inbox to reply\.$/);
+});
+
+test("owner lead review notification SMS truncates long inbound context", () => {
+  const message = buildOwnerLeadReviewNotificationSms({
+    orgName: "Velocity Landscapes",
+    phoneE164: "+12535550123",
+    reason: "Automation promised human review",
+    inboundBody: "x".repeat(200),
+  });
+
+  assert.match(message, /Review needed for \+12535550123/);
+  assert.match(message, /\.\.\."/);
+  assert.ok(message.length < 260);
 });
 
 test("dispatch owner notification candidate prefers scheduled and rescheduled scheduling moments", () => {

@@ -59,6 +59,12 @@ test("human routing catches pricing and custom questions without blocking normal
   assert.equal(shouldRouteInboundSmsToHuman("Can someone call me?"), true);
   assert.equal(shouldRouteInboundSmsToHuman("How much would this cost?"), true);
   assert.equal(shouldRouteInboundSmsToHuman("Are you licensed and insured?"), true);
+  assert.equal(
+    shouldRouteInboundSmsToHuman(
+      "Cesar, neither your price nor your schedule works for me. Can you work this week at a reasonable price?",
+    ),
+    true,
+  );
   assert.equal(shouldRouteInboundSmsToHuman("Fence repair in Pasadena"), false);
   assert.equal(shouldRouteInboundSmsToHuman("Can you do fence repair in Pasadena?"), false);
 });

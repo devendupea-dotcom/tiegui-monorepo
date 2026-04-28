@@ -10,7 +10,7 @@ import {
 import { formatCallbackTime } from "./intake-time";
 import { prisma } from "./prisma";
 import { pickLocalizedTemplate, resolveMessageLocale } from "./message-language";
-import { ensureSmsA2POpenerDisclosure } from "./sms-compliance";
+import { ensureAutomatedSmsCompliance, ensureSmsA2POpenerDisclosure } from "./sms-compliance";
 import { sendOutboundSms } from "./sms";
 import { queueSmsDispatch } from "./sms-dispatch-queue";
 import { listWorkspaceUsers, sortWorkspaceUsersByCalendarRoleThenLabel } from "./workspace-users";
@@ -110,6 +110,7 @@ async function sendAutomationMessage({
     select: {
       id: true,
       status: true,
+      preferredLanguage: true,
       customerId: true,
       conversationState: {
         select: {
@@ -123,11 +124,20 @@ async function sendAutomationMessage({
     return;
   }
 
+  const compliantBody = ensureAutomatedSmsCompliance({
+    body,
+    locale: resolveMessageLocale({
+      organizationLanguage: organization.messageLanguage,
+      leadPreferredLanguage: lead.preferredLanguage,
+    }),
+    messageType: "AUTOMATION",
+  });
+
   const smsResult = await sendOutboundSms({
     orgId: organization.id,
     fromNumberE164: organization.smsFromNumberE164,
     toNumberE164,
-    body,
+    body: compliantBody,
   });
   if (smsResult.suppressed) {
     return;
@@ -147,7 +157,7 @@ async function sendAutomationMessage({
         type: "AUTOMATION",
         fromNumberE164: resolvedFromNumber,
         toNumberE164,
-        body,
+        body: compliantBody,
         provider: "TWILIO",
         providerMessageSid: smsResult.providerMessageSid,
         status: smsResult.status,
@@ -164,7 +174,7 @@ async function sendAutomationMessage({
       contactId: lead.customerId,
       conversationId: lead.conversationState?.id || null,
       messageId: message.id,
-      body,
+      body: compliantBody,
       fromNumberE164: resolvedFromNumber,
       toNumberE164,
       providerMessageSid: smsResult.providerMessageSid,

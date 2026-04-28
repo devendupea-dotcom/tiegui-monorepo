@@ -4,8 +4,12 @@ import { ensureTimeZone, getLocalMinutesInDay } from "@/lib/calendar/dates";
 import { isValidCronSecret } from "@/lib/cron-auth";
 import { normalizeEnvValue } from "@/lib/env";
 import { containsLegacyTemplatePollution } from "@/lib/inbox-message-display";
+import { resolveMessageLocale } from "@/lib/message-language";
+import { maybeSendOwnerLeadReviewNotification } from "@/lib/org-owner-notifications";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
+import { ensureAutomatedSmsCompliance } from "@/lib/sms-compliance";
+import { getGhostBusterSkipReason } from "@/lib/sms-automation-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +88,7 @@ async function handleGhostBusterCron(req: Request) {
   let totalFailures = 0;
   let totalSkippedQuietHours = 0;
   let totalSkippedNoNumber = 0;
+  let totalSkippedNeedsHumanReply = 0;
 
   try {
     const organizations = await prisma.organization.findMany({
@@ -93,6 +98,7 @@ async function handleGhostBusterCron(req: Request) {
       select: {
         id: true,
         name: true,
+        messageLanguage: true,
         smsFromNumberE164: true,
         ghostBustingQuietHoursStart: true,
         ghostBustingQuietHoursEnd: true,
@@ -120,6 +126,7 @@ async function handleGhostBusterCron(req: Request) {
       failures: number;
       skippedQuietHours: number;
       skippedNoNumber: number;
+      skippedNeedsHumanReply: number;
       candidates: number;
     }> = [];
 
@@ -131,6 +138,7 @@ async function handleGhostBusterCron(req: Request) {
       let failures = 0;
       let skippedQuietHours = 0;
       let skippedNoNumber = 0;
+      let skippedNeedsHumanReply = 0;
 
       const senderNumber = org.twilioConfig?.phoneNumber || org.smsFromNumberE164;
 
@@ -143,6 +151,7 @@ async function handleGhostBusterCron(req: Request) {
           failures,
           skippedQuietHours,
           skippedNoNumber,
+          skippedNeedsHumanReply,
           candidates: 0,
         });
         totalSkippedNoNumber += skippedNoNumber;
@@ -165,6 +174,7 @@ async function handleGhostBusterCron(req: Request) {
           failures,
           skippedQuietHours,
           skippedNoNumber,
+          skippedNeedsHumanReply,
           candidates: 0,
         });
         totalSkippedQuietHours += skippedQuietHours;
@@ -194,9 +204,29 @@ async function handleGhostBusterCron(req: Request) {
           contactName: true,
           businessName: true,
           phoneE164: true,
+          preferredLanguage: true,
           status: true,
           ghostNudgeCount: true,
           lastGhostNudgeAt: true,
+          lastInboundAt: true,
+          messages: {
+            orderBy: { createdAt: "desc" },
+            take: 10,
+            select: {
+              direction: true,
+              type: true,
+              createdAt: true,
+              body: true,
+            },
+          },
+          conversationState: {
+            select: {
+              id: true,
+              stage: true,
+              pausedUntil: true,
+              stoppedAt: true,
+            },
+          },
         },
         orderBy: [{ lastInboundAt: "asc" }, { updatedAt: "asc" }],
         take: 200,
@@ -209,10 +239,37 @@ async function handleGhostBusterCron(req: Request) {
           continue;
         }
 
-        const nudgeBody = buildNudgeMessage(
-          org.ghostBustingTemplateText,
-          lead.contactName || lead.businessName || null,
-        );
+        const ghostSkipReason = getGhostBusterSkipReason({
+          leadStatus: lead.status,
+          lastInboundAt: lead.lastInboundAt,
+          messages: lead.messages,
+          conversationState: lead.conversationState,
+          now: new Date(),
+        });
+        if (ghostSkipReason) {
+          skippedNeedsHumanReply += 1;
+          if (/automated replies|human reply/i.test(ghostSkipReason)) {
+            await maybeSendOwnerLeadReviewNotification({
+              orgId: org.id,
+              leadId: lead.id,
+              conversationStateId: lead.conversationState?.id || null,
+              reason: "Customer waiting on reply",
+            });
+          }
+          continue;
+        }
+
+        const nudgeBody = ensureAutomatedSmsCompliance({
+          body: buildNudgeMessage(
+            org.ghostBustingTemplateText,
+            lead.contactName || lead.businessName || null,
+          ),
+          locale: resolveMessageLocale({
+            organizationLanguage: org.messageLanguage,
+            leadPreferredLanguage: lead.preferredLanguage,
+          }),
+          messageType: "SYSTEM_NUDGE",
+        });
         const now = new Date();
         const providerResult = await sendOutboundSms({
           orgId: org.id,
@@ -282,6 +339,7 @@ async function handleGhostBusterCron(req: Request) {
       totalFailures += failures;
       totalSkippedQuietHours += skippedQuietHours;
       totalSkippedNoNumber += skippedNoNumber;
+      totalSkippedNeedsHumanReply += skippedNeedsHumanReply;
 
       orgResults.push({
         orgId: org.id,
@@ -290,6 +348,7 @@ async function handleGhostBusterCron(req: Request) {
         failures,
         skippedQuietHours,
         skippedNoNumber,
+        skippedNeedsHumanReply,
         candidates: leads.length,
       });
     }
@@ -308,6 +367,7 @@ async function handleGhostBusterCron(req: Request) {
           failures: totalFailures,
           skippedQuietHours: totalSkippedQuietHours,
           skippedNoNumber: totalSkippedNoNumber,
+          skippedNeedsHumanReply: totalSkippedNeedsHumanReply,
           orgCount: organizations.length,
           orgResults,
         },
@@ -321,6 +381,7 @@ async function handleGhostBusterCron(req: Request) {
       failures: totalFailures,
       skippedQuietHours: totalSkippedQuietHours,
       skippedNoNumber: totalSkippedNoNumber,
+      skippedNeedsHumanReply: totalSkippedNeedsHumanReply,
       orgCount: organizations.length,
       orgResults,
     });
@@ -341,6 +402,7 @@ async function handleGhostBusterCron(req: Request) {
           failures: totalFailures,
           skippedQuietHours: totalSkippedQuietHours,
           skippedNoNumber: totalSkippedNoNumber,
+          skippedNeedsHumanReply: totalSkippedNeedsHumanReply,
         },
       },
     });

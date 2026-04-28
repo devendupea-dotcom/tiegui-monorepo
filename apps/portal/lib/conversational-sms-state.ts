@@ -13,6 +13,8 @@ import {
   type ConversationLead,
   type ConversationOrgConfig,
 } from "@/lib/conversational-sms-core";
+import { resolveMessageLocale } from "@/lib/message-language";
+import { ensureAutomatedSmsCompliance } from "@/lib/sms-compliance";
 import { normalizeCustomTemplates } from "@/lib/conversational-sms-templates";
 
 const HUMANIZED_REPLY_DELAY_MINUTES = 2;
@@ -198,7 +200,15 @@ export async function sendConversationMessage(input: {
     return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Lead is opted out." };
   }
 
-  const text = sanitizeMessageBody(input.body);
+  const compliantBody = ensureAutomatedSmsCompliance({
+    body: input.body,
+    locale: resolveMessageLocale({
+      organizationLanguage: input.organization.messageLanguage,
+      leadPreferredLanguage: input.lead.preferredLanguage,
+    }),
+    messageType: input.messageType,
+  });
+  const text = sanitizeMessageBody(compliantBody);
   if (!text) {
     return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Message body is empty." };
   }
@@ -314,7 +324,15 @@ export async function queueConversationReply(input: {
     return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Lead is opted out." };
   }
 
-  const text = sanitizeMessageBody(input.body);
+  const compliantBody = ensureAutomatedSmsCompliance({
+    body: input.body,
+    locale: resolveMessageLocale({
+      organizationLanguage: input.organization.messageLanguage,
+      leadPreferredLanguage: input.lead.preferredLanguage,
+    }),
+    messageType: input.messageType,
+  });
+  const text = sanitizeMessageBody(compliantBody);
   if (!text) {
     return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Message body is empty." };
   }
@@ -486,6 +504,7 @@ export async function getLiveConversationFollowUpState(stateId: string) {
         select: {
           id: true,
           orgId: true,
+          customerId: true,
           phoneE164: true,
           status: true,
           preferredLanguage: true,
@@ -493,6 +512,16 @@ export async function getLiveConversationFollowUpState(stateId: string) {
           contactName: true,
           lastOutboundAt: true,
           nextFollowUpAt: true,
+          messages: {
+            orderBy: { createdAt: "desc" },
+            take: 10,
+            select: {
+              direction: true,
+              type: true,
+              createdAt: true,
+              body: true,
+            },
+          },
         },
       },
     },

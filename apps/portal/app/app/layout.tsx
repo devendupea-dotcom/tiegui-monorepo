@@ -42,6 +42,13 @@ export default async function ClientPortalLayout({
       defaultOrgId = await resolveActorOrgId({ actor });
       calendarAccessRole = actor.calendarAccessRole;
     } catch (error) {
+      if (error instanceof AppApiError && error.status === 400) {
+        const [firstOrg] = actor.accessibleOrgs;
+        if (firstOrg) {
+          defaultOrgId = firstOrg.orgId;
+          calendarAccessRole = firstOrg.effectiveOrgRole;
+        }
+      }
       if (!(error instanceof AppApiError) || (error.status !== 400 && error.status !== 404)) {
         console.error("ClientPortalLayout failed to resolve active workspace context.", error);
       }
@@ -97,7 +104,12 @@ export default async function ClientPortalLayout({
             <p className="portal-brand-sub">{t("portalLayout.brandDescription")}</p>
           </div>
 
-          <ClientPortalNav calendarAccessRole={calendarAccessRole} portalVertical={portalVertical} />
+          <ClientPortalNav
+            calendarAccessRole={calendarAccessRole}
+            defaultOrgId={defaultOrgId}
+            internalUser={internalUser}
+            portalVertical={portalVertical}
+          />
 
           <section className="portal-profile">
             <p className="portal-profile-label">{t("portalLayout.signedInAs")}</p>
