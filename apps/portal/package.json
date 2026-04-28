@@ -16,6 +16,7 @@
     "backfill:event-job-links": "node --import tsx scripts/backfill-event-job-links.ts",
     "backfill:invoice-source-jobs": "node --import tsx scripts/backfill-invoice-source-jobs.ts",
     "backfill:lead-customers": "node --import tsx scripts/backfill-lead-customers.ts",
+    "backfill:sms-consent": "node --import tsx scripts/backfill-sms-consent-from-legacy-dnc.ts",
     "backfill:tenant-access": "node --import tsx scripts/backfill-tenant-access.ts",
     "diagnose:communication-integrity": "node --import tsx scripts/repair-communication-integrity.ts",
     "diagnose:estimate-job-links": "node --import tsx scripts/diagnose-estimate-job-links.ts",

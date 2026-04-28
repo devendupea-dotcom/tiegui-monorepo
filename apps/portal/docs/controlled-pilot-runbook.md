@@ -138,7 +138,37 @@ Expected blocked-send behavior:
 - no fake sent/delivered communication event is created
 - queued automation for that lead remains blocked or canceled
 
-If a customer replies `STOP`, verify the lead moves to DNC/STOP state and future outbound SMS is blocked until a valid opt-in path is completed.
+If a customer replies `STOP`, verify SMS consent moves to `OPTED_OUT` and future outbound SMS is blocked until a valid opt-in path is completed.
+
+## SMS Consent Model
+
+SMS consent is tracked by organization and phone number in `SmsConsent`. This is separate from sales pipeline status so a lead can stay qualified, booked, or active while SMS consent is opted out.
+
+Expected behavior:
+
+- `STOP` records `SmsConsent.status = OPTED_OUT`, source `TWILIO_STOP`, the keyword, and a safe short body preview.
+- `START` or `UNSTOP` records `SmsConsent.status = OPTED_IN`, source `TWILIO_START`, and does not force the lead into a sales pipeline stage.
+- `HELP` does not change consent.
+- Outbound manual and automated SMS checks `SmsConsent` first.
+- Existing `Lead.status = DNC` still blocks outbound SMS as a legacy fallback unless the phone has an explicit `OPTED_IN` consent record.
+- Consent is scoped to `orgId + phoneE164`, so the same phone number can have different consent state in different organizations.
+
+Before texting, operators should check the lead SMS debug page for:
+
+- SMS consent status
+- consent source
+- last STOP/START keyword
+- last updated time
+- whether the legacy DNC fallback is still active
+
+To backfill existing legacy DNC leads after the migration:
+
+1. Preview the work:
+   `npm run backfill:sms-consent --workspace=portal -- --dry-run`
+2. Apply the backfill:
+   `npm run backfill:sms-consent --workspace=portal`
+
+The backfill is idempotent and creates at most one consent record per organization and phone number. It skips explicit `OPTED_IN` records.
 
 ## Twilio 30006 / Unreachable Number
 

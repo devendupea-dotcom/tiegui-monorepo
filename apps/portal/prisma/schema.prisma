@@ -166,6 +166,7 @@ model Organization {
   twilioConfig                  OrganizationTwilioConfig?
   twilioConfigAuditLogs         TwilioConfigAuditLog[]
   blockedCallers                BlockedCaller[]
+  smsConsents                   SmsConsent[]
   customerPortalAccounts        CustomerPortalAccount[]
   websiteLeadSources            WebsiteLeadSource[]
   websiteLeadSubmissionReceipts WebsiteLeadSubmissionReceipt[]
@@ -416,6 +417,7 @@ model Lead {
   conversationState    LeadConversationState?
   conversationAudits   LeadConversationAuditEvent[]
   blockedCallerEntries BlockedCaller[]              @relation("BlockedCallerSourceLead")
+  smsConsents          SmsConsent[]
   buyerProject         BuyerProject?
   contractProjects     ContractProject[]
 
@@ -452,6 +454,34 @@ model BlockedCaller {
   @@index([orgId, createdAt])
   @@index([sourceLeadId])
   @@index([createdByUserId, createdAt])
+}
+
+model SmsConsent {
+  id                     String           @id @default(uuid())
+  orgId                  String
+  phoneE164              String
+  customerId             String?
+  leadId                 String?
+  status                 SmsConsentStatus @default(UNKNOWN)
+  source                 SmsConsentSource @default(SYSTEM)
+  lastKeyword            String?
+  lastMessageBodyPreview String?
+  optedOutAt             DateTime?
+  optedInAt              DateTime?
+  lastUpdatedAt          DateTime         @default(now())
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  metadataJson           Json?
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  lead     Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, phoneE164])
+  @@index([orgId, status])
+  @@index([leadId])
+  @@index([customerId])
+  @@index([orgId, updatedAt])
 }
 
 model SmsDispatchQueue {
@@ -499,6 +529,7 @@ model Customer {
   jobs                  Job[]
   recurringServicePlans RecurringServicePlan[]
   portalAccount         CustomerPortalAccount?
+  smsConsents           SmsConsent[]
   buyerProjects         BuyerProject[]
   contractProjects      ContractProject[]
 
@@ -2590,6 +2621,20 @@ enum MessageType {
 
 enum MessageProvider {
   TWILIO
+}
+
+enum SmsConsentStatus {
+  OPTED_IN
+  OPTED_OUT
+  UNKNOWN
+}
+
+enum SmsConsentSource {
+  TWILIO_STOP
+  TWILIO_START
+  MANUAL
+  LEGACY_DNC_BACKFILL
+  SYSTEM
 }
 
 enum MessageStatus {

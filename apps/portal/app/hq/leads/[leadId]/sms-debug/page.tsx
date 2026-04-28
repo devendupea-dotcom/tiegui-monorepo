@@ -103,7 +103,7 @@ export default async function LeadSmsDebugPage(props: RouteProps) {
     ),
   ];
 
-  const [receipts, callbackEvents] = await Promise.all([
+  const [receipts, callbackEvents, smsConsent] = await Promise.all([
     receiptKeys.length
       ? prisma.clientMutationReceipt.findMany({
           where: {
@@ -151,6 +151,23 @@ export default async function LeadSmsDebugPage(props: RouteProps) {
           },
         })
       : Promise.resolve([]),
+    lead.phoneE164
+      ? prisma.smsConsent.findUnique({
+          where: {
+            orgId_phoneE164: {
+              orgId: lead.orgId,
+              phoneE164: lead.phoneE164,
+            },
+          },
+          select: {
+            id: true,
+            status: true,
+            source: true,
+            lastKeyword: true,
+            lastUpdatedAt: true,
+          },
+        })
+      : Promise.resolve(null),
   ]);
 
   const bundle = buildLeadSmsDebugBundle({
@@ -165,6 +182,7 @@ export default async function LeadSmsDebugPage(props: RouteProps) {
       lastInboundAt: lead.lastInboundAt,
       lastOutboundAt: lead.lastOutboundAt,
     },
+    smsConsent,
     messages,
     communicationEvents,
     receipts,
@@ -216,6 +234,26 @@ export default async function LeadSmsDebugPage(props: RouteProps) {
           ) : (
             <p>{statusBadge("SMS allowed by lead status", true)}</p>
           )}
+        </article>
+        <article className="card kpi-card">
+          <h2>SMS Consent</h2>
+          <p>{bundle.smsConsent.status}</p>
+          <p className="muted">{bundle.smsConsent.operatorLabel}</p>
+          {bundle.smsConsent.legacyDncFallbackActive ? (
+            <p>{statusBadge("Legacy DNC fallback active")}</p>
+          ) : null}
+        </article>
+        <article className="card kpi-card">
+          <h2>Consent Source</h2>
+          <p>{bundle.smsConsent.source}</p>
+          <p className="muted">
+            {bundle.smsConsent.lastKeyword
+              ? `Keyword: ${bundle.smsConsent.lastKeyword}`
+              : "No keyword recorded"}
+          </p>
+          <p className="muted">
+            Updated: {formatDate(bundle.smsConsent.lastUpdatedAt)}
+          </p>
         </article>
         <article className="card kpi-card">
           <h2>Latest Inbound</h2>

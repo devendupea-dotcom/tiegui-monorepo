@@ -218,6 +218,13 @@ test("lead debug bundle includes relevant rows without raw secrets or full PII",
 test("DNC and STOP state are surfaced in lead diagnostics", () => {
   const bundle = buildLeadSmsDebugBundle({
     lead: { ...BASE_LEAD, status: "DNC" },
+    smsConsent: {
+      id: "consent_1",
+      status: "OPTED_OUT",
+      source: "TWILIO_STOP",
+      lastKeyword: "STOP",
+      lastUpdatedAt: new Date("2026-04-28T10:00:00.000Z"),
+    },
     messages: [],
     communicationEvents: [
       {
@@ -236,7 +243,34 @@ test("DNC and STOP state are surfaced in lead diagnostics", () => {
   });
 
   assert.equal(bundle.lead.dncBlocked, true);
+  assert.equal(bundle.smsConsent.status, "OPTED_OUT");
+  assert.equal(bundle.smsConsent.source, "TWILIO_STOP");
+  assert.equal(bundle.smsConsent.operatorLabel, "SMS opted out");
   assert.equal(bundle.complianceEvents.length, 1);
   assert.equal(bundle.complianceEvents[0].complianceKeyword, "STOP");
   assert.match(bundle.debugSummary, /DNC\/STOP blocked/);
+  assert.match(bundle.debugSummary, /SMS consent: OPTED_OUT/);
+});
+
+test("lead diagnostics show explicit opt-in separately from legacy DNC fallback", () => {
+  const bundle = buildLeadSmsDebugBundle({
+    lead: { ...BASE_LEAD, status: "DNC" },
+    smsConsent: {
+      id: "consent_2",
+      status: "OPTED_IN",
+      source: "TWILIO_START",
+      lastKeyword: "START",
+      lastUpdatedAt: new Date("2026-04-28T10:05:00.000Z"),
+    },
+    messages: [],
+    communicationEvents: [],
+    receipts: [],
+    callbackEvents: [],
+  });
+
+  assert.equal(bundle.lead.dncBlocked, false);
+  assert.equal(bundle.smsConsent.legacyDncFallbackActive, false);
+  assert.equal(bundle.smsConsent.operatorLabel, "SMS opted in");
+  assert.match(bundle.debugSummary, /SMS consent: OPTED_IN/);
+  assert.doesNotMatch(bundle.debugSummary, /legacy DNC fallback active/);
 });
