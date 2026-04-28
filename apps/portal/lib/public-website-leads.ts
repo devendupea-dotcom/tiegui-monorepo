@@ -25,6 +25,9 @@ const ALLOWED_PAYLOAD_KEYS = new Set([
   "timeline",
   "message",
   "smsOptIn",
+  "smsConsentText",
+  "smsConsentCapturedAt",
+  "smsConsentPageUrl",
   "listingSlug",
   "listingContext",
   "sourcePath",
@@ -70,6 +73,9 @@ export type NormalizedWebsiteLeadPayload = {
   pageTitle: string;
   attribution: Record<string, string>;
   smsOptIn: boolean;
+  smsConsentText: string;
+  smsConsentCapturedAt: string;
+  smsConsentPageUrl: string;
 };
 
 export type NormalizedWebsiteLeadListingContext = {
@@ -478,6 +484,20 @@ export function normalizeWebsiteLeadPayload(payload: unknown): Result<Normalized
   if (smsOptInValue !== undefined && smsOptInValue !== null && typeof smsOptInValue !== "boolean") {
     return { ok: false, status: 400, error: "smsOptIn must be a boolean.", code: "invalid_sms_opt_in" };
   }
+  const smsConsentText = readStringField(input, "smsConsentText", 1200);
+  if (!smsConsentText.ok) return smsConsentText;
+  const smsConsentCapturedAt = readStringField(input, "smsConsentCapturedAt", 80);
+  if (!smsConsentCapturedAt.ok) return smsConsentCapturedAt;
+  const smsConsentPageUrl = readStringField(input, "smsConsentPageUrl", 500);
+  if (!smsConsentPageUrl.ok) return smsConsentPageUrl;
+  if (smsOptInValue === true && smsConsentText.value.length < 40) {
+    return {
+      ok: false,
+      status: 400,
+      error: "smsConsentText is required when smsOptIn is true.",
+      code: "missing_sms_consent_text",
+    };
+  }
 
   return {
     ok: true,
@@ -496,6 +516,9 @@ export function normalizeWebsiteLeadPayload(payload: unknown): Result<Normalized
       pageTitle: pageTitle.value,
       attribution: attribution.value,
       smsOptIn: smsOptInValue === true,
+      smsConsentText: smsConsentText.value,
+      smsConsentCapturedAt: smsConsentCapturedAt.value,
+      smsConsentPageUrl: smsConsentPageUrl.value,
     },
   };
 }

@@ -43,6 +43,10 @@ function createPayload(label: string) {
     sourcePath: "/smoke",
     pageTitle: "Website Lead Smoke",
     smsOptIn: true,
+    smsConsentText:
+      "By checking this box, I agree to receive customer service and appointment text messages from the business. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. Mobile information will not be shared with third parties for marketing or promotional purposes.",
+    smsConsentCapturedAt: new Date().toISOString(),
+    smsConsentPageUrl: "https://example.com/smoke",
     attribution: {
       utm_source: "smoke",
       utm_medium: "test",

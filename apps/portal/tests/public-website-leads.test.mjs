@@ -163,6 +163,14 @@ test("website lead payload validation rejects malformed and abusive bodies", () 
     }).code,
     "unexpected_field",
   );
+  assert.equal(
+    normalizeWebsiteLeadPayload({
+      name: "Cesar",
+      phone: "+12065550100",
+      smsOptIn: true,
+    }).code,
+    "missing_sms_consent_text",
+  );
 });
 
 test("website lead payload ignores caller orgId and normalizes safe lead data", () => {
@@ -171,6 +179,11 @@ test("website lead payload ignores caller orgId and normalizes safe lead data", 
     name: " Cesar ",
     phone: "(206) 555-0100",
     email: "cesar@example.com",
+    smsOptIn: true,
+    smsConsentText:
+      "By checking this box, I agree to receive customer service and appointment text messages from the business. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help.",
+    smsConsentCapturedAt: "2026-04-28T12:00:00.000Z",
+    smsConsentPageUrl: "https://example.com/contact",
     attribution: {
       utm_source: "google",
     },
@@ -179,6 +192,8 @@ test("website lead payload ignores caller orgId and normalizes safe lead data", 
   assert.equal(result.ok, true);
   assert.equal(result.value.name, "Cesar");
   assert.equal(result.value.phoneE164, "+12065550100");
+  assert.equal(result.value.smsOptIn, true);
+  assert.match(result.value.smsConsentText, /Reply STOP/);
   assert.equal("orgId" in result.value, false);
 });
 

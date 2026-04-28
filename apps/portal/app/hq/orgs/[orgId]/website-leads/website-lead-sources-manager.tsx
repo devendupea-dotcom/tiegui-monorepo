@@ -52,6 +52,10 @@ function samplePayload() {
       sourcePath: "/contact",
       pageTitle: "Velocity Landscapes Contact",
       smsOptIn: true,
+      smsConsentText:
+        "By checking this box, I agree to receive customer service and appointment text messages from Velocity Landscapes at the phone number provided. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. Mobile information will not be shared with third parties for marketing or promotional purposes.",
+      smsConsentCapturedAt: new Date().toISOString(),
+      smsConsentPageUrl: "https://velocitylandscapes.com/contact",
       attribution: {
         utm_source: "google",
         utm_medium: "cpc",
@@ -458,6 +462,16 @@ export default function WebsiteLeadSourcesManager({
           Sign requests server-side only. The source secret must never ship in browser JavaScript.
         </p>
         <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
+          <div>
+            <h4>SMS consent copy for public forms</h4>
+            <p className="muted">
+              If the form sets <code>smsOptIn: true</code>, show this near the checkbox and send the exact text as
+              <code> smsConsentText</code>. Link the site&apos;s Privacy Policy and Terms near the checkbox.
+            </p>
+            <pre style={{ whiteSpace: "pre-wrap", overflowX: "auto" }}>
+              {`By checking this box, I agree to receive customer service and appointment text messages from ${orgName} at the phone number provided. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. Mobile information will not be shared with third parties for marketing or promotional purposes.`}
+            </pre>
+          </div>
           <div>
             <h4>Required headers</h4>
             <pre style={{ whiteSpace: "pre-wrap", overflowX: "auto" }}>{`Content-Type: application/json

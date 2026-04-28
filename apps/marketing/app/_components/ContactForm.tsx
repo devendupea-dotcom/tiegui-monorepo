@@ -67,6 +67,17 @@ export default function ContactForm() {
         <textarea id="contact-challenge" name="challenge" rows={5} required minLength={20} />
       </div>
 
+      <label className="contact-form__sms-consent" htmlFor="contact-sms-consent">
+        <input id="contact-sms-consent" name="smsConsent" type="checkbox" />
+        <span>
+          I agree to receive customer service and appointment text messages from TieGui Solutions at the
+          phone number provided. Message frequency varies. Message and data rates may apply. Reply STOP
+          to opt out or HELP for help. Mobile information will not be shared with third parties for
+          marketing or promotional purposes. See our <a href="/privacy">Privacy Policy</a> and{" "}
+          <a href="/terms">Terms</a>.
+        </span>
+      </label>
+
       <button className="tg-btn tg-btn--primary" type="submit">
         {formCopy.submitLabel}
       </button>

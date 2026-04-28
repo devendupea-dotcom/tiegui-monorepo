@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
-import { getFeaturedCaseStudies } from "../content/caseStudies";
 import { siteCopy } from "../content/siteCopy";
-import CaseStudyCard from "./_components/case-studies/CaseStudyCard";
 import SiteFooter from "./_components/SiteFooter";
 import SiteHeader from "./_components/SiteHeader";
 import Card from "./_components/ui/Card";
@@ -9,13 +7,12 @@ import Hero from "./_components/ui/Hero";
 import Section from "./_components/ui/Section";
 import ButtonLink from "./_components/ui/ButtonLink";
 
-const featuredCaseStudies = getFeaturedCaseStudies(3);
 const { home } = siteCopy;
 
 export const metadata: Metadata = {
-  title: "Revenue Infrastructure for Home Service Businesses",
+  title: "Call-to-Cash Contractor OS",
   description:
-    "TieGui installs connected systems for home service businesses: website, automation, CRM pipeline, and reporting tied to booked jobs.",
+    "TieGui helps contractors capture leads, reply fast, send estimates, schedule jobs, dispatch crews, and track invoices in one workspace.",
 };
 
 export default function HomePage() {
@@ -28,7 +25,11 @@ export default function HomePage() {
           <Hero
             eyebrow={home.hero.eyebrow}
             title={home.hero.title}
+            highlight={home.hero.highlight}
             subtitle={home.hero.subtitle}
+            supportLine={home.hero.supportLine}
+            chips={home.hero.chips}
+            showcase={home.hero.showcase}
             primaryCta={home.hero.primaryCta}
             secondaryCta={home.hero.secondaryCta}
           />
@@ -79,6 +80,84 @@ export default function HomePage() {
           </div>
         </Section>
 
+        <Section id="app-preview" variant="muted">
+          <div className="section-head">
+            <h2 className="tg-title">See what needs attention before it costs you money.</h2>
+            <p className="tg-muted">
+              TieGui shows the owner what needs a reply, what estimate is waiting, what job is ready to schedule, and what invoice still needs payment.
+            </p>
+          </div>
+
+          <div className="app-preview-board" aria-label="TieGui app preview">
+            <div className="app-preview-board__main">
+              <div className="app-preview-board__top">
+                <div>
+                  <p className="tg-eyebrow">Today&apos;s Work</p>
+                  <h3>Owner command center</h3>
+                </div>
+                <span>Live workspace</span>
+              </div>
+
+              <div className="attention-grid">
+                {[
+                  ["Needs Reply", "3", "Missed calls and open texts"],
+                  ["Estimates Waiting", "2", "Sent quotes needing follow-up"],
+                  ["Ready to Schedule", "5", "Approved work waiting for calendar"],
+                  ["Open Invoices", "$3,240", "Unpaid balances to chase"],
+                ].map(([label, value, detail]) => (
+                  <article key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                    <p>{detail}</p>
+                  </article>
+                ))}
+              </div>
+
+              <div className="preview-table">
+                <div className="preview-table__row preview-table__row--head">
+                  <span>Customer</span>
+                  <span>Status</span>
+                  <span>Next step</span>
+                </div>
+                {[
+                  ["M. Torres", "Estimate sent", "Follow up today"],
+                  ["Greenview HOA", "Approved", "Schedule crew"],
+                  ["R. Johnson", "Invoice unpaid", "Send reminder"],
+                ].map(([customer, status, next]) => (
+                  <div className="preview-table__row" key={customer}>
+                    <span>{customer}</span>
+                    <strong>{status}</strong>
+                    <span>{next}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <aside className="app-preview-side">
+              <h3>What the customer can see</h3>
+              <div>
+                <span>Estimate approval</span>
+                <strong>View, approve, or decline from a clean link</strong>
+              </div>
+              <div>
+                <span>Job updates</span>
+                <strong>Scheduled, on the way, completed</strong>
+              </div>
+              <div>
+                <span>Invoice link</span>
+                <strong className="warning-text">Unpaid · $860</strong>
+              </div>
+
+              <h3>Recent customer message</h3>
+              <p>“Can you send over the cleanup estimate again? We want to get on the schedule.”</p>
+              <div>
+                <span>Job photos / notes</span>
+                <strong>6 photos attached</strong>
+              </div>
+            </aside>
+          </div>
+        </Section>
+
         <Section id="process" variant="muted">
           <div className="section-head">
             <h2 className="tg-title">{home.process.title}</h2>
@@ -90,22 +169,6 @@ export default function HomePage() {
                 <h3>{step.title}</h3>
                 <p>{step.description}</p>
               </Card>
-            ))}
-          </div>
-        </Section>
-
-        <Section id="case-study-preview">
-          <div className="section-head section-head--split">
-            <div>
-              <h2 className="tg-title">{home.caseStudyPreview.title}</h2>
-              <p className="tg-muted">{home.caseStudyPreview.subtitle}</p>
-            </div>
-            <ButtonLink href={home.caseStudyPreview.cta.href} label={home.caseStudyPreview.cta.label} variant="secondary" />
-          </div>
-
-          <div className="case-grid">
-            {featuredCaseStudies.map((study) => (
-              <CaseStudyCard key={study.slug} study={study} />
             ))}
           </div>
         </Section>
@@ -136,20 +199,6 @@ export default function HomePage() {
             </Card>
           </div>
           <p className="tg-note">{home.offer.note}</p>
-        </Section>
-
-        <Section id="faq">
-          <div className="section-head">
-            <h2 className="tg-title">{home.faq.title}</h2>
-          </div>
-          <div className="faq-grid">
-            {home.faq.items.map((item) => (
-              <details className="faq-item" key={item.question}>
-                <summary>{item.question}</summary>
-                <p>{item.answer}</p>
-              </details>
-            ))}
-          </div>
         </Section>
 
         <Section variant="borderTop" className="final-cta">

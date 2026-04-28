@@ -23,6 +23,23 @@ type ProcessStep = {
   description: string;
 };
 
+type HeroStackItem = {
+  title: string;
+  detail: string;
+};
+
+type HeroShowcase = {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  stack: HeroStackItem[];
+  stats: Array<{
+    value: string;
+    label: string;
+  }>;
+  note: string;
+};
+
 type SystemPillar = {
   title: string;
   description: string;
@@ -52,7 +69,11 @@ export type SiteCopy = {
     hero: {
       eyebrow: string;
       title: string;
+      highlight?: string;
       subtitle: string;
+      supportLine?: string;
+      chips?: string[];
+      showcase?: HeroShowcase;
       primaryCta: CtaItem;
       secondaryCta: CtaItem;
     };
@@ -194,17 +215,17 @@ export type SiteCopy = {
 const founderPremiumCopy: SiteCopy = {
   seo: {
     siteName: "TieGui Solutions",
-    defaultTitle: "TieGui Solutions | Revenue Infrastructure for Home Service Businesses",
+    defaultTitle: "TieGui Solutions | Call-to-Cash Contractor OS",
     titleTemplate: "%s | TieGui Solutions",
     description:
-      "Revenue Infrastructure for Home Service Businesses: website, automation, CRM pipeline, tracking, and reporting for predictable booked jobs.",
+      "TieGui Solutions helps contractors capture leads, reply fast, send estimates, schedule jobs, dispatch crews, and track invoices in one workspace.",
     openGraphDescription:
-      "TieGui builds connected revenue infrastructure for serious home service operators. Clear systems, tight execution, measurable booked jobs.",
+      "Stop losing jobs after the phone rings. TieGui keeps leads, estimates, scheduling, dispatch, invoices, and follow-up in one contractor workspace.",
   },
   brand: {
     name: "TieGui Solutions",
     markAlt: "TieGui Solutions mark",
-    tagline: "Revenue Infrastructure for Home Service Businesses",
+    tagline: "Call-to-Cash Contractor OS",
     location: "Tacoma, WA",
   },
   nav: {
@@ -213,78 +234,113 @@ const founderPremiumCopy: SiteCopy = {
       { label: "Systems", href: "/systems" },
       { label: "Case Studies", href: "/case-studies" },
       { label: "Contact", href: "/contact" },
+      { label: "Privacy", href: "/privacy" },
+      { label: "Terms", href: "/terms" },
     ],
-    primaryCta: { label: "Book Strategy Call", href: "/contact" },
+    primaryCta: { label: "Free Lead Audit", href: "/contact" },
   },
   home: {
     hero: {
-      eyebrow: "Revenue Infrastructure",
-      title: "Predictable booked jobs start with connected systems.",
+      eyebrow: "Call-to-Cash Contractor OS",
+      title: "Turn missed calls into estimates, jobs, and paid invoices.",
+      highlight: "",
       subtitle:
-        "TieGui installs the full stack: conversion website, missed-call automation, CRM pipeline, and reporting tied to revenue. Built for serious home service operators.",
-      primaryCta: { label: "Book Strategy Call", href: "/contact" },
-      secondaryCta: { label: "View Systems", href: "/systems" },
+        "TieGui is the contractor workspace that keeps every job moving from first call to final payment.",
+      supportLine:
+        "It catches leads, sends customer-facing estimates, schedules work, sends job updates, and tracks invoices so owners stop losing money in the follow-up.",
+      chips: ["Missed Calls", "Estimates", "Scheduling", "Invoices"],
+      showcase: {
+        eyebrow: "Today in TieGui",
+        title: "Lead to payment preview",
+        subtitle: "What needs attention",
+        stack: [
+          {
+            title: "New Lead",
+            detail: "Cleanup quote",
+          },
+          {
+            title: "Estimate",
+            detail: "Sent",
+          },
+          {
+            title: "Schedule",
+            detail: "Ready to book",
+          },
+          {
+            title: "Invoice",
+            detail: "Unpaid",
+          },
+        ],
+        stats: [
+          { value: "4", label: "new leads" },
+          { value: "2", label: "estimates waiting" },
+          { value: "$3,240", label: "open invoices" },
+        ],
+        note: "See who called, who needs an estimate, what is ready to schedule, and who still owes money.",
+      },
+      primaryCta: { label: "Get My Free Audit", href: "/contact" },
+      secondaryCta: { label: "How It Works", href: "#process" },
     },
     proofRow: {
-      title: "Operational proof",
+      title: "From first call to final payment",
       bullets: [
-        "Fast-response workflows for inbound leads",
-        "Missed-call capture with instant SMS follow-up",
-        "Pipeline visibility from first call to closed job",
-        "Attribution mapped to booked revenue, not vanity metrics",
-        "Founder-led implementation with clear scope",
+        "Catch missed calls before they become lost jobs",
+        "Send estimates without losing customer context",
+        "Move approved work into scheduling",
+        "Update customers and crews from the same job record",
+        "Track unpaid invoices until the money is collected",
       ],
     },
     problem: {
-      title: "Contractors do not have a lead problem. They have a systems problem.",
+      title: "You are not just losing leads. You are losing follow-through.",
       statement:
-        "Most businesses already have demand. Revenue leaks happen between first contact and follow-up, between scheduling and handoff, and between spend and reporting.",
+        "Most contractors already have demand. The leak happens after the phone rings. A customer calls while you are working. An estimate gets sent but never followed up. A job gets finished but the invoice still needs chasing. TieGui keeps every money step visible.",
       details: [
-        "Slow response windows kill intent.",
-        "Disconnected tools create handoff failure.",
-        "No source-to-revenue visibility makes spend decisions weak.",
+        "Missed calls become lost jobs when customers call the next company.",
+        "Estimates disappear after they are sent when nobody owns the next follow-up.",
+        "Invoices turn into cleanup work when payments live in memory, texts, and spreadsheets.",
       ],
     },
     build: {
-      title: "What We Build",
-      subtitle: "A connected revenue infrastructure stack, engineered to run in the real world.",
+      title: "One workspace from lead to payment.",
+      subtitle: "TieGui keeps the money-making parts of your business in one place.",
       cards: [
         {
-          title: "Conversion Website",
-          description: "A high-trust front end designed to drive qualified calls and form submissions.",
-          bullets: ["Mobile-first UX", "Offer clarity", "Service-area architecture"],
+          title: "Catch the lead",
+          description: "Calls, texts, forms, referrals, and manual leads stay organized in one place.",
+          bullets: ["Missed-call text-back", "Lead intake", "Next step"],
         },
         {
-          title: "Automation + SMS",
-          description: "Immediate follow-up infrastructure for missed calls and inbound leads.",
-          bullets: ["Missed-call text back", "Lead qualification prompts", "Handoff alerts"],
+          title: "Send the estimate",
+          description: "Build and send customer-facing estimates while keeping the conversation attached.",
+          bullets: ["Share link", "Approval tracking", "Follow-up"],
         },
         {
-          title: "CRM + Pipeline",
-          description: "A practical pipeline view so sales and operations can move without chaos.",
-          bullets: ["Lead stages", "Ownership clarity", "Job-status discipline"],
+          title: "Schedule the work",
+          description: "Move approved jobs onto the calendar and keep crews and customer updates connected.",
+          bullets: ["Calendar", "Dispatch texts", "Tracking updates"],
         },
         {
-          title: "Tracking + Reporting",
-          description: "Source-level tracking and scorecards tied to booked revenue outcomes.",
-          bullets: ["Channel attribution", "Booked-job reporting", "Weekly operator view"],
+          title: "Track the money",
+          description: "Send customer-facing invoices, see open balances, and know who still needs follow-up.",
+          bullets: ["Invoice links", "Unpaid balances", "Payment status"],
         },
       ],
     },
     process: {
-      title: "How It Works",
+      title: "The workflow is simple.",
       steps: [
         {
-          title: "Audit",
-          description: "Map your current lead flow, bottlenecks, and reporting blind spots.",
+          title: "A lead comes in",
+          description: "From a call, text, form, referral, or manual entry.",
         },
         {
-          title: "Build",
-          description: "Install website, automation, CRM structure, and tracking with clear scope boundaries.",
+          title: "TieGui keeps it moving",
+          description: "Reply, estimate, schedule, dispatch, and follow up from one place.",
         },
         {
-          title: "Optimize",
-          description: "Refine around conversion speed, lead quality, and revenue outcomes.",
+          title: "You get paid cleaner",
+          description: "Invoices and unpaid balances stay visible until the job is closed.",
         },
       ],
     },
@@ -294,27 +350,27 @@ const founderPremiumCopy: SiteCopy = {
       cta: { label: "View All Case Studies", href: "/case-studies" },
     },
     offer: {
-      title: "Offer Structure",
-      subtitle: "Infrastructure engagement, not a marketing package.",
+      title: "We set it up with you.",
+      subtitle: "No complicated software handoff. TieGui Solutions helps install the workflow around your real business.",
       setup: {
         label: "Setup",
-        price: "Starting at $3,500",
+        price: "Launch the system",
         bullets: [
-          "System architecture + implementation",
-          "Website build and conversion routing",
-          "Automation, pipeline, and tracking deployment",
+          "Set up your workspace",
+          "Connect your lead follow-up",
+          "Map estimates, scheduling, and invoices",
         ],
       },
       monthly: {
-        label: "Monthly System Management",
-        price: "Starting at $1,250/mo",
+        label: "Monthly",
+        price: "Keep it working",
         bullets: [
-          "Operational optimization",
-          "Reporting and decision support",
-          "Iteration on funnel and follow-up performance",
+          "Review leads and follow-up",
+          "Improve the workflow",
+          "Keep reporting simple",
         ],
       },
-      note: "Final scope and pricing are set after strategy audit based on complexity and service footprint.",
+      note: "The goal is simple: more calls turn into quotes, more quotes turn into jobs, and more jobs turn into paid invoices.",
     },
     faq: {
       title: "FAQ",
@@ -342,10 +398,10 @@ const founderPremiumCopy: SiteCopy = {
       ],
     },
     finalCta: {
-      title: "Build revenue infrastructure that scales with your operation.",
-      subtitle: "If you are ready for clear systems and measurable outcomes, book a strategy call.",
-      primaryCta: { label: "Book Strategy Call", href: "/contact" },
-      secondaryCta: { label: "View Systems", href: "/systems" },
+      title: "Before you buy more leads, fix the ones you already get.",
+      subtitle: "Book a free TieGui lead audit. We will show where calls, estimates, scheduling, or invoices are slipping, and what the system would fix first.",
+      primaryCta: { label: "Get My Free Audit", href: "/contact" },
+      secondaryCta: { label: "How It Works", href: "#process" },
     },
   },
   about: {
@@ -449,18 +505,18 @@ const founderPremiumCopy: SiteCopy = {
   contact: {
     hero: {
       eyebrow: "Contact",
-      title: "Book a strategy call.",
-      subtitle: "For owners ready to install revenue infrastructure and run a tighter operation.",
+      title: "Book a lead leak audit.",
+      subtitle: "For contractors who want to see where calls, estimates, scheduling, or invoices are slipping.",
     },
     whoItsFor: [
       "Home service businesses with active demand and fulfillment capacity",
-      "Operators who need structure across website, follow-up, and pipeline",
-      "Teams that want direct visibility from source to booked revenue",
+      "Operators who miss calls or rely on memory for follow-up",
+      "Teams that want one workflow from first call to paid invoice",
     ],
     nextSteps: [
       "You submit the intake form",
-      "TieGui reviews fit, scope complexity, and constraints",
-      "You get a response with next-step recommendation",
+      "TieGui reviews your current lead-to-payment path",
+      "You get a clear recommendation on what to fix first",
     ],
     scheduling: {
       label: "Scheduling link (placeholder)",
@@ -472,13 +528,13 @@ const founderPremiumCopy: SiteCopy = {
       emailLabel: "Email",
       phoneLabel: "Phone",
       companyLabel: "Company",
-      challengeLabel: "What is the biggest systems bottleneck right now?",
+      challengeLabel: "Where are leads, estimates, scheduling, or invoices slipping right now?",
       submitLabel: "Submit Request",
       successMessage: "Request received. You will get a follow-up soon.",
     },
   },
   footer: {
-    tagline: "Revenue Infrastructure for Home Service Businesses",
+    tagline: "Call-to-Cash Contractor OS",
     links: [
       { label: "About", href: "/about" },
       { label: "Systems", href: "/systems" },
