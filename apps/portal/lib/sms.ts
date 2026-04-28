@@ -14,6 +14,7 @@ import {
   type SmsFailureClassification,
 } from "@/lib/sms-failure-intelligence";
 import { getSmsConsentState } from "@/lib/sms-consent";
+import { getPackageEntitlements } from "@/lib/package-entitlements";
 
 type SendSmsInput = {
   orgId: string;
@@ -90,16 +91,21 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
 
   const messagingMode = await prisma.organization.findUnique({
     where: { id: input.orgId },
-    select: { messagingLaunchMode: true },
+    select: { package: true, messagingLaunchMode: true },
   });
+  const packageEntitlements = getPackageEntitlements(messagingMode?.package);
 
-  if (messagingMode?.messagingLaunchMode === "NO_SMS") {
+  if (
+    messagingMode?.messagingLaunchMode === "NO_SMS" ||
+    !packageEntitlements.canUseLiveSms
+  ) {
     return {
       providerMessageSid: null,
       status: "FAILED",
       resolvedFromNumberE164: normalizeE164(input.fromNumberE164 || null),
-      notice:
-        "SMS is disabled for this organization. Leads, jobs, estimates, invoices, files, and internal notes remain available without Twilio.",
+      notice: !packageEntitlements.canUseLiveSms
+        ? "SMS is not included in this organization's package. Leads, jobs, estimates, invoices, files, and internal notes remain available without Twilio."
+        : "SMS is disabled for this organization. Leads, jobs, estimates, invoices, files, and internal notes remain available without Twilio.",
       suppressed: true,
     };
   }

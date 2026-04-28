@@ -6,8 +6,12 @@ This checklist is for adding customers #2 through #5 to the controlled TieGui pi
 
 - Controlled customers only.
 - One named owner/admin per org before launch.
+- Set an internal package before launch:
+  - `PORTAL_ONLY` for core CRM without Twilio/SMS.
+  - `MESSAGING_ENABLED` for core CRM plus SMS/Twilio eligibility.
+  - `MANAGED` for core CRM plus SMS/Twilio eligibility and managed setup/support.
 - Live SMS only after Twilio config, A2P, consent, inbound, outbound, and callback smoke pass.
-- Customers can launch in `NO_SMS` mode when they do not want Twilio. In that mode, leads, jobs, scheduling, estimates, invoices, files, website intake, and internal notes remain in scope while SMS sends, missed-call recovery, text intake, and delivery callbacks are intentionally out of scope.
+- Customers can launch in `PORTAL_ONLY` / `NO_SMS` mode when they do not want Twilio. In that mode, leads, jobs, scheduling, estimates, invoices, files, website intake, and internal notes remain in scope while SMS sends, missed-call recovery, text intake, and delivery callbacks are intentionally out of scope.
 - Website lead intake only when the customer website is connected and a signed WebsiteLeadSource exists.
 - Stripe/billing remains manual or limited unless the org has a complete Stripe connection.
 - No Meta or Instagram work is included in this rollout.
@@ -19,6 +23,7 @@ Use `/hq/businesses/[orgId]` and review the Controlled Rollout Readiness card.
 The card must show:
 
 - zero blocking items before launch
+- package entitlement matches messaging mode
 - active owner/admin membership
 - worker/read-only roles scoped to the org
 - Twilio config ACTIVE with sender, account, and Messaging Service masked
@@ -33,10 +38,12 @@ The card must show:
 
 If the customer does not want Twilio:
 
+- set Package to `Portal Only`
 - set Messaging Mode to `No SMS / no Twilio` in the readiness card
 - confirm the card shows zero blockers without requiring Twilio or SMS smoke
 - do not promise SMS, missed-call recovery, automated text follow-up, text intake, or delivery receipts
 - leave WebsiteLeadSource, estimates, invoices, jobs, files, and scheduling available as normal
+- move the org to `Messaging Enabled` or `Managed` before switching back to `Live SMS / Twilio`
 - switch back to `Live SMS / Twilio` only after the customer explicitly opts into SMS and the full Twilio/A2P smoke passes
 
 For a CLI-safe report:

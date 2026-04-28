@@ -1,4 +1,12 @@
-import type { MessagingLaunchMode, TwilioConfigStatus } from "@prisma/client";
+import type {
+  MessagingLaunchMode,
+  OrganizationPackage,
+  TwilioConfigStatus,
+} from "@prisma/client";
+import {
+  getPackageEntitlements,
+  getPackageMessagingMismatch,
+} from "@/lib/package-entitlements";
 import {
   resolveTwilioMessagingReadiness,
   type TwilioMessagingEnvironmentSnapshot,
@@ -37,6 +45,7 @@ export type MessagingCommandCenterLatestSignals = {
 export type MessagingCommandCenterOrgInput = {
   orgId: string;
   orgName: string;
+  package?: OrganizationPackage | null;
   messagingLaunchMode?: MessagingLaunchMode | null;
   twilioConfig:
     | {
@@ -57,6 +66,9 @@ export type MessagingCommandCenterOrgInput = {
 export type MessagingCommandCenterOrgReport = {
   orgId: string;
   orgName: string;
+  package: OrganizationPackage;
+  packageLabel: string;
+  packageCanUseLiveSms: boolean;
   readinessCode: TwilioMessagingReadinessCode;
   messagingLaunchMode: MessagingLaunchMode;
   canSend: boolean;
@@ -76,6 +88,8 @@ export type MessagingCommandCenterSummary = {
   warning: number;
   notConfigured: number;
   smsDisabled: number;
+  portalOnly: number;
+  managed: number;
   failed30d: number;
   unmatchedStatusCallbacks30d: number;
   overdueQueueCount: number;
@@ -159,8 +173,14 @@ export function buildMessagingCommandCenterOrgReport(
   input: MessagingCommandCenterOrgInput,
 ): MessagingCommandCenterOrgReport {
   const now = input.now || new Date();
+  const organizationPackage = input.package || "MESSAGING_ENABLED";
+  const packageEntitlements = getPackageEntitlements(organizationPackage);
   const messagingLaunchMode = input.messagingLaunchMode || "LIVE_SMS";
   const noSmsMode = messagingLaunchMode === "NO_SMS";
+  const packageMismatch = getPackageMessagingMismatch({
+    package: organizationPackage,
+    messagingLaunchMode,
+  });
   const staleStatusCallbackMs =
     (input.staleStatusCallbackHours ?? 72) * 60 * 60 * 1000;
   const readiness = resolveTwilioMessagingReadiness({
@@ -174,6 +194,17 @@ export function buildMessagingCommandCenterOrgReport(
   });
 
   const issues: MessagingCommandCenterIssue[] = [];
+  if (packageMismatch) {
+    issues.push(
+      issue(
+        "critical",
+        "PACKAGE_LIVE_SMS_NOT_ALLOWED",
+        "Package does not include live SMS",
+        packageMismatch,
+        "Switch the org to No SMS mode or move it to Messaging Enabled/Managed before launch.",
+      ),
+    );
+  }
   const primaryReadinessIssue = noSmsMode ? null : readinessIssue(readiness.code);
   if (primaryReadinessIssue) {
     issues.push(primaryReadinessIssue);
@@ -271,10 +302,10 @@ export function buildMessagingCommandCenterOrgReport(
   const state =
     noSmsMode && criticalIssueCount === 0 && warningIssueCount === 0
       ? "sms_disabled"
-      : readiness.code === "NOT_CONFIGURED"
-      ? "not_configured"
       : criticalIssueCount > 0
         ? "blocked"
+        : readiness.code === "NOT_CONFIGURED"
+        ? "not_configured"
         : warningIssueCount > 0
           ? "warning"
           : "ready";
@@ -282,9 +313,16 @@ export function buildMessagingCommandCenterOrgReport(
   return {
     orgId: input.orgId,
     orgName: input.orgName,
+    package: organizationPackage,
+    packageLabel: packageEntitlements.shortLabel,
+    packageCanUseLiveSms: packageEntitlements.canUseLiveSms,
     readinessCode: readiness.code,
     messagingLaunchMode,
-    canSend: !noSmsMode && readiness.canSend && criticalIssueCount === 0,
+    canSend:
+      !noSmsMode &&
+      packageEntitlements.canUseLiveSms &&
+      readiness.canSend &&
+      criticalIssueCount === 0,
     hasTwilioConfig: readiness.hasConfig,
     traffic: input.traffic,
     latest: input.latest,
@@ -335,6 +373,8 @@ export function buildMessagingCommandCenterReport(input: {
       notConfigured: orgs.filter((org) => org.state === "not_configured")
         .length,
       smsDisabled: orgs.filter((org) => org.state === "sms_disabled").length,
+      portalOnly: orgs.filter((org) => org.package === "PORTAL_ONLY").length,
+      managed: orgs.filter((org) => org.package === "MANAGED").length,
       failed30d: orgs.reduce((sum, org) => sum + org.traffic.failed30d, 0),
       unmatchedStatusCallbacks30d: orgs.reduce(
         (sum, org) => sum + org.traffic.unmatchedStatusCallbacks30d,

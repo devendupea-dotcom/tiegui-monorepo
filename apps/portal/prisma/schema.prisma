@@ -67,6 +67,7 @@ model Organization {
   onboardingStep                    Int             @default(0)
   onboardingCompletedAt             DateTime?
   onboardingSkippedAt               DateTime?
+  package                            OrganizationPackage @default(MESSAGING_ENABLED)
   smsFromNumberE164                 String?
   messagingLaunchMode               MessagingLaunchMode @default(LIVE_SMS)
   smsMonthlyLimit                   Int             @default(3000)
@@ -2934,6 +2935,12 @@ enum TwilioConfigStatus {
 enum MessagingLaunchMode {
   LIVE_SMS
   NO_SMS
+}
+
+enum OrganizationPackage {
+  PORTAL_ONLY
+  MESSAGING_ENABLED
+  MANAGED
 }
 
 enum TwilioConfigAuditAction {

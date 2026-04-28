@@ -131,6 +131,7 @@ export default async function HqMessagingCommandCenterPage() {
       select: {
         id: true,
         name: true,
+        package: true,
         messagingLaunchMode: true,
         smsFromNumberE164: true,
         twilioConfig: {
@@ -318,6 +319,7 @@ export default async function HqMessagingCommandCenterPage() {
     orgs: organizations.map((org) => ({
       orgId: org.id,
       orgName: org.name,
+      package: org.package,
       messagingLaunchMode: org.messagingLaunchMode,
       twilioConfig: org.twilioConfig
         ? {
@@ -394,6 +396,16 @@ export default async function HqMessagingCommandCenterPage() {
           <h2>No SMS</h2>
           <p className="kpi-value">{report.summary.smsDisabled}</p>
           <p className="muted">Orgs intentionally launched without Twilio.</p>
+        </article>
+        <article className="card kpi-card">
+          <h2>Portal Only</h2>
+          <p className="kpi-value">{report.summary.portalOnly}</p>
+          <p className="muted">Orgs without SMS/Twilio entitlement.</p>
+        </article>
+        <article className="card kpi-card">
+          <h2>Managed</h2>
+          <p className="kpi-value">{report.summary.managed}</p>
+          <p className="muted">Orgs with managed setup entitlement.</p>
         </article>
         <article className="card kpi-card">
           <h2>Failed SMS (30d)</h2>
@@ -672,6 +684,8 @@ export default async function HqMessagingCommandCenterPage() {
                   <tr key={org.orgId}>
                     <td>
                       <strong>{org.orgName}</strong>
+                      <br />
+                      <span className="muted">{org.packageLabel}</span>
                       <br />
                       <span className="muted">
                         {org.state === "sms_disabled"
