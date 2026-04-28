@@ -131,6 +131,7 @@ export default async function HqMessagingCommandCenterPage() {
       select: {
         id: true,
         name: true,
+        messagingLaunchMode: true,
         smsFromNumberE164: true,
         twilioConfig: {
           select: {
@@ -317,6 +318,7 @@ export default async function HqMessagingCommandCenterPage() {
     orgs: organizations.map((org) => ({
       orgId: org.id,
       orgName: org.name,
+      messagingLaunchMode: org.messagingLaunchMode,
       twilioConfig: org.twilioConfig
         ? {
             phoneNumber:
@@ -387,6 +389,11 @@ export default async function HqMessagingCommandCenterPage() {
           <h2>Warnings</h2>
           <p className="kpi-value">{report.summary.warning}</p>
           <p className="muted">Needs review before scaling traffic.</p>
+        </article>
+        <article className="card kpi-card">
+          <h2>No SMS</h2>
+          <p className="kpi-value">{report.summary.smsDisabled}</p>
+          <p className="muted">Orgs intentionally launched without Twilio.</p>
         </article>
         <article className="card kpi-card">
           <h2>Failed SMS (30d)</h2>
@@ -654,18 +661,22 @@ export default async function HqMessagingCommandCenterPage() {
                   sourceOrg?.smsFromNumberE164 ||
                   null;
                 const readinessState =
-                  org.state === "ready"
+                  org.state === "ready" || org.state === "sms_disabled"
                     ? "ok"
                     : org.state === "blocked"
                       ? "danger"
                       : "warning";
+                const readinessLabel =
+                  org.state === "sms_disabled" ? "NO_SMS" : org.readinessCode;
                 return (
                   <tr key={org.orgId}>
                     <td>
                       <strong>{org.orgName}</strong>
                       <br />
                       <span className="muted">
-                        {sourceOrg?.twilioConfig
+                        {org.state === "sms_disabled"
+                          ? "No SMS / no Twilio"
+                          : sourceOrg?.twilioConfig
                           ? `${maskSid(sourceOrg.twilioConfig.twilioSubaccountSid)} / ${maskSid(
                               sourceOrg.twilioConfig.messagingServiceSid,
                             )}`
@@ -673,7 +684,7 @@ export default async function HqMessagingCommandCenterPage() {
                       </span>
                     </td>
                     <td>
-                      {statusBadge(org.readinessCode, readinessState)}
+                      {statusBadge(readinessLabel, readinessState)}
                       {org.issues.length ? (
                         <>
                           <br />
@@ -710,9 +721,13 @@ export default async function HqMessagingCommandCenterPage() {
                     <td>
                       <Link
                         className="table-link"
-                        href={`/hq/orgs/${org.orgId}/twilio`}
+                        href={
+                          org.state === "sms_disabled"
+                            ? `/hq/businesses/${org.orgId}`
+                            : `/hq/orgs/${org.orgId}/twilio`
+                        }
                       >
-                        Twilio
+                        {org.state === "sms_disabled" ? "Org" : "Twilio"}
                       </Link>
                     </td>
                   </tr>

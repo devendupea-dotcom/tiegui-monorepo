@@ -11,6 +11,7 @@ function baseOrg(overrides = {}) {
   return {
     orgId: "org_1",
     orgName: "Velocity Landscapes",
+    messagingLaunchMode: "LIVE_SMS",
     twilioConfig: {
       phoneNumber: "+15555550123",
       status: "ACTIVE",
@@ -170,4 +171,65 @@ test("missing org Twilio config is not treated as live ready", () => {
   assert.ok(
     report.issues.some((issue) => issue.code === "TWILIO_NOT_CONFIGURED"),
   );
+});
+
+test("no-SMS org is not treated as a Twilio setup warning", () => {
+  const report = buildMessagingCommandCenterOrgReport(
+    baseOrg({
+      messagingLaunchMode: "NO_SMS",
+      twilioConfig: null,
+      traffic: {
+        inbound30d: 0,
+        outbound30d: 0,
+        sent30d: 0,
+        delivered30d: 0,
+        queued30d: 0,
+        failed30d: 0,
+        unmatchedStatusCallbacks30d: 0,
+        dncLeadCount: 0,
+        overdueQueueCount: 0,
+      },
+      latest: {
+        inboundAt: null,
+        outboundAt: null,
+        statusCallbackAt: null,
+        voiceAt: null,
+      },
+    }),
+  );
+
+  assert.equal(report.state, "sms_disabled");
+  assert.equal(report.canSend, false);
+  assert.equal(report.issues.length, 0);
+  assert.equal(report.messagingLaunchMode, "NO_SMS");
+
+  const summary = buildMessagingCommandCenterReport({
+    now: NOW,
+    orgs: [
+      baseOrg(),
+      baseOrg({
+        orgId: "org_no_sms",
+        messagingLaunchMode: "NO_SMS",
+        twilioConfig: null,
+        traffic: {
+          inbound30d: 0,
+          outbound30d: 0,
+          sent30d: 0,
+          delivered30d: 0,
+          queued30d: 0,
+          failed30d: 0,
+          unmatchedStatusCallbacks30d: 0,
+          dncLeadCount: 0,
+          overdueQueueCount: 0,
+        },
+        latest: {
+          inboundAt: null,
+          outboundAt: null,
+          statusCallbackAt: null,
+          voiceAt: null,
+        },
+      }),
+    ],
+  });
+  assert.equal(summary.summary.smsDisabled, 1);
 });

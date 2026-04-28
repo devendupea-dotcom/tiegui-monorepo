@@ -7,6 +7,7 @@ This checklist is for adding customers #2 through #5 to the controlled TieGui pi
 - Controlled customers only.
 - One named owner/admin per org before launch.
 - Live SMS only after Twilio config, A2P, consent, inbound, outbound, and callback smoke pass.
+- Customers can launch in `NO_SMS` mode when they do not want Twilio. In that mode, leads, jobs, scheduling, estimates, invoices, files, website intake, and internal notes remain in scope while SMS sends, missed-call recovery, text intake, and delivery callbacks are intentionally out of scope.
 - Website lead intake only when the customer website is connected and a signed WebsiteLeadSource exists.
 - Stripe/billing remains manual or limited unless the org has a complete Stripe connection.
 - No Meta or Instagram work is included in this rollout.
@@ -29,6 +30,14 @@ The card must show:
 - no failed SMS, unmatched callbacks, or overdue queued SMS unless explicitly accepted
 - SMS debug link available after smoke traffic exists
 - billing mode documented as Stripe-connected or manual/limited
+
+If the customer does not want Twilio:
+
+- set Messaging Mode to `No SMS / no Twilio` in the readiness card
+- confirm the card shows zero blockers without requiring Twilio or SMS smoke
+- do not promise SMS, missed-call recovery, automated text follow-up, text intake, or delivery receipts
+- leave WebsiteLeadSource, estimates, invoices, jobs, files, and scheduling available as normal
+- switch back to `Live SMS / Twilio` only after the customer explicitly opts into SMS and the full Twilio/A2P smoke passes
 
 For a CLI-safe report:
 
@@ -63,6 +72,7 @@ Run this checklist for each controlled customer.
    - Customer staff should not receive broad internal/HQ access.
 
 4. Configure Twilio only after A2P is ready.
+   - Skip this step only when the org is intentionally set to `NO_SMS` mode.
    - Confirm org Twilio config is ACTIVE.
    - Confirm sender number and Messaging Service are correct.
    - Confirm `TWILIO_TOKEN_ENCRYPTION_KEY`, `TWILIO_SEND_ENABLED=true`, and `TWILIO_VALIDATE_SIGNATURE=true` in the target deployment.
@@ -74,6 +84,7 @@ Run this checklist for each controlled customer.
    - Smoke a signed website lead submission.
 
 6. Verify SMS consent.
+   - Skip live STOP/START smoke only when the org is intentionally set to `NO_SMS` mode.
    - Confirm legacy DNC backfill has run for the target DB.
    - Send/simulate STOP and verify `SmsConsent` becomes `OPTED_OUT`.
    - Confirm outbound send is blocked.
@@ -81,6 +92,7 @@ Run this checklist for each controlled customer.
    - Confirm explicit opt-in override behaves as intended.
 
 7. Run SMS smoke.
+   - Skip live SMS smoke only when the org is intentionally set to `NO_SMS` mode.
    - Manual outbound SMS: one send, one Message, one CommunicationEvent, no duplicate.
    - Inbound reply: lands in correct org/thread.
    - Delivery callback: reconciles to the known provider SID.
@@ -143,7 +155,7 @@ Stop adding customers if any of these happen:
 - token encryption key missing
 - Twilio send disabled in a target environment expected to send live SMS
 - signature validation disabled
-- org Twilio config not ACTIVE
+- org Twilio config not ACTIVE for an org in `LIVE_SMS` mode
 - no active owner/admin
 - STOP does not block outbound
 - START/UNSTOP does not restore explicit consent as intended

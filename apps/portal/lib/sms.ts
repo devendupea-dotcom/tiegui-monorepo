@@ -88,6 +88,22 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     Math.round(Number(normalizeEnvValue(process.env.TWILIO_SMS_COST_ESTIMATE_CENTS)) || 1),
   );
 
+  const messagingMode = await prisma.organization.findUnique({
+    where: { id: input.orgId },
+    select: { messagingLaunchMode: true },
+  });
+
+  if (messagingMode?.messagingLaunchMode === "NO_SMS") {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      resolvedFromNumberE164: normalizeE164(input.fromNumberE164 || null),
+      notice:
+        "SMS is disabled for this organization. Leads, jobs, estimates, invoices, files, and internal notes remain available without Twilio.",
+      suppressed: true,
+    };
+  }
+
   let twilioConfig: Awaited<ReturnType<typeof getTwilioOrgRuntimeConfigByOrgId>>;
   try {
     twilioConfig = await getTwilioOrgRuntimeConfigByOrgId(input.orgId);
