@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeE164 } from "@/lib/phone";
 import { sendManualLeadSms } from "@/lib/manual-outbound-sms";
+import { getSmsSendBlockState } from "@/lib/sms-consent";
 import {
   normalizeManualSmsIdempotencyKey,
   runIdempotentManualSmsMutation,
@@ -61,9 +62,15 @@ export async function POST(req: Request) {
     assertOrgReadAccess(actor, lead.orgId);
     await assertCanMutateLeadJob({ actor, orgId: lead.orgId, leadId: lead.id });
 
-    if (lead.status === "DNC") {
+    const smsBlock = await getSmsSendBlockState({
+      orgId: lead.orgId,
+      phoneE164: lead.phoneE164,
+      legacyLeadStatus: lead.status,
+    });
+    if (smsBlock.blocked) {
       throw new AppApiError(
-        "This contact has opted out (DNC/STOP). Sending is blocked until they reply START.",
+        smsBlock.reason ||
+          "This contact has opted out (DNC/STOP). Sending is blocked until they reply START.",
         403,
       );
     }

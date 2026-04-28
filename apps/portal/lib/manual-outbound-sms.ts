@@ -92,6 +92,7 @@ export async function sendManualLeadSms(input: {
     where: { id: input.lead.orgId },
     select: {
       smsFromNumberE164: true,
+      messagingLaunchMode: true,
       twilioConfig: {
         select: {
           phoneNumber: true,
@@ -104,6 +105,20 @@ export async function sendManualLeadSms(input: {
   const readiness = resolveTwilioMessagingReadiness({
     twilioConfig: organization?.twilioConfig || null,
   });
+
+  if (organization?.messagingLaunchMode === "NO_SMS") {
+    return {
+      ok: false,
+      httpStatus: 409,
+      error:
+        "SMS is disabled for this business. Leads, jobs, estimates, invoices, files, and internal notes can still be used without Twilio.",
+      notice:
+        "SMS is disabled for this business. Enable Live SMS only when the customer opts into Twilio.",
+      deliveryState: "NOT_LIVE",
+      liveSend: false,
+      readinessCode: readiness.code,
+    };
+  }
 
   const resolvedFromNumber =
     normalizeE164(input.fromNumberE164 || null) ||

@@ -7,11 +7,16 @@ import {
 import { normalizeEnvValue } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { requireInternalUser } from "@/lib/session";
+import {
+  buildFailedSmsDrilldownRows,
+  buildSmsWebhookMonitorReport,
+} from "@/lib/sms-operations-debug";
 import { getTwilioMessagingEnvironmentSnapshot } from "@/lib/twilio-readiness";
 import { maskSid } from "@/lib/twilio-config-crypto";
 
 export const dynamic = "force-dynamic";
 
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const OVERDUE_QUEUE_GRACE_MS = 10 * 60 * 1000;
 
@@ -63,14 +68,6 @@ function maskPhone(value: string | null | undefined): string {
   return `${normalized.startsWith("+") ? "+" : ""}***${digits.slice(-4)}`;
 }
 
-function previewText(value: string | null | undefined, maxLength = 80): string {
-  const normalized = (value || "").replace(/\s+/g, " ").trim();
-  if (!normalized) return "-";
-  return normalized.length > maxLength
-    ? `${normalized.slice(0, maxLength - 1)}…`
-    : normalized;
-}
-
 function statusBadge(label: string, state: "ok" | "warning" | "danger") {
   return (
     <span
@@ -108,6 +105,7 @@ export default async function HqMessagingCommandCenterPage() {
 
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - THIRTY_DAYS_MS);
+  const twentyFourHoursAgo = new Date(now.getTime() - TWENTY_FOUR_HOURS_MS);
   const overdueQueueBefore = new Date(now.getTime() - OVERDUE_QUEUE_GRACE_MS);
   const env = {
     ...getTwilioMessagingEnvironmentSnapshot(),
@@ -125,12 +123,15 @@ export default async function HqMessagingCommandCenterPage() {
     dncLeadCounts,
     overdueQueueCounts,
     recentFailedSms,
+    webhookMonitorEvents,
+    webhookMonitorMessages,
   ] = await Promise.all([
     prisma.organization.findMany({
       orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
+        messagingLaunchMode: true,
         smsFromNumberE164: true,
         twilioConfig: {
           select: {
@@ -213,6 +214,7 @@ export default async function HqMessagingCommandCenterPage() {
         toNumberE164: true,
         body: true,
         providerMessageSid: true,
+        status: true,
         org: { select: { name: true } },
         lead: {
           select: {
@@ -230,6 +232,38 @@ export default async function HqMessagingCommandCenterPage() {
             metadataJson: true,
           },
         },
+      },
+    }),
+    prisma.communicationEvent.findMany({
+      where: {
+        channel: "SMS",
+        OR: [
+          { createdAt: { gte: thirtyDaysAgo } },
+          { occurredAt: { gte: thirtyDaysAgo } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 2000,
+      select: {
+        type: true,
+        channel: true,
+        summary: true,
+        providerStatus: true,
+        providerMessageSid: true,
+        occurredAt: true,
+        createdAt: true,
+        metadataJson: true,
+      },
+    }),
+    prisma.message.findMany({
+      where: {
+        createdAt: { gte: twentyFourHoursAgo },
+        direction: { in: ["INBOUND", "OUTBOUND"] },
+      },
+      select: {
+        direction: true,
+        status: true,
+        createdAt: true,
       },
     }),
   ]);
@@ -284,6 +318,7 @@ export default async function HqMessagingCommandCenterPage() {
     orgs: organizations.map((org) => ({
       orgId: org.id,
       orgName: org.name,
+      messagingLaunchMode: org.messagingLaunchMode,
       twilioConfig: org.twilioConfig
         ? {
             phoneNumber:
@@ -304,6 +339,30 @@ export default async function HqMessagingCommandCenterPage() {
   });
   const orgById = new Map(organizations.map((org) => [org.id, org]));
   const attentionQueue = report.orgs.filter((org) => org.issues.length > 0);
+  const webhookMonitor = buildSmsWebhookMonitorReport({
+    events: webhookMonitorEvents,
+    messages: webhookMonitorMessages,
+    now,
+  });
+  const failedSmsRows = buildFailedSmsDrilldownRows(
+    recentFailedSms.map((message) => ({
+      id: message.id,
+      orgId: message.orgId,
+      orgName: message.org.name,
+      leadId: message.lead.id,
+      leadLabel:
+        message.lead.contactName ||
+        message.lead.businessName ||
+        maskPhone(message.toNumberE164),
+      leadStatus: message.lead.status,
+      toNumberE164: message.toNumberE164,
+      providerMessageSid: message.providerMessageSid,
+      status: message.status,
+      body: message.body,
+      createdAt: message.createdAt,
+      communicationEvents: message.communicationEvents,
+    })),
+  );
 
   return (
     <>
@@ -330,6 +389,11 @@ export default async function HqMessagingCommandCenterPage() {
           <h2>Warnings</h2>
           <p className="kpi-value">{report.summary.warning}</p>
           <p className="muted">Needs review before scaling traffic.</p>
+        </article>
+        <article className="card kpi-card">
+          <h2>No SMS</h2>
+          <p className="kpi-value">{report.summary.smsDisabled}</p>
+          <p className="muted">Orgs intentionally launched without Twilio.</p>
         </article>
         <article className="card kpi-card">
           <h2>Failed SMS (30d)</h2>
@@ -412,6 +476,101 @@ export default async function HqMessagingCommandCenterPage() {
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Webhook / Status Monitor</h3>
+        <p className="muted">
+          24-hour SMS webhook and delivery-state signals. Invalid signature
+          attempt persistence is intentionally deferred; forged callbacks should
+          still fail closed at the route.
+        </p>
+        <div className="table-wrap" style={{ marginTop: 10 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Signal</th>
+                <th>Value</th>
+                <th>Latest</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Inbound SMS webhooks</td>
+                <td>{webhookMonitor.inboundSmsVolume24h}</td>
+                <td title={formatDate(webhookMonitor.latestInboundWebhookAt)}>
+                  {formatAge(webhookMonitor.latestInboundWebhookAt, now)}
+                </td>
+              </tr>
+              <tr>
+                <td>Outbound SMS messages</td>
+                <td>{webhookMonitor.outboundSmsVolume24h}</td>
+                <td title={formatDate(webhookMonitor.latestOutboundStatusCallbackAt)}>
+                  {formatAge(webhookMonitor.latestOutboundStatusCallbackAt, now)}
+                </td>
+              </tr>
+              <tr>
+                <td>Status callback volume</td>
+                <td>{webhookMonitor.callbackVolume24h}</td>
+                <td title={formatDate(webhookMonitor.latestOutboundStatusCallbackAt)}>
+                  {formatAge(webhookMonitor.latestOutboundStatusCallbackAt, now)}
+                </td>
+              </tr>
+              <tr>
+                <td>Failed / undelivered callbacks</td>
+                <td>
+                  {statusBadge(
+                    formatAge(webhookMonitor.latestFailedCallbackAt, now),
+                    webhookMonitor.latestFailedCallbackAt ? "warning" : "ok",
+                  )}
+                </td>
+                <td title={formatDate(webhookMonitor.latestFailedCallbackAt)}>
+                  {formatDate(webhookMonitor.latestFailedCallbackAt)}
+                </td>
+              </tr>
+              <tr>
+                <td>Unmatched callbacks</td>
+                <td>
+                  {statusBadge(
+                    `${webhookMonitor.unmatchedCallbackCount24h}`,
+                    webhookMonitor.unmatchedCallbackCount24h === 0
+                      ? "ok"
+                      : "warning",
+                  )}
+                </td>
+                <td>Last 24h</td>
+              </tr>
+              <tr>
+                <td>Recovered callbacks</td>
+                <td>{webhookMonitor.recoveredCallbackCount24h}</td>
+                <td>Last 24h</td>
+              </tr>
+              <tr>
+                <td>Invalid signature attempts</td>
+                <td>Deferred</td>
+                <td>No raw webhook payload storage in this PR.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Pilot Daily Checklist</h3>
+        <div className="grid two-col" style={{ marginTop: 10 }}>
+          <ul className="stack">
+            <li>Check failed SMS and operator action labels.</li>
+            <li>Check unmatched callbacks and recovered callbacks.</li>
+            <li>Check DNC/STOP events before any manual follow-up.</li>
+            <li>Confirm inbound replies route to the correct Velocity thread.</li>
+          </ul>
+          <ul className="stack">
+            <li>Confirm Cesar can send and receive normally.</li>
+            <li>Record any Twilio 30006 or 30007 failures.</li>
+            <li>Do not retry DNC/STOP recipients.</li>
+            <li>Escalate carrier filtering separately from bad numbers.</li>
+          </ul>
         </div>
       </section>
 
@@ -502,18 +661,22 @@ export default async function HqMessagingCommandCenterPage() {
                   sourceOrg?.smsFromNumberE164 ||
                   null;
                 const readinessState =
-                  org.state === "ready"
+                  org.state === "ready" || org.state === "sms_disabled"
                     ? "ok"
                     : org.state === "blocked"
                       ? "danger"
                       : "warning";
+                const readinessLabel =
+                  org.state === "sms_disabled" ? "NO_SMS" : org.readinessCode;
                 return (
                   <tr key={org.orgId}>
                     <td>
                       <strong>{org.orgName}</strong>
                       <br />
                       <span className="muted">
-                        {sourceOrg?.twilioConfig
+                        {org.state === "sms_disabled"
+                          ? "No SMS / no Twilio"
+                          : sourceOrg?.twilioConfig
                           ? `${maskSid(sourceOrg.twilioConfig.twilioSubaccountSid)} / ${maskSid(
                               sourceOrg.twilioConfig.messagingServiceSid,
                             )}`
@@ -521,7 +684,7 @@ export default async function HqMessagingCommandCenterPage() {
                       </span>
                     </td>
                     <td>
-                      {statusBadge(org.readinessCode, readinessState)}
+                      {statusBadge(readinessLabel, readinessState)}
                       {org.issues.length ? (
                         <>
                           <br />
@@ -558,9 +721,13 @@ export default async function HqMessagingCommandCenterPage() {
                     <td>
                       <Link
                         className="table-link"
-                        href={`/hq/orgs/${org.orgId}/twilio`}
+                        href={
+                          org.state === "sms_disabled"
+                            ? `/hq/businesses/${org.orgId}`
+                            : `/hq/orgs/${org.orgId}/twilio`
+                        }
                       >
-                        Twilio
+                        {org.state === "sms_disabled" ? "Org" : "Twilio"}
                       </Link>
                     </td>
                   </tr>
@@ -573,7 +740,7 @@ export default async function HqMessagingCommandCenterPage() {
 
       <section className="card">
         <h3>Recent Failed SMS</h3>
-        {recentFailedSms.length === 0 ? (
+        {failedSmsRows.length === 0 ? (
           <p className="muted">No outbound SMS failures in the last 30 days.</p>
         ) : (
           <div className="table-wrap" style={{ marginTop: 10 }}>
@@ -583,26 +750,26 @@ export default async function HqMessagingCommandCenterPage() {
                   <th>When</th>
                   <th>Org</th>
                   <th>Lead</th>
-                  <th>To</th>
+                  <th>Phone</th>
                   <th>SID</th>
-                  <th>Message</th>
-                  <th>Provider Detail</th>
+                  <th>Status</th>
+                  <th>Failure</th>
+                  <th>Operator Action</th>
+                  <th>Preview</th>
                   <th>Open</th>
                 </tr>
               </thead>
               <tbody>
-                {recentFailedSms.map((message) => {
-                  const event = message.communicationEvents[0];
-                  const metadata =
-                    event?.metadataJson &&
-                    typeof event.metadataJson === "object" &&
-                    !Array.isArray(event.metadataJson)
-                      ? (event.metadataJson as Record<string, unknown>)
-                      : null;
+                {failedSmsRows.map((message) => {
                   const failureLabel =
-                    typeof metadata?.failureLabel === "string"
-                      ? metadata.failureLabel
-                      : event?.providerStatus || "Failed";
+                    message.failure?.label ||
+                    message.failure?.category ||
+                    message.failure?.reason ||
+                    "Failed";
+                  const operatorAction =
+                    message.failure?.operatorActionLabel ||
+                    message.failure?.operatorDetail ||
+                    "Review manually";
                   return (
                     <tr key={message.id}>
                       <td>
@@ -611,26 +778,33 @@ export default async function HqMessagingCommandCenterPage() {
                           timeStyle: "short",
                         })}
                       </td>
-                      <td>{message.org.name}</td>
+                      <td>{message.orgName}</td>
                       <td>
-                        {message.lead?.contactName ||
-                          message.lead?.businessName ||
-                          "Lead"}
+                        {message.leadLabel}
                         <br />
                         <span className="muted">
-                          {message.lead?.status || "-"}
+                          {message.leadStatus}
                         </span>
                       </td>
-                      <td>{maskPhone(message.toNumberE164)}</td>
-                      <td>{maskSid(message.providerMessageSid)}</td>
-                      <td>{previewText(message.body)}</td>
+                      <td>{message.maskedPhone}</td>
+                      <td>{message.maskedProviderSid}</td>
+                      <td>{message.status}</td>
                       <td>{failureLabel}</td>
+                      <td>{operatorAction}</td>
+                      <td>{message.bodyPreview}</td>
                       <td>
                         <Link
                           className="table-link"
                           href={`/hq/orgs/${message.orgId}/twilio`}
                         >
                           Twilio
+                        </Link>
+                        <br />
+                        <Link
+                          className="table-link"
+                          href={`/hq/leads/${message.leadId}/sms-debug`}
+                        >
+                          SMS Debug
                         </Link>
                       </td>
                     </tr>

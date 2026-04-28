@@ -1,6 +1,3 @@
-// TODO: Opt-out model currently uses lead.status === "DNC".
-// Future: migrate to dedicated smsOptedOut boolean on contact record
-//         for finer-grained control independent of lead status.
 import type { MessageStatus } from "@prisma/client";
 import { normalizeEnvValue } from "./env";
 import { prisma } from "@/lib/prisma";
@@ -16,6 +13,7 @@ import {
 import {
   type SmsFailureClassification,
 } from "@/lib/sms-failure-intelligence";
+import { getSmsConsentState } from "@/lib/sms-consent";
 
 type SendSmsInput = {
   orgId: string;
@@ -90,6 +88,22 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     Math.round(Number(normalizeEnvValue(process.env.TWILIO_SMS_COST_ESTIMATE_CENTS)) || 1),
   );
 
+  const messagingMode = await prisma.organization.findUnique({
+    where: { id: input.orgId },
+    select: { messagingLaunchMode: true },
+  });
+
+  if (messagingMode?.messagingLaunchMode === "NO_SMS") {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      resolvedFromNumberE164: normalizeE164(input.fromNumberE164 || null),
+      notice:
+        "SMS is disabled for this organization. Leads, jobs, estimates, invoices, files, and internal notes remain available without Twilio.",
+      suppressed: true,
+    };
+  }
+
   let twilioConfig: Awaited<ReturnType<typeof getTwilioOrgRuntimeConfigByOrgId>>;
   try {
     twilioConfig = await getTwilioOrgRuntimeConfigByOrgId(input.orgId);
@@ -127,16 +141,12 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     twilioConfig.phoneNumber;
 
   const normalizedToNumber = normalizeE164(input.toNumberE164) || input.toNumberE164;
-  const optedOutLead = await prisma.lead.findFirst({
-    where: {
-      orgId: input.orgId,
-      phoneE164: normalizedToNumber,
-      status: "DNC",
-    },
-    select: { id: true },
+  const consent = await getSmsConsentState({
+    orgId: input.orgId,
+    phoneE164: normalizedToNumber,
   });
 
-  if (optedOutLead) {
+  if (consent.status === "OPTED_OUT") {
     return {
       providerMessageSid: null,
       status: "FAILED",
@@ -144,6 +154,27 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
       notice: "Suppressed outbound SMS because the contact is opted out.",
       suppressed: true,
     };
+  }
+
+  if (consent.status !== "OPTED_IN") {
+    const optedOutLead = await prisma.lead.findFirst({
+      where: {
+        orgId: input.orgId,
+        phoneE164: normalizedToNumber,
+        status: "DNC",
+      },
+      select: { id: true },
+    });
+
+    if (optedOutLead) {
+      return {
+        providerMessageSid: null,
+        status: "FAILED",
+        resolvedFromNumberE164,
+        notice: "Suppressed outbound SMS because the contact is opted out.",
+        suppressed: true,
+      };
+    }
   }
 
   // Safe default for development: persist outbound rows without calling Twilio.
