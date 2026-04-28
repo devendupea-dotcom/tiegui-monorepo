@@ -49,13 +49,19 @@ Complete this before each pilot day:
 Check `/hq/messaging` at the start, middle, and end of each pilot day:
 
 - Runtime gates stay green.
+- Failed SMS rows have an understood failure label and operator action.
 - Latest outbound SMS appears for Velocity.
 - Latest inbound SMS appears for Velocity after replies.
 - Status callback activity is current.
 - Failed SMS count is understood and triaged.
 - Unmatched callback count is not increasing.
+- Recovered callback count is stable or explained.
 - DNC count changes are expected.
+- DNC/STOP leads are not retried.
 - Overdue queue does not grow unexpectedly.
+- Twilio 30006 and 30007 failures are recorded with the lead id and masked SID.
+- Carrier filtering is escalated separately from bad or unreachable numbers.
+- Cesar can send and receive normally.
 - No secret material is displayed.
 
 ## Manual Outbound Verification

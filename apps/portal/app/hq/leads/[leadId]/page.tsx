@@ -273,6 +273,12 @@ export default async function LeadDetailPage(
           >
             Messages
           </Link>
+          <Link
+            href={`/hq/leads/${lead.id}/sms-debug`}
+            className="tab-chip"
+          >
+            SMS Debug
+          </Link>
         </div>
       </section>
 
