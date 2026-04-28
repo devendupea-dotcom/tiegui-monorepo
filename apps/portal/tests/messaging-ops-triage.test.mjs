@@ -81,3 +81,14 @@ test("triage reason and notes are normalized conservatively", () => {
   assert.equal(normalizeMessagingOpsTriageNote(""), null);
   assert.equal(normalizeMessagingOpsTriageNote("x".repeat(400))?.length, 280);
 });
+
+test("triage notes redact phones, provider SIDs, and obvious secrets", () => {
+  const note = normalizeMessagingOpsTriageNote(
+    "Reviewed +15005550123 sid SM1234567890abcdef1234567890abcdef auth token=abc1234567890abcdef1234567890abcdef",
+  );
+
+  assert.equal(
+    note,
+    "Reviewed +***0123 sid [redacted-sid] auth token=[redacted]",
+  );
+});

@@ -36,9 +36,35 @@ export function normalizeMessagingOpsTriageReason(
 export function normalizeMessagingOpsTriageNote(
   value: string | null | undefined,
 ): string | null {
-  const normalized = (value || "").replace(/\s+/g, " ").trim();
+  const normalized = redactMessagingOpsTriageNote(
+    (value || "").replace(/\s+/g, " ").trim(),
+  );
   if (!normalized) return null;
   return normalized.slice(0, 280);
+}
+
+function redactPhone(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length < 10) return "[redacted-phone]";
+  return `+***${digits.slice(-4)}`;
+}
+
+export function redactMessagingOpsTriageNote(value: string): string {
+  return value
+    .replace(/\b(?:AC|CA|IM|MG|MM|SM)[A-Za-z0-9]{16,}\b/g, "[redacted-sid]")
+    .replace(
+      /(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}/g,
+      redactPhone,
+    )
+    .replace(
+      /\b(auth\s*token|api\s*key|secret|session\s*token|cookie)\s*[:=]\s*\S+/gi,
+      "$1=[redacted]",
+    )
+    .replace(/\b[A-Za-z0-9_+/=-]{32,}\b/g, (token) =>
+      /[A-Za-z]/.test(token) && /[\d+/=]/.test(token)
+        ? "[redacted-token]"
+        : token,
+    );
 }
 
 export function buildMessagingOpsTriageSets(
