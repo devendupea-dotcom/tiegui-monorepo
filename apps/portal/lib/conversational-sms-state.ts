@@ -3,6 +3,7 @@ import { Prisma, type ConversationStage, type MessageStatus } from "@prisma/clie
 import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
 import { prisma } from "@/lib/prisma";
 import { ACTIVE_CONVERSATION_FOLLOW_UP_STAGES } from "@/lib/sms-automation-guards";
+import { getSmsSendBlockState } from "@/lib/sms-consent";
 import { sendOutboundSms } from "@/lib/sms";
 import { queueSmsDispatch } from "@/lib/sms-dispatch-queue";
 import { normalizeSmsAgentPlaybook } from "@/lib/conversational-sms-agent-playbook";
@@ -196,8 +197,19 @@ export async function sendConversationMessage(input: {
   allowWhenStopped?: boolean;
   allowPendingA2P?: boolean;
 }) {
-  if (!input.allowWhenStopped && input.lead.status === "DNC") {
-    return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Lead is opted out." };
+  if (!input.allowWhenStopped) {
+    const smsBlock = await getSmsSendBlockState({
+      orgId: input.organization.id,
+      phoneE164: input.lead.phoneE164,
+      legacyLeadStatus: input.lead.status,
+    });
+    if (smsBlock.blocked) {
+      return {
+        ok: false as const,
+        status: "FAILED" as MessageStatus,
+        notice: smsBlock.reason || "Lead is opted out.",
+      };
+    }
   }
 
   const compliantBody = ensureAutomatedSmsCompliance({
@@ -320,8 +332,17 @@ export async function queueConversationReply(input: {
   delayMinutes?: number;
   sendAfterAt?: Date;
 }) {
-  if (input.lead.status === "DNC") {
-    return { ok: false as const, status: "FAILED" as MessageStatus, notice: "Lead is opted out." };
+  const smsBlock = await getSmsSendBlockState({
+    orgId: input.organization.id,
+    phoneE164: input.lead.phoneE164,
+    legacyLeadStatus: input.lead.status,
+  });
+  if (smsBlock.blocked) {
+    return {
+      ok: false as const,
+      status: "FAILED" as MessageStatus,
+      notice: smsBlock.reason || "Lead is opted out.",
+    };
   }
 
   const compliantBody = ensureAutomatedSmsCompliance({

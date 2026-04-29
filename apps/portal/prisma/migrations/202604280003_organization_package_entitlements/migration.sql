@@ -1,0 +1,4 @@
+CREATE TYPE "OrganizationPackage" AS ENUM ('PORTAL_ONLY', 'MESSAGING_ENABLED', 'MANAGED');
+
+ALTER TABLE "Organization"
+ADD COLUMN "package" "OrganizationPackage" NOT NULL DEFAULT 'MESSAGING_ENABLED';

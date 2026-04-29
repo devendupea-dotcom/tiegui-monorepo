@@ -220,7 +220,7 @@ export default function ClientPortalNav({
   const mobileMode = searchParams.get("mobile") === "1";
   const workerScoped =
     calendarAccessRole === "WORKER" || calendarAccessRole === "READ_ONLY";
-  const builderWorkspace = portalVertical === "HOMEBUILDER";
+  const builderWorkspace = !internalUser && portalVertical === "HOMEBUILDER";
 
   return (
     <nav className="app-nav" aria-label={t("navigationLabel")}>

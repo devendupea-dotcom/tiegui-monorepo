@@ -66,6 +66,13 @@ type UnifiedInboxProps = {
   initialOpenContextEditor?: boolean;
 };
 
+function createClientMutationId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `sms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 type RenderItem =
   | {
       kind: "day";
@@ -555,6 +562,7 @@ export default function UnifiedInbox({
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const selectedLeadIdRef = useRef<string | null>(null);
   const shouldStickThreadToBottomRef = useRef(true);
+  const sendingRef = useRef(false);
   const seenConversationAtRef = useRef<Record<string, string>>({});
   const initialContextRequestRef = useRef(Boolean(initialOpenContextEditor));
   const closeContextDrawer = () => setShowContextDrawer(false);
@@ -921,11 +929,13 @@ export default function UnifiedInbox({
   async function handleSend() {
     if (!selectedLeadId || !canManage || !canComposeMessages) return;
     const body = draft.trim();
-    if (!body || sending) return;
+    if (!body || sending || sendingRef.current) return;
 
+    sendingRef.current = true;
     setSending(true);
     setSendStatus(null);
 
+    const idempotencyKey = createClientMutationId();
     const optimisticId = `temp-${Date.now()}`;
     const now = new Date().toISOString();
     const optimisticEvent: TimelineEvent = {
@@ -946,8 +956,11 @@ export default function UnifiedInbox({
     try {
       const response = await fetch("/api/inbox/send", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ leadId: selectedLeadId, body }),
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ leadId: selectedLeadId, body, idempotencyKey }),
       });
 
       const payload = (await response.json().catch(() => null)) as {
@@ -1023,6 +1036,7 @@ export default function UnifiedInbox({
       setSendStatus(copy.errors.sendMessage);
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   }
 

@@ -100,7 +100,7 @@ export default function QuickAddLeadButton({
   defaultOrgId,
   internalUser,
   calendarAccessRole,
-  label = "+ Add Lead",
+  label = "Add Lead",
   className,
 }: QuickAddLeadButtonProps) {
   const router = useRouter();

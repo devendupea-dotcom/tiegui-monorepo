@@ -27,6 +27,7 @@ import {
   type PendingDispatchScheduleCustomerUpdate,
 } from "@/lib/dispatch-notification-core";
 import { getDispatchNotificationSettings } from "@/lib/dispatch-notification-settings";
+import { getSmsConsentState } from "@/lib/sms-consent";
 
 export async function getDispatchCustomerNotificationJob(input: {
   orgId: string;
@@ -440,10 +441,16 @@ export async function getDispatchCustomerCommunicationState(input: {
   });
 
   const pending = !existing;
+  const smsConsent = await getSmsConsentState({
+    orgId: input.orgId,
+    phoneE164: job.phone,
+  });
+
   const readiness = buildDispatchCustomerNotificationReadiness({
     settings,
     job,
     candidate,
+    smsConsentStatus: smsConsent.status,
   });
 
   return {

@@ -57,61 +57,58 @@ export async function claimClientMutationReceipt(
     idempotencyKey: string;
   },
 ): Promise<ClientMutationReceiptClaim> {
-  try {
-    const created = await tx.clientMutationReceipt.create({
-      data: {
+  const createResult = await tx.clientMutationReceipt.createMany({
+    data: {
+      orgId: input.orgId,
+      route: input.route,
+      idempotencyKey: input.idempotencyKey,
+    },
+    skipDuplicates: true,
+  });
+
+  const existing = await tx.clientMutationReceipt.findUnique({
+    where: {
+      orgId_idempotencyKey: {
         orgId: input.orgId,
-        route: input.route,
         idempotencyKey: input.idempotencyKey,
       },
-      select: {
-        id: true,
-      },
-    });
+    },
+    select: {
+      id: true,
+      route: true,
+      responseJson: true,
+    },
+  });
 
-    return {
-      status: "acquired",
-      receiptId: created.id,
-    };
-  } catch (error) {
-    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
-      throw error;
-    }
-
-    const existing = await tx.clientMutationReceipt.findUnique({
-      where: {
-        orgId_idempotencyKey: {
-          orgId: input.orgId,
-          idempotencyKey: input.idempotencyKey,
-        },
-      },
-      select: {
-        route: true,
-        responseJson: true,
-      },
-    });
-
-    if (!existing) {
-      throw error;
-    }
-
-    if (existing.route !== input.route) {
-      return {
-        status: "in_flight",
-      };
-    }
-
-    if (existing.responseJson !== null) {
-      return {
-        status: "completed",
-        responseJson: existing.responseJson as Prisma.JsonValue,
-      };
-    }
-
+  if (!existing) {
     return {
       status: "in_flight",
     };
   }
+
+  if (createResult.count > 0) {
+    return {
+      status: "acquired",
+      receiptId: existing.id,
+    };
+  }
+
+  if (existing.route !== input.route) {
+    return {
+      status: "in_flight",
+    };
+  }
+
+  if (existing.responseJson !== null) {
+    return {
+      status: "completed",
+      responseJson: existing.responseJson as Prisma.JsonValue,
+    };
+  }
+
+  return {
+    status: "in_flight",
+  };
 }
 
 export async function storeClientMutationReceiptResponse(

@@ -12,6 +12,7 @@ import {
   formatInvoiceNumber,
   recomputeInvoiceTotals,
   reserveNextInvoiceNumber,
+  toMoneyDecimal,
 } from "@/lib/invoices";
 import { sanitizeLeadBusinessTypeLabel } from "@/lib/lead-display";
 import { leadPhotoSelect, resolveLeadPhotoUrls } from "@/lib/lead-photos";
@@ -105,6 +106,14 @@ function formatCurrencyFromCents(value: number | null | undefined): string {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value / 100);
+}
+
+function isInvoiceSettled(invoice: { status: string; balanceDue: Prisma.Decimal | number | string | null | undefined }) {
+  return invoice.status === "PAID" || toMoneyDecimal(invoice.balanceDue).lte(0);
+}
+
+function getInvoiceStatusClass(status: string | null | undefined) {
+  return String(status || "DRAFT").toLowerCase();
 }
 
 function renderWorkflowAction(action: WorkflowAction, className: string) {
@@ -853,7 +862,7 @@ export default async function ClientJobDetailPage(
   );
   const scheduledJobEvent = bookingProjection.activeBookingEvent;
   const openInvoice =
-    lead.invoices.find((invoice) => invoice.balanceDue.gt(0)) || null;
+    lead.invoices.find((invoice) => toMoneyDecimal(invoice.balanceDue).gt(0)) || null;
   const primaryStatusValue =
     operationalJob?.dispatchStatus === "ON_THE_WAY"
       ? "ON_THE_WAY"
@@ -865,9 +874,7 @@ export default async function ClientJobDetailPage(
           ? operationalJob.status
           : primaryJobEvent?.status || bookingProjection.derivedLeadStatus;
   const primaryStatusLabel = formatLabel(primaryStatusValue);
-  const hasPaidInvoice = latestInvoice
-    ? latestInvoice.status === "PAID" || latestInvoice.balanceDue.lte(0)
-    : false;
+  const hasPaidInvoice = latestInvoice ? isInvoiceSettled(latestInvoice) : false;
   const displayCity = normalizeLeadCity(lead.city) || "-";
   const displayBusinessType = sanitizeLeadBusinessTypeLabel(lead.businessType);
   const effectiveNextFollowUpAt = bookingProjection.hasActiveBooking
@@ -1751,6 +1758,8 @@ export default async function ClientJobDetailPage(
                       scope.internalUser,
                     );
                     const downloadablePdfPath = `/api/invoices/${invoice.id}/pdf`;
+                    const settled = isInvoiceSettled(invoice);
+                    const statusClass = getInvoiceStatusClass(invoice.status);
 
                     return (
                       <tr key={invoice.id}>
@@ -1761,7 +1770,7 @@ export default async function ClientJobDetailPage(
                         </td>
                         <td>
                           <span
-                            className={`badge status-${invoice.status.toLowerCase()}`}
+                            className={`badge status-${statusClass}`}
                           >
                             {formatLabel(invoice.status)}
                           </span>
@@ -1807,7 +1816,7 @@ export default async function ClientJobDetailPage(
                               <button
                                 className="btn secondary"
                                 type="submit"
-                                disabled={invoice.balanceDue.lte(0)}
+                                disabled={settled}
                               >
                                 Mark Paid
                               </button>

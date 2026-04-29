@@ -61,6 +61,34 @@ test("getQueuedSmsSkipReason blocks automation after a hard SMS failure", () => 
   assert.match(reason || "", /fix phone number/i);
 });
 
+test("getQueuedSmsSkipReason blocks explicit SMS consent opt-out before legacy status", () => {
+  const reason = getQueuedSmsSkipReason({
+    jobCreatedAt: new Date("2025-01-01T12:00:00.000Z"),
+    leadStatus: "FOLLOW_UP",
+    smsConsentStatus: "OPTED_OUT",
+    leadLastInboundAt: null,
+    messageType: "AUTOMATION",
+    conversationState: null,
+    now: new Date("2025-01-01T12:05:00.000Z"),
+  });
+
+  assert.match(reason || "", /DNC\/STOP/i);
+});
+
+test("getQueuedSmsSkipReason lets explicit opt-in override legacy DNC fallback", () => {
+  const reason = getQueuedSmsSkipReason({
+    jobCreatedAt: new Date("2025-01-01T12:00:00.000Z"),
+    leadStatus: "DNC",
+    smsConsentStatus: "OPTED_IN",
+    leadLastInboundAt: null,
+    messageType: "AUTOMATION",
+    conversationState: null,
+    now: new Date("2025-01-01T12:05:00.000Z"),
+  });
+
+  assert.equal(reason, null);
+});
+
 test("getQueuedSmsSkipReason lets manual SMS override hard failure guardrails", () => {
   const reason = getQueuedSmsSkipReason({
     jobCreatedAt: new Date("2025-01-01T12:00:00.000Z"),

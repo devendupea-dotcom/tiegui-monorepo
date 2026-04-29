@@ -145,20 +145,20 @@ function getBusinessExpensesCopy(locale: string) {
         receiptAttached: "Recibo adjuntado.",
         receiptRemoved: "Recibo eliminado.",
       },
-      title: "Gastos del negocio",
+      title: "Libro de gastos",
       subtitle: (orgName: string) =>
-        `Da seguimiento a recibos, proveedores, combustible, permisos y gastos por trabajo para ${orgName} en una sola carpeta.`,
+        `Registra recibos, proveedores, órdenes de compra y gastos por trabajo para ${orgName}.`,
       operationalJobHint:
         "Usa la página de trabajo operativo para despacho, agenda, seguimiento y comunicación con el cliente.",
       openOperationalJob: "Abrir trabajo operativo",
-      newExpense: "Nuevo gasto",
+      newExpense: "Registrar gasto",
       summary: {
-        expenseCount: "Cantidad de gastos",
+        expenseCount: "Gastos",
         receiptsAttached: "Recibos adjuntos",
         trackedSpend: "Gasto registrado",
       },
       lookup: {
-        title: "Búsqueda de gastos",
+        title: "Buscar gastos",
         subtitle:
           "Encuentra costos ligados al trabajo cuando necesites recibos, OC o detalle de costos.",
         search: "Buscar",
@@ -181,7 +181,7 @@ function getBusinessExpensesCopy(locale: string) {
       },
       editor: {
         editTitle: "Editar gasto",
-        addTitle: "Nuevo gasto",
+        addTitle: "Registrar gasto",
         subtitle:
           "Adjunta el recibo después de guardar. Actualmente las subidas soportan archivos de imagen.",
         loading: "Cargando...",
@@ -237,20 +237,20 @@ function getBusinessExpensesCopy(locale: string) {
       receiptAttached: "Receipt attached.",
       receiptRemoved: "Receipt removed.",
     },
-    title: "Business Expenses",
+    title: "Expense Ledger",
     subtitle: (orgName: string) =>
-      `Track receipts, supplier spend, fuel, permits, and job-level expenses for ${orgName} in one folder.`,
+      `Track receipts, vendors, purchase orders, and job-level expenses for ${orgName}.`,
     operationalJobHint:
       "Use the Operational Job page for dispatch, schedule, tracking, and customer communication.",
     openOperationalJob: "Open Operational Job",
-    newExpense: "New Expense",
+    newExpense: "Log Expense",
     summary: {
-      expenseCount: "Expense Count",
+      expenseCount: "Expenses",
       receiptsAttached: "Receipts Attached",
       trackedSpend: "Tracked Spend",
     },
     lookup: {
-      title: "Expense Lookup",
+      title: "Find Expenses",
       subtitle:
         "Find job-linked spend when you need receipts, PO linkage, or cost detail.",
       search: "Search",
@@ -273,7 +273,7 @@ function getBusinessExpensesCopy(locale: string) {
     },
     editor: {
       editTitle: "Edit Expense",
-      addTitle: "New Expense",
+      addTitle: "Log Expense",
       subtitle:
         "Attach the receipt after saving. Receipt uploads currently support image files.",
       loading: "Loading...",

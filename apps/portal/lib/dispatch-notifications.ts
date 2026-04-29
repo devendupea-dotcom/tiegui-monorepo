@@ -6,6 +6,7 @@ import { normalizeE164 } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
 import { ensureAutomatedSmsCompliance } from "@/lib/sms-compliance";
+import { getSmsConsentState } from "@/lib/sms-consent";
 import {
   buildDispatchCustomerNotificationReadiness,
   buildDispatchNotificationAttemptIdempotencyKey,
@@ -81,10 +82,16 @@ async function sendDispatchCustomerNotification(input: {
     throw new AppApiError("Dispatch job not found.", 404);
   }
 
+  const smsConsent = await getSmsConsentState({
+    orgId: input.orgId,
+    phoneE164: job.phone,
+  });
+
   const readiness = buildDispatchCustomerNotificationReadiness({
     settings,
     job,
     candidate: input.candidate,
+    smsConsentStatus: smsConsent.status,
   });
 
   if (!readiness.allowed || !readiness.previewBody || !readiness.toNumberE164) {

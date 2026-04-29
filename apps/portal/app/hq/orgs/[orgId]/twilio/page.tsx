@@ -813,16 +813,16 @@ export default async function HqOrgTwilioPage(
     <>
       <section className="card">
         <Link href={`/hq/businesses/${organization.id}`} className="table-link">
-          ← Back to Business Folder
+          ← Back to Client Workspace
         </Link>
-        <h2 style={{ marginTop: 10 }}>Twilio Config · {organization.name}</h2>
+        <h2 style={{ marginTop: 10 }}>Twilio Setup · {organization.name}</h2>
         <p className="muted">
-          Per-org Twilio account setup for inbound routing, outbound messaging,
-          and test sends.
+          Workspace Twilio setup for inbound routing, outbound messaging, and
+          test sends.
         </p>
 
         {error ? <p className="form-error">{error}</p> : null}
-        {saved ? <p className="form-status">Twilio config saved.</p> : null}
+        {saved ? <p className="form-status">Twilio setup saved.</p> : null}
         {validated ? (
           <p className="form-status">Twilio validation passed.</p>
         ) : null}

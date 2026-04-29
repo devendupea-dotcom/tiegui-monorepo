@@ -133,7 +133,7 @@ export default async function HqInboxPage(
     <>
       <section className="card">
         <h2>HQ Inbox</h2>
-        <p className="muted">All leads across every business.</p>
+        <p className="muted">All leads across every client workspace.</p>
 
         <form className="filters" method="get" style={{ marginTop: 12 }}>
           <label>
@@ -162,7 +162,7 @@ export default async function HqInboxPage(
           </label>
 
           <label>
-            Business
+            Client Workspace
             <select name="orgId" defaultValue={orgId}>
               <option value="">All</option>
               {organizations.map((organization) => (
@@ -216,7 +216,7 @@ export default async function HqInboxPage(
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Business</th>
+                  <th>Workspace</th>
                   <th>Contact</th>
                   <th>Phone</th>
                   <th>Status</th>

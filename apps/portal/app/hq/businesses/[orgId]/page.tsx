@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
+import type { OrganizationPackage } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime, formatLabel, isOverdueFollowUp } from "@/lib/hq";
 import { normalizeE164 } from "@/lib/phone";
@@ -8,6 +9,11 @@ import { intakeAutomationDefaults } from "@/lib/intake-automation";
 import { requireInternalUser } from "@/lib/session";
 import { getGoogleSyncAlertState } from "@/lib/integrations/google-sync";
 import { getPhotoStorageReadiness } from "@/lib/storage";
+import { loadControlledRolloutReadinessReport } from "@/lib/controlled-rollout-readiness";
+import {
+  getPackageEntitlements,
+  ORGANIZATION_PACKAGE_ORDER,
+} from "@/lib/package-entitlements";
 import LeadMessageThread from "@/app/_components/lead-message-thread";
 import RoundRobinTestCard from "./round-robin-test-card";
 
@@ -15,10 +21,10 @@ export const dynamic = "force-dynamic";
 
 const tabs = [
   { key: "overview", label: "Overview" },
-  { key: "leads", label: "Leads" },
-  { key: "calls", label: "Calls" },
-  { key: "messages", label: "Messages" },
-  { key: "calendar", label: "Calendar" },
+  { key: "leads", label: "Lead Pipeline" },
+  { key: "calls", label: "Call Log" },
+  { key: "messages", label: "Message Threads" },
+  { key: "calendar", label: "Schedule" },
 ] as const;
 
 type TabKey = (typeof tabs)[number]["key"];
@@ -93,6 +99,144 @@ async function updateOrgSmsSettingsAction(formData: FormData) {
   revalidatePath(`/app`);
 
   redirect(`/hq/businesses/${orgId}?tab=messages&saved=sms`);
+}
+
+async function updateOrgMessagingLaunchModeAction(formData: FormData) {
+  "use server";
+
+  const orgId = String(formData.get("orgId") || "").trim();
+  const mode =
+    String(formData.get("messagingLaunchMode") || "").trim() === "NO_SMS"
+      ? "NO_SMS"
+      : "LIVE_SMS";
+
+  if (!orgId) {
+    redirect("/hq/businesses");
+  }
+
+  await requireInternalUser(`/hq/businesses/${orgId}`);
+
+  if (mode === "LIVE_SMS") {
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { package: true },
+    });
+    if (!org) {
+      redirect("/hq/businesses");
+    }
+    if (!getPackageEntitlements(org.package).canUseLiveSms) {
+      redirect(`/hq/businesses/${orgId}?error=package-live-sms`);
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.organization.update({
+      where: { id: orgId },
+      data:
+        mode === "NO_SMS"
+          ? {
+              messagingLaunchMode: "NO_SMS",
+              smsFromNumberE164: null,
+              missedCallAutoReplyOn: false,
+              intakeAutomationEnabled: false,
+              autoReplyEnabled: false,
+              followUpsEnabled: false,
+              autoBookingEnabled: false,
+            }
+          : {
+              messagingLaunchMode: "LIVE_SMS",
+            },
+    });
+
+    if (mode === "NO_SMS") {
+      await tx.organizationMessagingSettings.upsert({
+        where: { orgId },
+        create: {
+          orgId,
+          autoReplyEnabled: false,
+          followUpsEnabled: false,
+          autoBookingEnabled: false,
+          dispatchSmsEnabled: false,
+        },
+        update: {
+          autoReplyEnabled: false,
+          followUpsEnabled: false,
+          autoBookingEnabled: false,
+          dispatchSmsEnabled: false,
+        },
+      });
+    }
+  });
+
+  revalidatePath(`/hq/businesses/${orgId}`);
+  revalidatePath(`/hq/messaging`);
+  revalidatePath(`/app`);
+
+  redirect(`/hq/businesses/${orgId}?saved=messaging-mode`);
+}
+
+async function updateOrgPackageAction(formData: FormData) {
+  "use server";
+
+  const orgId = String(formData.get("orgId") || "").trim();
+  const packageValue = String(formData.get("package") || "").trim() as OrganizationPackage;
+
+  if (!orgId) {
+    redirect("/hq/businesses");
+  }
+
+  await requireInternalUser(`/hq/businesses/${orgId}`);
+
+  if (!ORGANIZATION_PACKAGE_ORDER.includes(packageValue)) {
+    redirect(`/hq/businesses/${orgId}?error=invalid-package`);
+  }
+
+  const entitlements = getPackageEntitlements(packageValue);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.organization.update({
+      where: { id: orgId },
+      data: entitlements.requiresNoSmsMode
+        ? {
+            package: packageValue,
+            messagingLaunchMode: "NO_SMS",
+            smsFromNumberE164: null,
+            missedCallAutoReplyOn: false,
+            intakeAutomationEnabled: false,
+            autoReplyEnabled: false,
+            followUpsEnabled: false,
+            autoBookingEnabled: false,
+          }
+        : {
+            package: packageValue,
+          },
+    });
+
+    if (entitlements.requiresNoSmsMode) {
+      await tx.organizationMessagingSettings.upsert({
+        where: { orgId },
+        create: {
+          orgId,
+          autoReplyEnabled: false,
+          followUpsEnabled: false,
+          autoBookingEnabled: false,
+          dispatchSmsEnabled: false,
+        },
+        update: {
+          autoReplyEnabled: false,
+          followUpsEnabled: false,
+          autoBookingEnabled: false,
+          dispatchSmsEnabled: false,
+        },
+      });
+    }
+  });
+
+  revalidatePath(`/hq/businesses/${orgId}`);
+  revalidatePath(`/hq/messaging`);
+  revalidatePath(`/app`);
+
+  redirect(`/hq/businesses/${orgId}?saved=package`);
 }
 
 async function createSmsTemplateAction(formData: FormData) {
@@ -185,16 +329,16 @@ export default async function HqBusinessFolderPage(
     <>
       <section className="card">
         <Link href="/hq/businesses" className="table-link">
-          ← All Businesses
+          ← All Client Workspaces
         </Link>
         <h2 style={{ marginTop: 8 }}>{organization.name}</h2>
-        <p className="muted">Job workspace • created {formatDateTime(organization.createdAt)}</p>
+        <p className="muted">Client workspace • created {formatDateTime(organization.createdAt)}</p>
         <div className="quick-links" style={{ marginTop: 10 }}>
           <Link className="btn secondary" href={`/app?orgId=${organization.id}`}>
-            Open Client Portal View
+            Open Workspace Preview
           </Link>
           <Link className="btn secondary" href={`/hq/orgs/${organization.id}/twilio`}>
-            Twilio Config
+            Twilio Setup
           </Link>
           <Link className="btn secondary" href={`/hq/orgs/${organization.id}/website-leads`}>
             Website Lead Sources
@@ -232,7 +376,18 @@ async function OverviewTab({ orgId }: { orgId: string }) {
   const start30 = new Date(now);
   start30.setDate(start30.getDate() - 30);
 
-  const [leadsCount, bookedCount, dueCount, callsCount, messagesCount, eventsCount, organization, settings, cronState] = await Promise.all([
+  const [
+    leadsCount,
+    bookedCount,
+    dueCount,
+    callsCount,
+    messagesCount,
+    eventsCount,
+    organization,
+    settings,
+    cronState,
+    rolloutReadiness,
+  ] = await Promise.all([
     prisma.lead.count({ where: { orgId } }),
     prisma.event.findMany({
       where: {
@@ -279,6 +434,7 @@ async function OverviewTab({ orgId }: { orgId: string }) {
       errorRateWindowMinutes: 60,
       dedupeWindowMinutes: 10,
     }),
+    loadControlledRolloutReadinessReport({ orgId, now }),
   ]);
 
   const photoStorage = getPhotoStorageReadiness();
@@ -377,16 +533,197 @@ async function OverviewTab({ orgId }: { orgId: string }) {
             <p className="muted">{onboardingStatusLabel}</p>
             <div className="quick-links">
               <Link className="btn secondary" href={`/app/onboarding?orgId=${encodeURIComponent(orgId)}`}>
-                Open onboarding wizard
+                Open Onboarding
               </Link>
               <Link className="btn secondary" href={`/app/settings/integrations?orgId=${encodeURIComponent(orgId)}`}>
-                Open integrations
+                Open Integrations
               </Link>
             </div>
           </div>
         </article>
         <RoundRobinTestCard orgId={orgId} />
       </section>
+
+      {rolloutReadiness ? (
+        <section className={`card${rolloutReadiness.readyForControlledCustomer ? "" : " tone-panel danger"}`}>
+          <div className="thread-top">
+            <div>
+              <h2>Controlled Rollout Readiness</h2>
+              <p className="muted">
+                Customer launch gate for controlled rollout slots #2-#5. This is separate from broad self-serve production approval.
+              </p>
+              <p className="muted">
+                Package: <strong>{rolloutReadiness.summary.packageLabel}</strong>
+                {rolloutReadiness.summary.packageManagedSetupIncluded
+                  ? " · managed setup"
+                  : ""}
+              </p>
+              <p className="muted">
+                Messaging mode:{" "}
+                <strong>
+                  {rolloutReadiness.summary.messagingLaunchMode === "NO_SMS"
+                    ? "No SMS / no Twilio"
+                    : "Live SMS / Twilio"}
+                </strong>
+              </p>
+            </div>
+            <span
+              className={`badge status-${
+                rolloutReadiness.readyForControlledCustomer ? "success" : "error"
+              }`}
+            >
+              {rolloutReadiness.readyForControlledCustomer ? "Ready" : "Blocked"}
+            </span>
+          </div>
+
+          <div className="grid" style={{ marginTop: 12 }}>
+            <article className="kpi-card">
+              <h3>Blockers</h3>
+              <p className="kpi-value">{rolloutReadiness.blockingCount}</p>
+            </article>
+            <article className="kpi-card">
+              <h3>Manual Items</h3>
+              <p className="kpi-value">{rolloutReadiness.manualCount}</p>
+            </article>
+            <article className="kpi-card">
+              <h3>Messaging</h3>
+              <p className="kpi-value" style={{ fontSize: "1.4rem" }}>
+                {rolloutReadiness.summary.messagingLaunchMode === "NO_SMS"
+                  ? "No SMS"
+                  : rolloutReadiness.summary.twilioStatus}
+              </p>
+            </article>
+            <article className="kpi-card">
+              <h3>Package</h3>
+              <p className="kpi-value" style={{ fontSize: "1.2rem" }}>
+                {rolloutReadiness.summary.packageLabel}
+              </p>
+            </article>
+            <article className="kpi-card">
+              <h3>Failed SMS</h3>
+              <p className="kpi-value">{rolloutReadiness.summary.failedSms30d}</p>
+            </article>
+            <article className="kpi-card">
+              <h3>Unmatched</h3>
+              <p className="kpi-value">{rolloutReadiness.summary.unmatchedCallbacks30d}</p>
+            </article>
+            <article className="kpi-card">
+              <h3>Billing</h3>
+              <p className="kpi-value" style={{ fontSize: "1.4rem" }}>
+                {rolloutReadiness.summary.billingMode === "stripe_connected"
+                  ? "Stripe"
+                  : "Manual"}
+              </p>
+            </article>
+          </div>
+
+          <div className="quick-links" style={{ marginTop: 12 }}>
+            <form action={updateOrgPackageAction}>
+              <input type="hidden" name="orgId" value={orgId} />
+              <label className="sr-only" htmlFor="organization-package">
+                Launch package
+              </label>
+              <select
+                id="organization-package"
+                name="package"
+                defaultValue={rolloutReadiness.summary.package}
+              >
+                {ORGANIZATION_PACKAGE_ORDER.map((packageValue) => {
+                  const packageInfo = getPackageEntitlements(packageValue);
+                  return (
+                    <option key={packageValue} value={packageValue}>
+                      {packageInfo.shortLabel}
+                    </option>
+                  );
+                })}
+              </select>
+              <button className="btn secondary" type="submit">
+                Set Package
+              </button>
+            </form>
+            <form action={updateOrgMessagingLaunchModeAction}>
+              <input type="hidden" name="orgId" value={orgId} />
+              <input type="hidden" name="messagingLaunchMode" value="LIVE_SMS" />
+              <button
+                className="btn secondary"
+                type="submit"
+                disabled={
+                  rolloutReadiness.summary.messagingLaunchMode === "LIVE_SMS" ||
+                  !rolloutReadiness.summary.packageCanUseLiveSms
+                }
+                title={
+                  rolloutReadiness.summary.packageCanUseLiveSms
+                    ? undefined
+                    : "This package does not include the SMS/Twilio module."
+                }
+              >
+                Use Live SMS
+              </button>
+            </form>
+            <form action={updateOrgMessagingLaunchModeAction}>
+              <input type="hidden" name="orgId" value={orgId} />
+              <input type="hidden" name="messagingLaunchMode" value="NO_SMS" />
+              <button
+                className="btn secondary"
+                type="submit"
+                disabled={rolloutReadiness.summary.messagingLaunchMode === "NO_SMS"}
+              >
+                Launch Without SMS
+              </button>
+            </form>
+            <Link className="btn secondary" href={rolloutReadiness.links.hqMessaging}>
+              Open /hq/messaging
+            </Link>
+            <Link className="btn secondary" href={rolloutReadiness.links.twilio}>
+              Open Twilio
+            </Link>
+            <Link className="btn secondary" href={rolloutReadiness.links.websiteLeadSources}>
+              Website Sources
+            </Link>
+            {rolloutReadiness.links.smsDebug ? (
+              <Link className="btn secondary" href={rolloutReadiness.links.smsDebug}>
+                SMS Debug
+              </Link>
+            ) : null}
+          </div>
+          {!rolloutReadiness.summary.packageCanUseLiveSms ? (
+            <p className="muted" style={{ marginTop: 10 }}>
+              This package is portal-only. It can launch with CRM, scheduling,
+              estimates, invoices, files, and website intake, but not live SMS
+              until the org moves to a messaging-enabled package.
+            </p>
+          ) : null}
+
+          <ul className="template-list" style={{ marginTop: 12 }}>
+            {rolloutReadiness.items.map((item) => (
+              <li key={item.key} className="template-item">
+                <div className="thread-top">
+                  <strong>{item.label}</strong>
+                  <span
+                    className={`badge status-${
+                      item.status === "ready"
+                        ? "success"
+                        : item.status === "manual"
+                          ? "running"
+                          : "error"
+                    }`}
+                  >
+                    {item.status === "ready"
+                      ? "Ready"
+                      : item.status === "manual"
+                        ? "Manual"
+                        : "Blocked"}
+                  </span>
+                </div>
+                <p className="muted">{item.detail}</p>
+                <p className="muted">
+                  <strong>Next:</strong> {item.action}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="card">
         <h2>Go-Live Hardening Checklist</h2>
@@ -823,7 +1160,7 @@ async function MessagesTab({
       <section className="grid two-col">
         <article className="card">
           <h2>Lead Threads</h2>
-          <p className="muted">Pick a lead and send replies directly from this job workspace.</p>
+          <p className="muted">Pick a lead and send replies from this client workspace.</p>
 
           {leadThreads.length === 0 ? (
             <p className="muted" style={{ marginTop: 12 }}>

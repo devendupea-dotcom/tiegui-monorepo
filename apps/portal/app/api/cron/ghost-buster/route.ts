@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
 import { ensureAutomatedSmsCompliance } from "@/lib/sms-compliance";
 import { getGhostBusterSkipReason } from "@/lib/sms-automation-guards";
+import { getSmsSendBlockState } from "@/lib/sms-consent";
 
 export const dynamic = "force-dynamic";
 
@@ -235,7 +236,12 @@ async function handleGhostBusterCron(req: Request) {
       totalProcessed += leads.length;
 
       for (const lead of leads) {
-        if (lead.status === "DNC") {
+        const smsBlock = await getSmsSendBlockState({
+          orgId: org.id,
+          phoneE164: lead.phoneE164,
+          legacyLeadStatus: lead.status,
+        });
+        if (smsBlock.blocked) {
           continue;
         }
 

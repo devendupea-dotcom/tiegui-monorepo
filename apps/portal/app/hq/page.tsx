@@ -50,7 +50,7 @@ export default async function HqDashboardPage() {
     <>
       <section className="grid">
         <article className="card kpi-card">
-          <h2>New Leads (7d)</h2>
+          <h2>New Leads, 7 Days</h2>
           <p className="kpi-value">{newLeads}</p>
         </article>
         <article className="card kpi-card">
@@ -58,27 +58,30 @@ export default async function HqDashboardPage() {
           <p className="kpi-value">{dueToday}</p>
         </article>
         <article className="card kpi-card">
-          <h2>Missed Calls (7d)</h2>
+          <h2>Missed Calls, 7 Days</h2>
           <p className="kpi-value">{missedCalls}</p>
         </article>
         <article className="card kpi-card">
-          <h2>Booked (30d)</h2>
+          <h2>Booked, 30 Days</h2>
           <p className="kpi-value">{bookedLeads.length}</p>
         </article>
       </section>
 
       <section className="card">
-        <h2>HQ Command Center</h2>
-        <p className="muted">Cross-org controls for inbox, scheduling, and business workspaces.</p>
+        <h2>HQ Overview</h2>
+        <p className="muted">Cross-client controls for leads, scheduling, workspace health, and integrations.</p>
         <div className="quick-links" style={{ marginTop: 12 }}>
           <Link className="btn secondary" href="/hq/inbox">
-            Open Inbox
+            HQ Inbox
+          </Link>
+          <Link className="btn secondary" href="/hq/messaging">
+            Messaging Health
           </Link>
           <Link className="btn secondary" href="/hq/calendar">
-            Open Calendar
+            HQ Calendar
           </Link>
           <Link className="btn secondary" href="/hq/businesses">
-            View Businesses
+            Client Workspaces
           </Link>
           <Link className="btn secondary" href="/hq/integrations/google/health">
             Google Sync Health

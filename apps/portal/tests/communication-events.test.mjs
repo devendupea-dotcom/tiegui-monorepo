@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildCommunicationIdempotencyKey,
+  recordOutboundSmsCommunicationEvent,
   sortTimelineEventsStable,
   upsertCommunicationEvent,
   upsertVoicemailArtifact,
@@ -85,6 +86,77 @@ test("upsertCommunicationEvent creates a conversation state when the lead is lin
 
   assert.equal(calls[0].create.contactId, "contact_1");
   assert.equal(calls[0].create.conversationId, "conversation_1");
+});
+
+test("recordOutboundSmsCommunicationEvent audits provider timeout and failure metadata", async () => {
+  const calls = [];
+  const tx = {
+    communicationEvent: {
+      async upsert(input) {
+        calls.push(input);
+        return input;
+      },
+    },
+  };
+
+  await recordOutboundSmsCommunicationEvent(tx, {
+    orgId: "org_1",
+    leadId: "lead_1",
+    contactId: "contact_1",
+    conversationId: "conversation_1",
+    messageId: "message_1",
+    actorUserId: "user_1",
+    body: "On my way.",
+    fromNumberE164: "+15557654321",
+    toNumberE164: "+15551234567",
+    providerMessageSid: null,
+    status: "QUEUED",
+    deliveryNotice:
+      "Twilio send timed out before TieGui received confirmation. The SMS may have been accepted; refresh the thread or check Twilio before retrying.",
+    providerStatus: "timeout",
+    providerErrorCode: "TIEGUI_TIMEOUT",
+    providerErrorMessage: "Twilio request timed out before TieGui received provider confirmation.",
+    providerRequestTimedOut: true,
+    providerAcceptedUnknown: true,
+    clientIdempotencyKey: "client-key-1",
+    failure: {
+      category: "UNKNOWN_PROVIDER_ACCEPTANCE",
+      label: "Provider confirmation timed out",
+      operatorAction: "REVIEW_MANUALLY",
+      operatorActionLabel: "Check Twilio before retrying",
+      operatorDetail:
+        "TieGui did not receive Twilio confirmation. The SMS may have been accepted, so refresh the thread or check Twilio before sending again.",
+      retryRecommended: false,
+      blocksAutomationRetry: true,
+    },
+    occurredAt: new Date("2026-04-27T20:30:00.000Z"),
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].create.providerStatus, "timeout");
+  assert.deepEqual(calls[0].create.metadataJson, {
+    body: "On my way.",
+    fromNumberE164: "+15557654321",
+    toNumberE164: "+15551234567",
+    status: "QUEUED",
+    providerMessageSid: null,
+    providerStatus: "timeout",
+    providerErrorCode: "TIEGUI_TIMEOUT",
+    providerErrorMessage: "Twilio request timed out before TieGui received provider confirmation.",
+    providerRequestTimedOut: true,
+    providerAcceptedUnknown: true,
+    clientIdempotencyKey: "client-key-1",
+    failureCategory: "UNKNOWN_PROVIDER_ACCEPTANCE",
+    failureLabel: "Provider confirmation timed out",
+    failureOperatorAction: "REVIEW_MANUALLY",
+    failureOperatorActionLabel: "Check Twilio before retrying",
+    failureOperatorDetail:
+      "TieGui did not receive Twilio confirmation. The SMS may have been accepted, so refresh the thread or check Twilio before sending again.",
+    failureRetryRecommended: false,
+    failureBlocksAutomationRetry: true,
+    deliveryNotice:
+      "Twilio send timed out before TieGui received confirmation. The SMS may have been accepted; refresh the thread or check Twilio before retrying.",
+  });
 });
 
 test("upsertCommunicationEvent rejects partial lead linkage when no contact can be resolved", async () => {

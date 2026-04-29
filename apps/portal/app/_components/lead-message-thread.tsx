@@ -39,6 +39,13 @@ function formatMessageTimestamp(value: string): string {
   });
 }
 
+function createClientMutationId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `sms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function LeadMessageThread({
   leadId,
   initialMessages,
@@ -51,6 +58,7 @@ export default function LeadMessageThread({
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -71,13 +79,15 @@ export default function LeadMessageThread({
     event.preventDefault();
 
     const body = draft.trim();
-    if (!body || submitting || !senderNumber || !canSend) {
+    if (!body || submitting || submittingRef.current || !senderNumber || !canSend) {
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     setStatus(null);
 
+    const idempotencyKey = createClientMutationId();
     const tempId = `temp-${Date.now()}`;
     const optimisticMessage: ThreadMessage = {
       id: tempId,
@@ -97,8 +107,11 @@ export default function LeadMessageThread({
     try {
       const response = await fetch(`/api/leads/${leadId}/messages`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ body }),
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ body, idempotencyKey }),
       });
 
       const payload = (await response.json()) as {
@@ -122,6 +135,7 @@ export default function LeadMessageThread({
                 : "Could not send message."),
         );
         setSubmitting(false);
+        submittingRef.current = false;
         return;
       }
 
@@ -150,6 +164,7 @@ export default function LeadMessageThread({
       setStatus("Could not send message.");
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   }
 

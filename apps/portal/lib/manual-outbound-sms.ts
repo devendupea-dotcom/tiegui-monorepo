@@ -9,12 +9,16 @@ import type { AppApiActor } from "@/lib/app-api-permissions";
 import { normalizeE164 } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
+import { recoverUnmatchedOutboundSmsStatusCallbacks } from "@/lib/sms-status-reconciliation";
+import { maskSid } from "@/lib/twilio-config-crypto";
+import { getPackageEntitlements } from "@/lib/package-entitlements";
 import {
   canComposeManualSms,
   getTwilioMessagingComposeNotice,
   resolveTwilioMessagingReadiness,
   type TwilioMessagingReadinessCode,
 } from "@/lib/twilio-readiness";
+import type { SmsFailureClassification } from "@/lib/sms-failure-intelligence";
 
 type ManualLeadContext = {
   id: string;
@@ -55,6 +59,7 @@ export type ManualLeadSmsSendResult =
       deliveryState: ManualSmsDeliveryState;
       liveSend: boolean;
       readinessCode: TwilioMessagingReadinessCode;
+      failure?: SmsFailureClassification | null;
     }
   | {
       ok: true;
@@ -64,6 +69,7 @@ export type ManualLeadSmsSendResult =
       deliveryState: Exclude<ManualSmsDeliveryState, "SUPPRESSED" | "NOT_LIVE">;
       liveSend: boolean;
       readinessCode: TwilioMessagingReadinessCode;
+      failure?: SmsFailureClassification | null;
     };
 
 function resolveDeliveryState(status: MessageStatus): "SENT" | "QUEUED" | "FAILED" {
@@ -81,11 +87,14 @@ export async function sendManualLeadSms(input: {
   lead: ManualLeadContext;
   body: string;
   fromNumberE164?: string | null;
+  clientIdempotencyKey?: string | null;
 }): Promise<ManualLeadSmsSendResult> {
   const organization = await prisma.organization.findUnique({
     where: { id: input.lead.orgId },
     select: {
+      package: true,
       smsFromNumberE164: true,
+      messagingLaunchMode: true,
       twilioConfig: {
         select: {
           phoneNumber: true,
@@ -98,6 +107,26 @@ export async function sendManualLeadSms(input: {
   const readiness = resolveTwilioMessagingReadiness({
     twilioConfig: organization?.twilioConfig || null,
   });
+  const packageEntitlements = getPackageEntitlements(organization?.package);
+
+  if (
+    organization?.messagingLaunchMode === "NO_SMS" ||
+    !packageEntitlements.canUseLiveSms
+  ) {
+    return {
+      ok: false,
+      httpStatus: 409,
+      error: !packageEntitlements.canUseLiveSms
+        ? "SMS is not included in this business package. Leads, jobs, estimates, invoices, files, and internal notes can still be used without Twilio."
+        : "SMS is disabled for this business. Leads, jobs, estimates, invoices, files, and internal notes can still be used without Twilio.",
+      notice: !packageEntitlements.canUseLiveSms
+        ? "Move this org to a messaging-enabled package before enabling live SMS."
+        : "SMS is disabled for this business. Enable Live SMS only when the customer opts into Twilio.",
+      deliveryState: "NOT_LIVE",
+      liveSend: false,
+      readinessCode: readiness.code,
+    };
+  }
 
   const resolvedFromNumber =
     normalizeE164(input.fromNumberE164 || null) ||
@@ -211,6 +240,13 @@ export async function sendManualLeadSms(input: {
       providerMessageSid: providerResult.providerMessageSid,
       status: providerResult.status,
       deliveryNotice: providerResult.notice || null,
+      providerStatus: providerResult.providerStatus || null,
+      providerErrorCode: providerResult.providerErrorCode || null,
+      providerErrorMessage: providerResult.providerErrorMessage || null,
+      providerRequestTimedOut: providerResult.providerRequestTimedOut || false,
+      providerAcceptedUnknown: providerResult.providerAcceptedUnknown || false,
+      failure: providerResult.failure || null,
+      clientIdempotencyKey: input.clientIdempotencyKey || null,
       occurredAt: message.createdAt,
     });
 
@@ -273,6 +309,20 @@ export async function sendManualLeadSms(input: {
     return message;
   });
 
+  try {
+    await recoverUnmatchedOutboundSmsStatusCallbacks({
+      orgId: input.lead.orgId,
+      providerMessageSid: providerResult.providerMessageSid,
+    });
+  } catch (error) {
+    console.warn(
+      `[sms:manual] failed to recover unmatched status callback providerMessageSid=${maskSid(
+        providerResult.providerMessageSid,
+      )}`,
+      error,
+    );
+  }
+
   return {
     ok: true,
     httpStatus: 200,
@@ -281,5 +331,6 @@ export async function sendManualLeadSms(input: {
     deliveryState: resolveDeliveryState(providerResult.status),
     liveSend: readiness.code === "ACTIVE",
     readinessCode: readiness.code,
+    failure: providerResult.failure || null,
   };
 }

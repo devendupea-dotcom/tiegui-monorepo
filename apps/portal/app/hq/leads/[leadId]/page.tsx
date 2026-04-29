@@ -249,7 +249,7 @@ export default async function LeadDetailPage(
           ← Back to Inbox
         </Link>
         <h2 style={{ marginTop: 8 }}>{lead.contactName || lead.businessName || lead.phoneE164}</h2>
-        <p className="muted">Business: {lead.org.name}</p>
+        <p className="muted">Workspace: {lead.org.name}</p>
         <div className="quick-meta" style={{ marginTop: 12 }}>
           <span className={`badge status-${displayedLeadStatus.toLowerCase()}`}>{formatLabel(displayedLeadStatus)}</span>
           <span className={`badge priority-${lead.priority.toLowerCase()}`}>
@@ -277,6 +277,12 @@ export default async function LeadDetailPage(
           >
             Messages
           </Link>
+          <Link
+            href={`/hq/leads/${lead.id}/sms-debug`}
+            className="tab-chip"
+          >
+            SMS Debug
+          </Link>
         </div>
       </section>
 
@@ -287,7 +293,7 @@ export default async function LeadDetailPage(
               <h3>Lead Details</h3>
               <dl className="detail-list" style={{ marginTop: 10 }}>
                 <div>
-                  <dt>Business</dt>
+                  <dt>Customer Business</dt>
                   <dd>{lead.businessName || "-"}</dd>
                 </div>
                 <div>

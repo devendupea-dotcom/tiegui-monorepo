@@ -30,6 +30,7 @@ export type MissedCallRecoveryDecision =
 export type MissedCallEligibilityInput = {
   missedCallAutoReplyOn: boolean;
   leadStatus: string | null;
+  smsConsentStatus?: "OPTED_IN" | "OPTED_OUT" | "UNKNOWN" | null;
   fromNumberE164: string | null;
   senderNumberE164: string | null;
   hasAnsweredEvent: boolean;
@@ -102,7 +103,10 @@ export function evaluateMissedCallTextEligibility(input: MissedCallEligibilityIn
     };
   }
 
-  if (input.leadStatus === "DNC") {
+  if (
+    input.smsConsentStatus === "OPTED_OUT" ||
+    (input.smsConsentStatus !== "OPTED_IN" && input.leadStatus === "DNC")
+  ) {
     return {
       action: "skip",
       reason: "dnc",

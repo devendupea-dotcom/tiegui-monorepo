@@ -217,13 +217,18 @@ export function shouldSkipQueuedFollowUp(input: {
 export function getQueuedSmsSkipReason(input: {
   jobCreatedAt: Date;
   leadStatus: string;
+  smsConsentStatus?: "OPTED_IN" | "OPTED_OUT" | "UNKNOWN" | null;
   leadLastInboundAt: Date | null;
   messageType: "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
   recentHardSmsFailure?: SmsAutomationHardFailureSnapshot | null;
   conversationState: DispatchConversationSnapshot | null;
   now: Date;
 }): string | null {
-  if (input.leadStatus === "DNC") {
+  if (input.smsConsentStatus === "OPTED_OUT") {
+    return "Lead is opted out (DNC/STOP).";
+  }
+
+  if (input.smsConsentStatus !== "OPTED_IN" && input.leadStatus === "DNC") {
     return "Lead is opted out (DNC/STOP).";
   }
 

@@ -1,8 +1,4 @@
-// TODO: Opt-out model currently uses lead.status === "DNC".
-// Future: migrate to dedicated smsOptedOut boolean on contact record
-//         for finer-grained control independent of lead status.
-import { Prisma, type MessageStatus } from "@prisma/client";
-import { upsertCommunicationEvent } from "@/lib/communication-events";
+import type { MessageStatus } from "@prisma/client";
 import { normalizeEnvValue } from "./env";
 import { prisma } from "@/lib/prisma";
 import { startOfUtcMonth } from "@/lib/usage";
@@ -13,11 +9,12 @@ import { getTwilioOrgRuntimeConfigByOrgId, sendTwilioMessageWithConfig } from "@
 import { getConfiguredBaseUrl } from "@/lib/urls";
 import {
   mapTwilioInitialSendStatus,
-  mapTwilioLifecycleStatus,
-  shouldAdvanceOutboundSmsLifecycle,
 } from "@/lib/sms-lifecycle";
-import { buildSmsFailureReason, classifySmsFailure } from "@/lib/sms-failure-intelligence";
-import { buildUnmatchedSmsStatusCallbackEvent } from "@/lib/sms-status-diagnostics";
+import {
+  type SmsFailureClassification,
+} from "@/lib/sms-failure-intelligence";
+import { getSmsConsentState } from "@/lib/sms-consent";
+import { getPackageEntitlements } from "@/lib/package-entitlements";
 
 type SendSmsInput = {
   orgId: string;
@@ -29,175 +26,17 @@ type SendSmsInput = {
 
 type SendSmsResult = {
   providerMessageSid: string | null;
+  providerStatus?: string | null;
+  providerErrorCode?: string | null;
+  providerErrorMessage?: string | null;
+  providerRequestTimedOut?: boolean;
+  providerAcceptedUnknown?: boolean;
+  failure?: SmsFailureClassification | null;
   status: MessageStatus;
   resolvedFromNumberE164: string | null;
   notice?: string;
   suppressed?: boolean;
 };
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function recordString(record: Record<string, unknown> | null, key: string): string | null {
-  const value = record?.[key];
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-export async function reconcileOutboundSmsProviderStatus(input: {
-  orgId: string;
-  providerMessageSid: string;
-  providerStatus: string;
-  errorCode?: string | null;
-  errorMessage?: string | null;
-  occurredAt?: Date;
-}): Promise<{ updatedMessages: number; updatedEvents: number; unmatchedCallbacks: number }> {
-  const normalizedProviderStatus = input.providerStatus.trim().toLowerCase();
-  const nextLifecycle = mapTwilioLifecycleStatus(normalizedProviderStatus);
-  if (!normalizedProviderStatus || !nextLifecycle) {
-    return {
-      updatedMessages: 0,
-      updatedEvents: 0,
-      unmatchedCallbacks: 0,
-    };
-  }
-
-  const [message, communicationEvents] = await Promise.all([
-    prisma.message.findFirst({
-      where: {
-        orgId: input.orgId,
-        providerMessageSid: input.providerMessageSid,
-      },
-      select: {
-        id: true,
-        status: true,
-      },
-    }),
-    prisma.communicationEvent.findMany({
-      where: {
-        orgId: input.orgId,
-        providerMessageSid: input.providerMessageSid,
-      },
-      select: {
-        id: true,
-        providerStatus: true,
-        metadataJson: true,
-      },
-    }),
-  ]);
-
-  if (!message && communicationEvents.length === 0) {
-    const occurredAt = input.occurredAt || new Date();
-    const diagnostic = buildUnmatchedSmsStatusCallbackEvent({
-      orgId: input.orgId,
-      providerMessageSid: input.providerMessageSid,
-      providerStatus: normalizedProviderStatus,
-      lifecycleStatus: nextLifecycle,
-      errorCode: input.errorCode || null,
-      errorMessage: input.errorMessage || null,
-      occurredAt,
-    });
-
-    await prisma.$transaction(async (tx) => {
-      await upsertCommunicationEvent(tx, {
-        orgId: input.orgId,
-        type: "OUTBOUND_SMS_SENT",
-        channel: "SMS",
-        occurredAt,
-        summary: diagnostic.summary,
-        metadataJson: diagnostic.metadataJson as Prisma.InputJsonValue,
-        provider: "TWILIO",
-        providerMessageSid: input.providerMessageSid,
-        providerStatus: normalizedProviderStatus,
-        idempotencyKey: diagnostic.idempotencyKey,
-      });
-    });
-
-    return {
-      updatedMessages: 0,
-      updatedEvents: 1,
-      unmatchedCallbacks: 1,
-    };
-  }
-
-  let updatedMessages = 0;
-  if (message && shouldAdvanceOutboundSmsLifecycle(message.status, nextLifecycle)) {
-    await prisma.message.update({
-      where: {
-        id: message.id,
-      },
-      data: {
-        status: nextLifecycle,
-      },
-    });
-    updatedMessages = 1;
-  }
-
-  let updatedEvents = 0;
-  for (const event of communicationEvents) {
-    const metadata = asRecord(event.metadataJson);
-    const currentLifecycle = mapTwilioLifecycleStatus(recordString(metadata, "status") || event.providerStatus || null);
-    if (!shouldAdvanceOutboundSmsLifecycle(currentLifecycle, nextLifecycle)) {
-      continue;
-    }
-
-    const hasDispatchContext = Boolean(recordString(metadata, "dispatchJobId"));
-    const failureClassification = classifySmsFailure({
-      providerStatus: normalizedProviderStatus,
-      lifecycleStatus: nextLifecycle,
-      errorCode: input.errorCode || null,
-      errorMessage: input.errorMessage || null,
-    });
-    const nextMetadata: Record<string, unknown> = {
-      ...(metadata || {}),
-      status: nextLifecycle,
-      providerStatus: normalizedProviderStatus,
-      providerStatusUpdatedAt: (input.occurredAt || new Date()).toISOString(),
-      providerErrorCode: input.errorCode?.trim() || null,
-      providerErrorMessage: input.errorMessage?.trim() || null,
-      failureCategory: failureClassification?.category || null,
-      failureLabel: failureClassification?.label || null,
-      failureOperatorAction: failureClassification?.operatorAction || null,
-      failureOperatorActionLabel: failureClassification?.operatorActionLabel || null,
-      failureOperatorDetail: failureClassification?.operatorDetail || null,
-      failureRetryRecommended: failureClassification?.retryRecommended ?? null,
-      failureBlocksAutomationRetry: failureClassification?.blocksAutomationRetry ?? null,
-    };
-
-    if (hasDispatchContext) {
-      nextMetadata.dispatchDeliveryState = normalizedProviderStatus;
-      nextMetadata.dispatchFailureReason =
-        nextLifecycle === "FAILED"
-          ? buildSmsFailureReason({
-              providerStatus: normalizedProviderStatus,
-              errorCode: input.errorCode || null,
-              errorMessage: input.errorMessage || null,
-              lifecycleStatus: nextLifecycle,
-            })
-          : null;
-    }
-
-    await prisma.communicationEvent.update({
-      where: {
-        id: event.id,
-      },
-      data: {
-        providerStatus: normalizedProviderStatus,
-        metadataJson: nextMetadata as Prisma.InputJsonValue,
-      },
-    });
-    updatedEvents += 1;
-  }
-
-  return {
-    updatedMessages,
-    updatedEvents,
-    unmatchedCallbacks: 0,
-  };
-}
 
 function isTwilioSendEnabled(): boolean {
   return normalizeEnvValue(process.env.TWILIO_SEND_ENABLED) === "true";
@@ -250,6 +89,27 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     Math.round(Number(normalizeEnvValue(process.env.TWILIO_SMS_COST_ESTIMATE_CENTS)) || 1),
   );
 
+  const messagingMode = await prisma.organization.findUnique({
+    where: { id: input.orgId },
+    select: { package: true, messagingLaunchMode: true },
+  });
+  const packageEntitlements = getPackageEntitlements(messagingMode?.package);
+
+  if (
+    messagingMode?.messagingLaunchMode === "NO_SMS" ||
+    !packageEntitlements.canUseLiveSms
+  ) {
+    return {
+      providerMessageSid: null,
+      status: "FAILED",
+      resolvedFromNumberE164: normalizeE164(input.fromNumberE164 || null),
+      notice: !packageEntitlements.canUseLiveSms
+        ? "SMS is not included in this organization's package. Leads, jobs, estimates, invoices, files, and internal notes remain available without Twilio."
+        : "SMS is disabled for this organization. Leads, jobs, estimates, invoices, files, and internal notes remain available without Twilio.",
+      suppressed: true,
+    };
+  }
+
   let twilioConfig: Awaited<ReturnType<typeof getTwilioOrgRuntimeConfigByOrgId>>;
   try {
     twilioConfig = await getTwilioOrgRuntimeConfigByOrgId(input.orgId);
@@ -287,16 +147,12 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     twilioConfig.phoneNumber;
 
   const normalizedToNumber = normalizeE164(input.toNumberE164) || input.toNumberE164;
-  const optedOutLead = await prisma.lead.findFirst({
-    where: {
-      orgId: input.orgId,
-      phoneE164: normalizedToNumber,
-      status: "DNC",
-    },
-    select: { id: true },
+  const consent = await getSmsConsentState({
+    orgId: input.orgId,
+    phoneE164: normalizedToNumber,
   });
 
-  if (optedOutLead) {
+  if (consent.status === "OPTED_OUT") {
     return {
       providerMessageSid: null,
       status: "FAILED",
@@ -304,6 +160,27 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
       notice: "Suppressed outbound SMS because the contact is opted out.",
       suppressed: true,
     };
+  }
+
+  if (consent.status !== "OPTED_IN") {
+    const optedOutLead = await prisma.lead.findFirst({
+      where: {
+        orgId: input.orgId,
+        phoneE164: normalizedToNumber,
+        status: "DNC",
+      },
+      select: { id: true },
+    });
+
+    if (optedOutLead) {
+      return {
+        providerMessageSid: null,
+        status: "FAILED",
+        resolvedFromNumberE164,
+        notice: "Suppressed outbound SMS because the contact is opted out.",
+        suppressed: true,
+      };
+    }
   }
 
   // Safe default for development: persist outbound rows without calling Twilio.
@@ -437,6 +314,10 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
 
     return {
       providerMessageSid: null,
+      providerStatus: null,
+      providerErrorCode: "TIEGUI_EXCEPTION",
+      providerErrorMessage:
+        error instanceof Error ? error.message : "Twilio send failed before the provider accepted the message.",
       status: "FAILED",
       resolvedFromNumberE164,
       notice:
@@ -447,7 +328,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
   }
 
   if (!providerResponse.ok) {
-    if (usageReserved) {
+    if (usageReserved && !providerResponse.providerAcceptedUnknown) {
       await refundReservedSmsUsage({
         orgId: input.orgId,
         periodStart,
@@ -457,7 +338,13 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
 
     return {
       providerMessageSid: providerResponse.providerMessageSid,
-      status: "FAILED",
+      providerStatus: providerResponse.providerStatus,
+      providerErrorCode: providerResponse.providerErrorCode,
+      providerErrorMessage: providerResponse.providerErrorMessage,
+      providerRequestTimedOut: providerResponse.requestTimedOut,
+      providerAcceptedUnknown: providerResponse.providerAcceptedUnknown,
+      failure: providerResponse.failure,
+      status: providerResponse.providerAcceptedUnknown ? "QUEUED" : "FAILED",
       resolvedFromNumberE164,
       notice: providerResponse.error,
     };
@@ -465,6 +352,12 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
 
   return {
     providerMessageSid: providerResponse.providerMessageSid,
+    providerStatus: providerResponse.providerStatus,
+    providerErrorCode: null,
+    providerErrorMessage: null,
+    providerRequestTimedOut: false,
+    providerAcceptedUnknown: false,
+    failure: null,
     status: mapTwilioInitialSendStatus(providerResponse.providerStatus),
     resolvedFromNumberE164,
   };

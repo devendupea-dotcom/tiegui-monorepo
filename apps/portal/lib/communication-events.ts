@@ -8,6 +8,7 @@ import type {
   MessageStatus,
   VoicemailTranscriptionStatus,
 } from "@prisma/client";
+import type { SmsFailureClassification } from "@/lib/sms-failure-intelligence";
 
 type Tx = Prisma.TransactionClient;
 
@@ -290,14 +291,37 @@ export async function recordOutboundSmsCommunicationEvent(
     providerMessageSid?: string | null;
     status?: MessageStatus | null;
     deliveryNotice?: string | null;
+    providerStatus?: string | null;
+    providerErrorCode?: string | null;
+    providerErrorMessage?: string | null;
+    providerRequestTimedOut?: boolean;
+    providerAcceptedUnknown?: boolean;
+    failure?: SmsFailureClassification | null;
+    clientIdempotencyKey?: string | null;
     occurredAt: Date;
   },
 ) {
-  const metadataJson: Record<string, string | null> = {
+  const metadataJson: Record<string, boolean | string | null> = {
     body: input.body,
     fromNumberE164: input.fromNumberE164,
     toNumberE164: input.toNumberE164,
     status: input.status || null,
+    providerMessageSid: input.providerMessageSid || null,
+    providerStatus: input.providerStatus || null,
+    providerErrorCode: input.providerErrorCode || null,
+    providerErrorMessage: input.providerErrorMessage || null,
+    providerRequestTimedOut: input.providerRequestTimedOut || false,
+    providerAcceptedUnknown: input.providerAcceptedUnknown || false,
+    clientIdempotencyKey: input.clientIdempotencyKey || null,
+    failureCategory: input.failure?.category || null,
+    failureLabel: input.failure?.label || null,
+    failureOperatorAction: input.failure?.operatorAction || null,
+    failureOperatorActionLabel: input.failure?.operatorActionLabel || null,
+    failureOperatorDetail: input.failure?.operatorDetail || null,
+    failureRetryRecommended:
+      input.failure?.retryRecommended === undefined ? null : input.failure.retryRecommended,
+    failureBlocksAutomationRetry:
+      input.failure?.blocksAutomationRetry === undefined ? null : input.failure.blocksAutomationRetry,
   };
   if (input.deliveryNotice) {
     metadataJson.deliveryNotice = input.deliveryNotice;
@@ -320,7 +344,7 @@ export async function recordOutboundSmsCommunicationEvent(
     metadataJson,
     provider: "TWILIO",
     providerMessageSid: input.providerMessageSid || null,
-    providerStatus: input.status || null,
+    providerStatus: input.providerStatus || input.status || null,
     idempotencyKey: buildCommunicationIdempotencyKey(
       "sms-outbound",
       input.orgId,
