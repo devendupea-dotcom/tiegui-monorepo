@@ -87,6 +87,9 @@ function buildLeadNote(input: NormalizedPayload) {
     input.sourcePath ? `Source path: ${input.sourcePath}` : null,
     input.pageTitle ? `Page title: ${input.pageTitle}` : null,
     `SMS opt-in: ${input.smsOptIn ? "Yes" : "No"}`,
+    input.smsOptIn && input.smsConsentText ? `SMS consent text: ${input.smsConsentText}` : null,
+    input.smsOptIn && input.smsConsentCapturedAt ? `SMS consent captured at: ${input.smsConsentCapturedAt}` : null,
+    input.smsOptIn && input.smsConsentPageUrl ? `SMS consent page: ${input.smsConsentPageUrl}` : null,
     input.message ? ["", input.message].join("\n") : null,
     Object.keys(input.attribution).length
       ? ["", "Attribution:", ...Object.entries(input.attribution).map(([key, value]) => `${key}: ${value}`)].join("\n")

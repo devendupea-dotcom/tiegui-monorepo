@@ -165,6 +165,7 @@ model Organization {
   leadConversationStates        LeadConversationState[]
   leadConversationAudits        LeadConversationAuditEvent[]
   messagingSettings             OrganizationMessagingSettings?
+  smsRegistrationApplication    OrganizationSmsRegistrationApplication?
   twilioConfig                  OrganizationTwilioConfig?
   twilioConfigAuditLogs         TwilioConfigAuditLog[]
   messagingOpsTriage            MessagingOpsTriage[]
@@ -1601,6 +1602,66 @@ model OrganizationTwilioConfig {
 
   organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   auditLogs    TwilioConfigAuditLog[]
+
+  @@index([status, updatedAt])
+}
+
+model OrganizationSmsRegistrationApplication {
+  id                               String   @id @default(uuid())
+  orgId                            String   @unique
+  status                           String   @default("DRAFT")
+  businessName                     String
+  brandName                        String?
+  businessType                     String
+  businessIndustry                 String
+  businessRegistrationIdentifier   String
+  companyType                      String   @default("private")
+  businessIdentity                 String   @default("direct_customer")
+  businessRegionsOfOperation       String   @default("USA_AND_CANADA")
+  websiteUrl                       String
+  socialMediaProfileUrls           String?
+  customerName                     String
+  street                           String
+  streetSecondary                  String?
+  city                             String
+  region                           String
+  postalCode                       String
+  isoCountry                       String   @default("US")
+  authorizedFirstName              String
+  authorizedLastName               String
+  authorizedTitle                  String
+  authorizedJobPosition            String
+  authorizedPhoneE164              String
+  authorizedEmail                  String
+  brandContactEmail                String?
+  campaignUseCase                  String
+  campaignDescription              String
+  messageFlow                      String
+  privacyPolicyUrl                 String?
+  termsOfServiceUrl                String?
+  optInProofUrl                    String?
+  sampleMessage1                   String
+  sampleMessage2                   String
+  sampleMessage3                   String?
+  sampleMessage4                   String?
+  sampleMessage5                   String?
+  hasEmbeddedLinks                 Boolean  @default(false)
+  hasEmbeddedPhone                 Boolean  @default(false)
+  optInKeywords                    String?
+  optInMessage                     String?
+  optOutKeywords                   String?
+  optOutMessage                    String?
+  helpKeywords                     String?
+  helpMessage                      String?
+  estimatedMonthlyMessages         Int?
+  desiredSenderNumberE164          String?
+  customerConsentConfirmed         Boolean  @default(false)
+  registrationSubmissionAuthorized Boolean  @default(false)
+  submittedAt                      DateTime?
+  createdAt                        DateTime @default(now())
+  updatedAt                        DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([status, updatedAt])
 }

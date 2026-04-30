@@ -45,19 +45,19 @@ export default async function HqBusinessesPage() {
 
   return (
     <section className="card">
-      <h2>Businesses</h2>
-      <p className="muted">Job workspaces for every org.</p>
+      <h2>Client Workspaces</h2>
+      <p className="muted">Every customer account TieGui operates or monitors.</p>
 
       {organizations.length === 0 ? (
         <p className="muted" style={{ marginTop: 12 }}>
-          No businesses yet.
+          No client workspaces yet.
         </p>
       ) : (
         <div className="table-wrap" style={{ marginTop: 12 }}>
           <table className="data-table">
             <thead>
               <tr>
-                <th>Name</th>
+                <th>Workspace</th>
                 <th>Leads</th>
                 <th>Due Follow-ups</th>
                 <th>Calls</th>
@@ -65,7 +65,7 @@ export default async function HqBusinessesPage() {
                 <th>Events</th>
                 <th>SMS Number</th>
                 <th>Twilio</th>
-                <th>Portal</th>
+                <th>Workspace View</th>
                 <th>Created</th>
               </tr>
             </thead>
@@ -90,7 +90,7 @@ export default async function HqBusinessesPage() {
                   </td>
                   <td>
                     <Link className="table-link" href={`/app?orgId=${organization.id}`}>
-                      Open
+                      Preview
                     </Link>
                   </td>
                   <td>{formatDateTime(organization.createdAt)}</td>

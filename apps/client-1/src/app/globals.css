@@ -165,7 +165,7 @@ header nav a:hover{ border-bottom:2px solid rgba(47,93,70,0.35); color:var(--tex
   color:#fff;
   background:
     linear-gradient(to right, rgba(244,241,235,0.12), rgba(244,241,235,0.02)),
-    url("images/work5.jpeg");
+    url("/images/work5.jpeg");
   background-size:cover;
   background-position:center 35%;
   background-repeat:no-repeat;

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getAutomatedFollowUpThrottleUntil,
+  getConversationalFollowUpSkipReason,
+  getGhostBusterSkipReason,
   getQueuedSmsSkipReason,
   getRecentHardSmsFailureForAutomation,
   shouldSkipQueuedFollowUp,
@@ -251,4 +253,131 @@ test("getAutomatedFollowUpThrottleUntil returns null once the cool-down passed",
   });
 
   assert.equal(throttledUntil, null);
+});
+
+test("getGhostBusterSkipReason blocks generic nudges after automation-only replies", () => {
+  const reason = getGhostBusterSkipReason({
+    leadStatus: "FOLLOW_UP",
+    lastInboundAt: new Date("2026-04-26T17:22:00.000Z"),
+    messages: [
+      {
+        direction: "OUTBOUND",
+        type: "AUTOMATION",
+        createdAt: new Date("2026-04-26T17:22:30.000Z"),
+      },
+      {
+        direction: "INBOUND",
+        type: "MANUAL",
+        createdAt: new Date("2026-04-26T17:22:00.000Z"),
+      },
+    ],
+    conversationState: null,
+    now: new Date("2026-04-28T17:41:00.000Z"),
+  });
+
+  assert.match(reason || "", /only automated replies/i);
+});
+
+test("getGhostBusterSkipReason allows generic nudges only after a human reply handled the latest inbound", () => {
+  const reason = getGhostBusterSkipReason({
+    leadStatus: "FOLLOW_UP",
+    lastInboundAt: new Date("2026-04-26T17:22:00.000Z"),
+    messages: [
+      {
+        direction: "OUTBOUND",
+        type: "MANUAL",
+        createdAt: new Date("2026-04-26T17:30:00.000Z"),
+      },
+      {
+        direction: "INBOUND",
+        type: "MANUAL",
+        createdAt: new Date("2026-04-26T17:22:00.000Z"),
+      },
+    ],
+    conversationState: null,
+    now: new Date("2026-04-28T17:41:00.000Z"),
+  });
+
+  assert.equal(reason, null);
+});
+
+test("getConversationalFollowUpSkipReason blocks follow-ups after an automated human-review ack", () => {
+  const reason = getConversationalFollowUpSkipReason({
+    leadStatus: "FOLLOW_UP",
+    lastInboundAt: new Date("2026-04-21T00:04:00.000Z"),
+    messages: [
+      {
+        direction: "OUTBOUND",
+        type: "AUTOMATION",
+        body: "Thanks - I'll have Cesar review your request for this week and get back to you.",
+        createdAt: new Date("2026-04-21T00:10:00.000Z"),
+      },
+      {
+        direction: "INBOUND",
+        type: "MANUAL",
+        body: "Cesar, neither your price nor your schedule works for me. Can you work this week at a reasonable price?",
+        createdAt: new Date("2026-04-21T00:04:00.000Z"),
+      },
+    ],
+    conversationState: {
+      stage: "ASKED_TIMEFRAME",
+      pausedUntil: null,
+      stoppedAt: null,
+    },
+    now: new Date("2026-04-22T00:05:00.000Z"),
+  });
+
+  assert.match(reason || "", /human review/i);
+});
+
+test("getConversationalFollowUpSkipReason keeps normal missing-field follow-ups eligible", () => {
+  const reason = getConversationalFollowUpSkipReason({
+    leadStatus: "FOLLOW_UP",
+    lastInboundAt: new Date("2026-04-21T00:04:00.000Z"),
+    messages: [
+      {
+        direction: "OUTBOUND",
+        type: "AUTOMATION",
+        body: "Perfect. Do you want this ASAP, this week, next week, or just a quote?",
+        createdAt: new Date("2026-04-21T00:10:00.000Z"),
+      },
+      {
+        direction: "INBOUND",
+        type: "MANUAL",
+        body: "Need a patio cleanup in Tacoma",
+        createdAt: new Date("2026-04-21T00:04:00.000Z"),
+      },
+    ],
+    conversationState: {
+      stage: "ASKED_TIMEFRAME",
+      pausedUntil: null,
+      stoppedAt: null,
+    },
+    now: new Date("2026-04-22T00:05:00.000Z"),
+  });
+
+  assert.equal(reason, null);
+});
+
+test("getConversationalFollowUpSkipReason keeps missed-call opener follow-ups eligible before any inbound", () => {
+  const reason = getConversationalFollowUpSkipReason({
+    leadStatus: "NEW",
+    lastInboundAt: null,
+    messages: [
+      {
+        direction: "OUTBOUND",
+        type: "AUTOMATION",
+        body: "Sorry we missed your call. What kind of work do you need help with?",
+        createdAt: new Date("2026-04-21T00:04:00.000Z"),
+      },
+    ],
+    conversationState: {
+      stage: "ASKED_WORK",
+      pausedUntil: null,
+      stoppedAt: null,
+    },
+    now: new Date("2026-04-22T00:05:00.000Z"),
+  });
+
+  assert.equal(reason, null);
 });

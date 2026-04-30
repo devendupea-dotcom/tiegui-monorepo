@@ -571,6 +571,8 @@ export default async function JobsPage(
               lane: "pipeline",
               openOnly: "1",
             })}
+            scroll={false}
+            aria-current={lane === "pipeline" ? "page" : undefined}
           >
             {t("jobs.lanes.pipeline")} ({pipelineCount})
           </Link>
@@ -580,6 +582,8 @@ export default async function JobsPage(
               lane: "spam",
               openOnly: "0",
             })}
+            scroll={false}
+            aria-current={lane === "spam" ? "page" : undefined}
           >
             {t("jobs.lanes.spam")} ({spamReviewCount})
           </Link>
@@ -588,6 +592,8 @@ export default async function JobsPage(
             href={buildJobsHref({
               lane: "all",
             })}
+            scroll={false}
+            aria-current={lane === "all" ? "page" : undefined}
           >
             {t("jobs.lanes.all")} ({allCount})
           </Link>
@@ -648,6 +654,7 @@ export default async function JobsPage(
               lane: "pipeline",
               openOnly: "1",
             })}
+            scroll={false}
           >
             {t("jobs.reset")}
           </Link>

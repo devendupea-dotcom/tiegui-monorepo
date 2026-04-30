@@ -6,6 +6,7 @@ export type AppPageViewer = {
   orgId: string;
   internalUser: boolean;
   calendarAccessRole: CalendarAccessRole;
+  accessibleOrgCount: number;
 };
 
 export function isWorkerScopedPageViewer(viewer: AppPageViewer): boolean {
@@ -23,5 +24,6 @@ export async function requireAppPageViewer(input: {
     orgId: actor.orgId,
     internalUser: actor.internalUser,
     calendarAccessRole: actor.calendarAccessRole,
+    accessibleOrgCount: actor.accessibleOrgs.length,
   };
 }

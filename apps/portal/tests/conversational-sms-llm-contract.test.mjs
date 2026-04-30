@@ -78,9 +78,15 @@ test("trusted reply helper blocks low-confidence, handoff, and automation-reveal
     shouldHandoff: false,
     replyBody: "Our AI agent can help. What city is the property in?",
   });
+  const humanReviewPromise = normalizeConversationalSmsLlmDecision({
+    confidence: 0.91,
+    shouldHandoff: false,
+    replyBody: "Thanks - I'll have Cesar review your request and get back to you.",
+  });
 
   assert.equal(getTrustedConversationalSmsLlmReplyBody(good), "Got it. What city is the property in?");
   assert.equal(getTrustedConversationalSmsLlmReplyBody(low), null);
   assert.equal(getTrustedConversationalSmsLlmReplyBody(handoff), null);
   assert.equal(getTrustedConversationalSmsLlmReplyBody(revealing), null);
+  assert.equal(getTrustedConversationalSmsLlmReplyBody(humanReviewPromise), null);
 });

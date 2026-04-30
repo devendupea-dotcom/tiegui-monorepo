@@ -10,10 +10,11 @@ const portalRoot = new URL("..", import.meta.url);
 const baseEnv = {
   DATABASE_URL: "postgresql://user:pass@example.com:5432/tiegui",
   NEXTAUTH_URL: "https://app.tieguisolutions.com",
-  NEXTAUTH_SECRET: "test-nextauth-secret",
+  NEXTAUTH_SECRET: "test-nextauth-secret-with-32-bytes",
   SMTP_URL: "smtp://user:pass@example.com:587",
   EMAIL_FROM: "ops@example.com",
-  CRON_SECRET: "test-cron-secret",
+  CRON_SECRET: "test-cron-secret-with-32-byte-value",
+  ADMIN_VAULT_KEY: "test-admin-vault-key-with-32-bytes",
   UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
   UPSTASH_REDIS_REST_TOKEN: "test-upstash-token",
   STRIPE_SECRET_KEY: "sk_test_123",
@@ -80,6 +81,21 @@ test("release env preflight blocks missing rate-limit backend", async () => {
   assert.equal(result.code, 1);
   assert.match(result.stdout, /FAIL Rate limit backend/);
   assert.match(result.stdout, /Release env preflight: blocked/);
+});
+
+test("release env preflight blocks weak production auth secrets", async () => {
+  const result = await runPreflight({
+    NEXTAUTH_URL: "http://localhost:3001",
+    NEXTAUTH_SECRET: "short",
+    ADMIN_VAULT_KEY: "short",
+    CRON_SECRET: "short",
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /FAIL NEXTAUTH URL shape/);
+  assert.match(result.stdout, /FAIL NEXTAUTH secret strength/);
+  assert.match(result.stdout, /FAIL Admin vault key strength/);
+  assert.match(result.stdout, /FAIL Cron secret strength/);
 });
 
 test("release env preflight accepts Vercel KV rate-limit backend env names", async () => {

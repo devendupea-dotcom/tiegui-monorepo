@@ -249,7 +249,7 @@ export default async function LeadDetailPage(
           ← Back to Inbox
         </Link>
         <h2 style={{ marginTop: 8 }}>{lead.contactName || lead.businessName || lead.phoneE164}</h2>
-        <p className="muted">Business: {lead.org.name}</p>
+        <p className="muted">Workspace: {lead.org.name}</p>
         <div className="quick-meta" style={{ marginTop: 12 }}>
           <span className={`badge status-${displayedLeadStatus.toLowerCase()}`}>{formatLabel(displayedLeadStatus)}</span>
           <span className={`badge priority-${lead.priority.toLowerCase()}`}>
@@ -263,13 +263,17 @@ export default async function LeadDetailPage(
         <div className="tab-row" style={{ marginTop: 14 }}>
           <Link
             href={`/hq/leads/${lead.id}?tab=overview`}
+            scroll={false}
             className={`tab-chip ${currentTab === "overview" ? "active" : ""}`}
+            aria-current={currentTab === "overview" ? "page" : undefined}
           >
             Overview
           </Link>
           <Link
             href={`/hq/leads/${lead.id}?tab=messages`}
+            scroll={false}
             className={`tab-chip ${currentTab === "messages" ? "active" : ""}`}
+            aria-current={currentTab === "messages" ? "page" : undefined}
           >
             Messages
           </Link>
@@ -289,7 +293,7 @@ export default async function LeadDetailPage(
               <h3>Lead Details</h3>
               <dl className="detail-list" style={{ marginTop: 10 }}>
                 <div>
-                  <dt>Business</dt>
+                  <dt>Customer Business</dt>
                   <dd>{lead.businessName || "-"}</dd>
                 </div>
                 <div>

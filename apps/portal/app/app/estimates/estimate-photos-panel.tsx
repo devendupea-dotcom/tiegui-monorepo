@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "next-intl";
 import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
@@ -482,14 +481,12 @@ export default function EstimatePhotosPanel({
                 {photos.map((photo) => (
                   <figure key={photo.id} className="photo-item">
                     {photo.resolvedUrl ? (
-                      <Image
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
                         src={photo.resolvedUrl}
                         alt={photo.caption || photo.fileName}
-                        width={800}
-                        height={600}
                         loading="lazy"
-                        unoptimized
-                        loader={({ src }) => src}
+                        decoding="async"
                       />
                     ) : (
                       <div className="muted" style={{ padding: 12 }}>{copy.photoUnavailable}</div>

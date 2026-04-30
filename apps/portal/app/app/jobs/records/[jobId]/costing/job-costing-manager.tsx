@@ -323,6 +323,7 @@ export default function JobCostingManager({
           mobileMode,
           jobId: null,
         }),
+        { scroll: false },
       );
       return;
     }
@@ -334,6 +335,7 @@ export default function JobCostingManager({
         mobileMode,
         jobId: selectedJobId,
       }),
+      { scroll: false },
     );
   }, [selectedJobId, orgId, internalUser, mobileMode, router]);
 

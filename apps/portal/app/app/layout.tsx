@@ -32,7 +32,7 @@ export default async function ClientPortalLayout({
   const internalUser = isInternalRole(user.role);
   const displayName = user.name?.trim()
     ? user.name.trim().split(/\s+/)[0] || user.name.trim()
-    : user.email?.split("@")[0] || "Contractor";
+    : user.email?.split("@")[0] || (internalUser ? "Admin" : "Contractor");
   let defaultOrgId: string | null = null;
   let calendarAccessRole: CalendarAccessRole = internalUser ? "OWNER" : "WORKER";
   let portalVertical: string | null = null;
@@ -42,6 +42,13 @@ export default async function ClientPortalLayout({
       defaultOrgId = await resolveActorOrgId({ actor });
       calendarAccessRole = actor.calendarAccessRole;
     } catch (error) {
+      if (error instanceof AppApiError && error.status === 400) {
+        const [firstOrg] = actor.accessibleOrgs;
+        if (firstOrg) {
+          defaultOrgId = firstOrg.orgId;
+          calendarAccessRole = firstOrg.effectiveOrgRole;
+        }
+      }
       if (!(error instanceof AppApiError) || (error.status !== 400 && error.status !== 404)) {
         console.error("ClientPortalLayout failed to resolve active workspace context.", error);
       }
@@ -70,6 +77,27 @@ export default async function ClientPortalLayout({
     (calendarAccessRole === "OWNER" || calendarAccessRole === "ADMIN") &&
     onboardingOrg !== null &&
     !onboardingOrg.onboardingCompletedAt;
+  const brandTitle = internalUser
+    ? t("portalLayout.internalBrandTitle")
+    : t("portalLayout.brandTitle");
+  const brandSubtitle = internalUser
+    ? t("portalLayout.internalBrandSubtitle")
+    : t("portalLayout.brandSubtitle");
+  const brandDescription = internalUser
+    ? t("portalLayout.internalBrandDescription")
+    : t("portalLayout.brandDescription");
+  const workspaceSettingsLabel = internalUser
+    ? t("portalLayout.internalWorkspaceSettings")
+    : t("portalLayout.workspaceSettings");
+  const quickAddLabel = internalUser
+    ? t("portalLayout.internalQuickAddLabel")
+    : t("portalLayout.quickAddLabel");
+  const quickAddDescription = internalUser
+    ? t("portalLayout.internalQuickAddDescription")
+    : t("portalLayout.quickAddDescription");
+  const quickAddButtonLabel = internalUser
+    ? t("buttons.addLeadToWorkspace")
+    : t("buttons.addLead");
 
   return (
     <NextIntlClientProvider locale={locale} messages={messages}>
@@ -90,14 +118,19 @@ export default async function ClientPortalLayout({
                 />
               </span>
               <span className="portal-brand-text">
-                <strong>{t("portalLayout.brandTitle")}</strong>
-                <span>{t("portalLayout.brandSubtitle")}</span>
+                <strong>{brandTitle}</strong>
+                <span>{brandSubtitle}</span>
               </span>
             </Link>
-            <p className="portal-brand-sub">{t("portalLayout.brandDescription")}</p>
+            <p className="portal-brand-sub">{brandDescription}</p>
           </div>
 
-          <ClientPortalNav calendarAccessRole={calendarAccessRole} portalVertical={portalVertical} />
+          <ClientPortalNav
+            calendarAccessRole={calendarAccessRole}
+            defaultOrgId={defaultOrgId}
+            internalUser={internalUser}
+            portalVertical={portalVertical}
+          />
 
           <section className="portal-profile">
             <p className="portal-profile-label">{t("portalLayout.signedInAs")}</p>
@@ -116,7 +149,7 @@ export default async function ClientPortalLayout({
 
           <section className="portal-profile">
             <Link className="portal-side-link" href="/app/settings" prefetch={false}>
-              {t("portalLayout.workspaceSettings")}
+              {workspaceSettingsLabel}
             </Link>
             <LogoutButton />
           </section>
@@ -125,8 +158,8 @@ export default async function ClientPortalLayout({
         <section className="portal-content">
           <header className="portal-topbar">
             <div className="portal-topbar-copy">
-              <p>{t("portalLayout.quickAddLabel")}</p>
-              <span>{t("portalLayout.quickAddDescription")}</span>
+              <p>{quickAddLabel}</p>
+              <span>{quickAddDescription}</span>
             </div>
             <div className="portal-topbar-actions">
               <ThemeToggle />
@@ -135,7 +168,7 @@ export default async function ClientPortalLayout({
                 defaultOrgId={defaultOrgId}
                 internalUser={internalUser}
                 calendarAccessRole={calendarAccessRole}
-                label={t("buttons.addLead")}
+                label={quickAddButtonLabel}
               />
             </div>
           </header>

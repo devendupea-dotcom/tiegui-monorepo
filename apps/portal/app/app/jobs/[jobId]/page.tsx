@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
@@ -1230,37 +1229,49 @@ export default async function ClientJobDetailPage(
         <div className="tab-row job-detail-tabs" style={{ marginTop: 14 }}>
           <Link
             href={overviewHref}
+            scroll={false}
             className={`tab-chip ${currentTab === "overview" ? "active" : ""}`}
+            aria-current={currentTab === "overview" ? "page" : undefined}
           >
             Next Step
           </Link>
           <Link
             href={messagesHref}
+            scroll={false}
             className={`tab-chip ${currentTab === "messages" ? "active" : ""}`}
+            aria-current={currentTab === "messages" ? "page" : undefined}
           >
             Follow-up
           </Link>
           <Link
             href={notesHref}
+            scroll={false}
             className={`tab-chip ${currentTab === "notes" ? "active" : ""}`}
+            aria-current={currentTab === "notes" ? "page" : undefined}
           >
             Notes
           </Link>
           <Link
             href={photosHref}
+            scroll={false}
             className={`tab-chip ${currentTab === "photos" ? "active" : ""}`}
+            aria-current={currentTab === "photos" ? "page" : undefined}
           >
             Photos
           </Link>
           <Link
             href={measurementsHref}
+            scroll={false}
             className={`tab-chip ${currentTab === "measurements" ? "active" : ""}`}
+            aria-current={currentTab === "measurements" ? "page" : undefined}
           >
             Measurements
           </Link>
           <Link
             href={invoiceHref}
+            scroll={false}
             className={`tab-chip ${currentTab === "invoice" ? "active" : ""}`}
+            aria-current={currentTab === "invoice" ? "page" : undefined}
           >
             Invoices
           </Link>
@@ -1554,14 +1565,12 @@ export default async function ClientJobDetailPage(
                 {resolvedLeadPhotos.map((photo) => (
                   <figure key={photo.id} className="photo-item">
                     {photo.resolvedUrl ? (
-                      <Image
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
                         src={photo.resolvedUrl}
                         alt={photo.caption || photo.fileName}
-                        width={800}
-                        height={600}
                         loading="lazy"
-                        unoptimized
-                        loader={({ src }) => src}
+                        decoding="async"
                       />
                     ) : (
                       <div className="muted" style={{ padding: 12 }}>

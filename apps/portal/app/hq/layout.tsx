@@ -8,12 +8,12 @@ import LogoutButton from "../app/logout-button";
 import PortalActionFeedback from "../_components/portal-action-feedback";
 
 const links = [
-  { href: "/hq", label: "Command Center" },
+  { href: "/hq", label: "Overview" },
   { href: "/hq/inbox", label: "Inbox" },
-  { href: "/hq/messaging", label: "Messaging" },
+  { href: "/hq/messaging", label: "SMS Trust" },
   { href: "/hq/calendar", label: "Calendar" },
-  { href: "/hq/businesses", label: "Businesses" },
-  { href: "/hq/integrations/google/health", label: "Sync Health" },
+  { href: "/hq/businesses", label: "Client Workspaces" },
+  { href: "/hq/integrations/google/health", label: "Google Sync" },
 ];
 
 export default async function HqLayout({
@@ -68,12 +68,13 @@ export default async function HqLayout({
             <div>
               <h1>TieGui HQ</h1>
               <p className="muted">
-                Internal workspace for cross-business operations.
+                Admin workspace for account operations, client workspaces,
+                messaging safety, and integrations.
               </p>
             </div>
             <div className="hq-header-actions">
               <Link className="btn secondary" href="/app">
-                Open Client Portal
+                Open Workspace Preview
               </Link>
               <LogoutButton />
             </div>

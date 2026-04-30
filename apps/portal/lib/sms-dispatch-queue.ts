@@ -1,7 +1,9 @@
 import type { LeadIntakeStage, MessageStatus } from "@prisma/client";
 import { addMinutes } from "date-fns";
 import { recordOutboundSmsCommunicationEvent } from "@/lib/communication-events";
+import { resolveMessageLocale } from "@/lib/message-language";
 import { prisma } from "@/lib/prisma";
+import { ensureAutomatedSmsCompliance } from "@/lib/sms-compliance";
 import { getQueuedSmsSkipReason, getRecentHardSmsFailureForAutomation } from "@/lib/sms-automation-guards";
 import { getSmsConsentState } from "@/lib/sms-consent";
 import { sendOutboundSms } from "@/lib/sms";
@@ -177,6 +179,7 @@ export async function processDueSmsDispatchQueue(input?: {
       createdAt: true,
       org: {
         select: {
+          messageLanguage: true,
           intakeAutomationEnabled: true,
           smsQuietHoursStartMinute: true,
           smsQuietHoursEndMinute: true,
@@ -189,6 +192,7 @@ export async function processDueSmsDispatchQueue(input?: {
         select: {
           status: true,
           intakeStage: true,
+          preferredLanguage: true,
           lastInboundAt: true,
           conversationState: {
             select: {
@@ -241,6 +245,7 @@ export async function processDueSmsDispatchQueue(input?: {
         status: true,
         org: {
           select: {
+            messageLanguage: true,
             intakeAutomationEnabled: true,
             smsQuietHoursStartMinute: true,
             smsQuietHoursEndMinute: true,
@@ -253,6 +258,7 @@ export async function processDueSmsDispatchQueue(input?: {
           select: {
             status: true,
             intakeStage: true,
+            preferredLanguage: true,
             lastInboundAt: true,
             conversationState: {
               select: {
@@ -345,11 +351,20 @@ export async function processDueSmsDispatchQueue(input?: {
       continue;
     }
 
+    const compliantBody = ensureAutomatedSmsCompliance({
+      body: liveJob.body,
+      locale: resolveMessageLocale({
+        organizationLanguage: liveJob.org.messageLanguage,
+        leadPreferredLanguage: liveJob.lead.preferredLanguage,
+      }),
+      messageType: liveJob.messageType,
+    });
+
     const providerResult = await sendOutboundSms({
       orgId: liveJob.orgId,
       fromNumberE164: liveJob.fromNumberE164,
       toNumberE164: liveJob.toNumberE164,
-      body: liveJob.body,
+      body: compliantBody,
       allowPendingA2P: liveJob.kind === "MISSED_CALL_INTRO",
     });
 
@@ -385,7 +400,7 @@ export async function processDueSmsDispatchQueue(input?: {
       messageType: liveJob.messageType,
       fromNumberE164: providerResult.resolvedFromNumberE164 || liveJob.fromNumberE164,
       toNumberE164: liveJob.toNumberE164,
-      body: liveJob.body,
+      body: compliantBody,
       providerMessageSid: providerResult.providerMessageSid,
       status: providerResult.status,
       deliveryNotice: providerResult.notice || null,

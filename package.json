@@ -18,6 +18,9 @@
   "engines": {
     "node": ">=20.9.0"
   },
+  "overrides": {
+    "postcss": "8.5.12"
+  },
   "packageManager": "npm@11.6.2",
   "workspaces": [
     "apps/*",

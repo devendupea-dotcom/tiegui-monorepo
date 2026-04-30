@@ -36,14 +36,15 @@
     "db:migrate:deploy": "node scripts/migrate-deploy.mjs",
     "db:seed": "node scripts/seed-direct.mjs",
     "provision:endeavor": "node scripts/provision-endeavor-builder.mjs",
-    "seed:endeavor-demo": "node scripts/seed-endeavor-demo-projects.mjs"
+    "seed:endeavor-demo": "node scripts/seed-endeavor-demo-projects.mjs",
+    "seed:sales-demo": "node scripts/seed-sales-demo-account.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.990.0",
     "@aws-sdk/s3-request-presigner": "^3.990.0",
     "@next-auth/prisma-adapter": "^1.0.7",
     "@prisma/client": "^5.22.0",
-    "@react-pdf/renderer": "^3.4.4",
+    "@react-pdf/renderer": "^4.5.1",
     "@repo/ui": "*",
     "@sentry/nextjs": "^10.50.0",
     "@serwist/next": "^9.5.5",
@@ -61,8 +62,8 @@
     "next-intl": "^4.9.1",
     "openai": "^6.34.0",
     "papaparse": "^5.5.3",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "read-excel-file": "^9.0.6",
     "resend": "^4.8.0",
     "serwist": "^9.5.5",

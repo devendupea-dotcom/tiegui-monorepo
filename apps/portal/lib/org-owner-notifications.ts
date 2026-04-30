@@ -18,12 +18,14 @@ import {
 import { dispatchStatusFromDb, type DispatchStatusValue } from "@/lib/dispatch";
 import {
   buildOwnerBookingNotificationSms,
+  buildOwnerLeadReviewNotificationSms,
   resolveOwnerBookingType,
   selectOrgDispatchNotificationCandidate,
   type OwnerBookingNotificationKind,
 } from "@/lib/org-owner-notification-core";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
+import { ensureAutomatedSmsCompliance } from "@/lib/sms-compliance";
 import { resolveTwilioVoiceForwardingNumber } from "@/lib/twilio-org";
 
 const OWNER_NOTIFICATION_GRACE_MINUTES = 5;
@@ -48,6 +50,11 @@ type OwnerBookingNotificationSendInput = {
   metadata: Record<string, unknown>;
   occurredAt?: Date;
 };
+
+type OwnerLeadReviewNotificationReason =
+  | "Human takeover"
+  | "Customer waiting on reply"
+  | "Automation promised human review";
 
 type OwnerReminderProcessingResult = {
   organizationsScanned: number;
@@ -134,7 +141,7 @@ async function resolveOwnerNotificationContext(
   };
 }
 
-async function sendOwnerBookingNotification(
+async function sendOwnerNotification(
   input: OwnerBookingNotificationSendInput,
 ) {
   const occurredAt = input.occurredAt || new Date();
@@ -154,10 +161,16 @@ async function sendOwnerBookingNotification(
     return "duplicate" as const;
   }
 
+  const body = ensureAutomatedSmsCompliance({
+    body: input.body,
+    locale: "EN",
+    messageType: "SYSTEM_NUDGE",
+  });
+
   const dispatched = await sendOutboundSms({
     orgId: input.orgId,
     toNumberE164: input.recipientNumberE164,
-    body: input.body,
+    body,
   });
 
   if (dispatched.suppressed || dispatched.status === "FAILED") {
@@ -177,7 +190,7 @@ async function sendOwnerBookingNotification(
         ownerNotification: true,
         toNumberE164: input.recipientNumberE164,
         fromNumberE164: dispatched.resolvedFromNumberE164,
-        body: input.body,
+        body,
       },
       provider: "TWILIO",
       providerMessageSid: dispatched.providerMessageSid,
@@ -254,7 +267,7 @@ export async function maybeSendOrgDispatchNotifications(input: {
     timeZone: context.timeZone,
   });
 
-  await sendOwnerBookingNotification({
+  await sendOwnerNotification({
     orgId: input.orgId,
     actorUserId: input.actorUserId,
     recipientNumberE164: context.recipientNumberE164,
@@ -284,6 +297,88 @@ export async function maybeSendOrgDispatchNotifications(input: {
       scheduledEndTime: schedule.scheduledEndTime,
       timeZone: context.timeZone,
       source: "dispatch",
+    },
+  });
+}
+
+export async function maybeSendOwnerLeadReviewNotification(input: {
+  orgId: string;
+  leadId: string;
+  reason: OwnerLeadReviewNotificationReason;
+  inboundBody?: string | null;
+  conversationStateId?: string | null;
+  occurredAt?: Date;
+}) {
+  const [context, lead] = await Promise.all([
+    resolveOwnerNotificationContext(input.orgId),
+    prisma.lead.findFirst({
+      where: {
+        id: input.leadId,
+        orgId: input.orgId,
+      },
+      select: {
+        id: true,
+        contactName: true,
+        businessName: true,
+        phoneE164: true,
+        lastInboundAt: true,
+        messages: {
+          where: {
+            direction: "INBOUND",
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+          take: 1,
+          select: {
+            body: true,
+            createdAt: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  if (!context?.recipientNumberE164 || !lead) {
+    return "skipped" as const;
+  }
+
+  const latestInbound = lead.messages[0] || null;
+  const inboundBody = input.inboundBody || latestInbound?.body || null;
+  const occurredAt = input.occurredAt || latestInbound?.createdAt || lead.lastInboundAt || new Date();
+  const customerName = cleanText(lead.contactName) || cleanText(lead.businessName) || cleanText(lead.phoneE164);
+  const body = buildOwnerLeadReviewNotificationSms({
+    orgName: context.orgName,
+    customerName,
+    phoneE164: lead.phoneE164,
+    reason: input.reason,
+    inboundBody,
+  });
+
+  return sendOwnerNotification({
+    orgId: input.orgId,
+    recipientNumberE164: context.recipientNumberE164,
+    summary: "Owner alert: Lead review needed",
+    body,
+    occurredAt,
+    idempotencyKey: buildCommunicationIdempotencyKey(
+      "owner-lead-review-sms",
+      input.orgId,
+      input.leadId,
+      input.reason,
+      latestInbound?.createdAt?.toISOString() || lead.lastInboundAt?.toISOString() || "no-inbound",
+      context.recipientNumberE164,
+    ),
+    metadata: {
+      ownerNotificationKind: "lead_review",
+      reason: input.reason,
+      leadId: input.leadId,
+      conversationStateId: input.conversationStateId || null,
+      customerName,
+      customerPhoneE164: lead.phoneE164,
+      latestInboundAt: latestInbound?.createdAt?.toISOString() || lead.lastInboundAt?.toISOString() || null,
+      latestInboundBody: inboundBody,
+      source: "sms_automation",
     },
   });
 }
@@ -378,7 +473,7 @@ export async function processDueOrgOwnerBookingReminders(
         reminderMinutesBefore: context.reminderMinutesBefore,
       });
 
-      const result = await sendOwnerBookingNotification({
+      const result = await sendOwnerNotification({
         orgId: organization.id,
         recipientNumberE164: context.recipientNumberE164,
         summary: buildOwnerBookingNotificationSummary({

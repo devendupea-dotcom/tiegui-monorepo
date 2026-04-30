@@ -169,8 +169,22 @@ function buildPortalUrl(path: string): string {
 function parseJobIdFromPortalUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
-    const match = parsed.pathname.match(/^\/app\/(?:jobs|leads)\/([^/?#]+)/i);
-    return match?.[1] ? decodeURIComponent(match[1]) : null;
+    const segments = parsed.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
+    const [area, resource, id] = segments;
+
+    if (area !== "app" || !id) {
+      return null;
+    }
+
+    if (resource === "leads") {
+      return id;
+    }
+
+    if (resource === "jobs" && id !== "records") {
+      return id;
+    }
+
+    return null;
   } catch {
     return null;
   }

@@ -1429,6 +1429,7 @@ export default function EstimateManager({
           mobileMode,
           focus: focus || null,
         }),
+        { scroll: false },
       );
     },
     [internalUser, mobileMode, orgId, router],

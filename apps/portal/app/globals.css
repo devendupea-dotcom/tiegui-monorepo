@@ -4504,6 +4504,37 @@ html[data-mobile-mode="1"] textarea {
   display: none;
 }
 
+.onboarding-sms-application {
+  border: 1px solid color-mix(in srgb, var(--surface-card-border) 72%, var(--brand-gold) 28%);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--surface-2) 6%);
+  padding: 12px;
+  display: grid;
+  gap: 14px;
+}
+
+.onboarding-sms-application-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.onboarding-sms-application-header h4,
+.onboarding-sms-delete h4 {
+  margin: 0;
+  color: var(--text);
+}
+
+.onboarding-sms-delete {
+  border: 1px dashed color-mix(in srgb, var(--tone-danger-border, #ef4444) 34%, var(--surface-card-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tone-danger-surface, #fee2e2) 10%, transparent);
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
 .onboarding-promise {
   margin-top: -2px;
   font-weight: 600;
@@ -6077,13 +6108,64 @@ html[data-mobile-mode="1"] textarea {
 }
 
 .job-detail-tabs {
+  width: 100%;
   overflow-x: auto;
   flex-wrap: nowrap;
-  padding-bottom: 4px;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--surface-card-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 84%, var(--bg-2) 16%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--white) 60%, transparent);
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--gold) 45%, transparent) transparent;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .job-detail-tabs .tab-chip {
+  flex: 0 0 auto;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
   white-space: nowrap;
+  scroll-snap-align: start;
+}
+
+.job-detail-tabs .tab-chip:hover,
+.job-detail-tabs .tab-chip:focus-visible {
+  background: color-mix(in srgb, var(--gold) 10%, transparent);
+  color: var(--text);
+}
+
+.job-detail-tabs .tab-chip.active {
+  border-color: color-mix(in srgb, var(--gold) 66%, transparent);
+  background: color-mix(in srgb, var(--gold) 18%, var(--surface) 82%);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(65, 47, 16, 0.08);
+}
+
+.job-detail-tabs::-webkit-scrollbar {
+  height: 6px;
+}
+
+.job-detail-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.job-detail-tabs::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gold) 45%, transparent);
 }
 
 .mobile-action-bar {
@@ -7484,6 +7566,10 @@ html[data-mobile-mode="1"] textarea {
   .tab-chip,
   .badge {
     white-space: normal;
+  }
+
+  .job-detail-shell .job-detail-tabs .tab-chip {
+    white-space: nowrap;
   }
 
   .data-table {

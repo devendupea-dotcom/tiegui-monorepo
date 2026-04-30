@@ -135,12 +135,12 @@ export default async function HqCalendarPage(
   return (
     <>
       <section className="card">
-        <h2>HQ Calendar</h2>
-        <p className="muted">Shared follow-up and event schedule across all businesses.</p>
+        <h2>HQ Schedule</h2>
+        <p className="muted">Follow-ups and scheduled events across all client workspaces.</p>
 
         <form className="filters" method="get" style={{ marginTop: 12 }}>
           <label>
-            Business
+            Client Workspace
             <select name="orgId" defaultValue={orgId}>
               <option value="">All</option>
               {organizations.map((organization) => (
@@ -187,7 +187,7 @@ export default async function HqCalendarPage(
                   <th>When</th>
                   <th>Type</th>
                   <th>Title</th>
-                  <th>Business</th>
+                  <th>Workspace</th>
                   <th>Assigned</th>
                   <th>Lead</th>
                 </tr>

@@ -26,7 +26,16 @@ export type OwnerBookingMessageInput = {
   reminderMinutesBefore?: number;
 };
 
+export type OwnerLeadReviewMessageInput = {
+  orgName: string;
+  customerName?: string | null;
+  phoneE164?: string | null;
+  reason?: string | null;
+  inboundBody?: string | null;
+};
+
 const DEFAULT_REMINDER_MINUTES_BEFORE = 120;
+const MAX_OWNER_REVIEW_SNIPPET_LENGTH = 120;
 
 function cleanText(value: string | null | undefined): string | null {
   const trimmed = (value || "").trim();
@@ -39,6 +48,15 @@ function labelBookingType(value: "job" | "estimate"): string {
 
 function labelBookingTypeTitle(value: "job" | "estimate"): string {
   return value === "estimate" ? "Estimate" : "Job";
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
 }
 
 export function resolveOwnerBookingType(value: EventType): "job" | "estimate" {
@@ -155,6 +173,18 @@ export function buildOwnerBookingNotificationSms(
   }
 
   return `${orgName}: New ${bookingLabel} scheduled for ${subject} on ${when}.${detailLine}${addressLine}`.trim();
+}
+
+export function buildOwnerLeadReviewNotificationSms(
+  input: OwnerLeadReviewMessageInput,
+): string {
+  const orgName = cleanText(input.orgName) || "TieGui";
+  const customer = cleanText(input.customerName) || cleanText(input.phoneE164) || "a customer";
+  const reason = cleanText(input.reason) || "SMS automation paused for review";
+  const inbound = cleanText(input.inboundBody);
+  const snippet = inbound ? ` Latest: "${truncateText(inbound, MAX_OWNER_REVIEW_SNIPPET_LENGTH)}"` : "";
+
+  return `${orgName}: Review needed for ${customer}. ${reason}.${snippet} Open TieGui Inbox to reply.`.trim();
 }
 
 export function selectOrgDispatchNotificationCandidate(input: {

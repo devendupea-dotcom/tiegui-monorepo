@@ -161,3 +161,29 @@ export async function ensureForgotPasswordAllowed(input: {
 
   return buildRateLimitStatus(results);
 }
+
+export async function ensureAdminVaultUnlockAllowed(input: {
+  email: string;
+  ip: string;
+  checker: SlidingWindowLimitChecker;
+}): Promise<AuthRateLimitStatus> {
+  const email = normalizeRateLimitPart(input.email);
+  const ip = normalizeRateLimitPart(input.ip);
+
+  const results = await Promise.all([
+    input.checker({
+      identifier: ip,
+      prefix: "rl:admin:vault:unlock:ip",
+      limit: 12,
+      windowSeconds: 5 * 60,
+    }),
+    input.checker({
+      identifier: email,
+      prefix: "rl:admin:vault:unlock:email",
+      limit: 6,
+      windowSeconds: 5 * 60,
+    }),
+  ]);
+
+  return buildRateLimitStatus(results);
+}

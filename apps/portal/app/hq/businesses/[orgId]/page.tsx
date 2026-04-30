@@ -21,10 +21,10 @@ export const dynamic = "force-dynamic";
 
 const tabs = [
   { key: "overview", label: "Overview" },
-  { key: "leads", label: "Leads" },
-  { key: "calls", label: "Calls" },
-  { key: "messages", label: "Messages" },
-  { key: "calendar", label: "Calendar" },
+  { key: "leads", label: "Lead Pipeline" },
+  { key: "calls", label: "Call Log" },
+  { key: "messages", label: "Message Threads" },
+  { key: "calendar", label: "Schedule" },
 ] as const;
 
 type TabKey = (typeof tabs)[number]["key"];
@@ -329,16 +329,16 @@ export default async function HqBusinessFolderPage(
     <>
       <section className="card">
         <Link href="/hq/businesses" className="table-link">
-          ← All Businesses
+          ← All Client Workspaces
         </Link>
         <h2 style={{ marginTop: 8 }}>{organization.name}</h2>
-        <p className="muted">Job workspace • created {formatDateTime(organization.createdAt)}</p>
+        <p className="muted">Client workspace • created {formatDateTime(organization.createdAt)}</p>
         <div className="quick-links" style={{ marginTop: 10 }}>
           <Link className="btn secondary" href={`/app?orgId=${organization.id}`}>
-            Open Client Portal View
+            Open Workspace Preview
           </Link>
           <Link className="btn secondary" href={`/hq/orgs/${organization.id}/twilio`}>
-            Twilio Config
+            Twilio Setup
           </Link>
           <Link className="btn secondary" href={`/hq/orgs/${organization.id}/website-leads`}>
             Website Lead Sources
@@ -350,7 +350,9 @@ export default async function HqBusinessFolderPage(
             <Link
               key={item.key}
               href={`${tabBaseHref}?tab=${item.key}`}
+              scroll={false}
               className={`tab-chip ${tab === item.key ? "active" : ""}`}
+              aria-current={tab === item.key ? "page" : undefined}
             >
               {item.label}
             </Link>
@@ -531,10 +533,10 @@ async function OverviewTab({ orgId }: { orgId: string }) {
             <p className="muted">{onboardingStatusLabel}</p>
             <div className="quick-links">
               <Link className="btn secondary" href={`/app/onboarding?orgId=${encodeURIComponent(orgId)}`}>
-                Open onboarding wizard
+                Open Onboarding
               </Link>
               <Link className="btn secondary" href={`/app/settings/integrations?orgId=${encodeURIComponent(orgId)}`}>
-                Open integrations
+                Open Integrations
               </Link>
             </div>
           </div>
@@ -1158,7 +1160,7 @@ async function MessagesTab({
       <section className="grid two-col">
         <article className="card">
           <h2>Lead Threads</h2>
-          <p className="muted">Pick a lead and send replies directly from this job workspace.</p>
+          <p className="muted">Pick a lead and send replies from this client workspace.</p>
 
           {leadThreads.length === 0 ? (
             <p className="muted" style={{ marginTop: 12 }}>
@@ -1174,7 +1176,11 @@ async function MessagesTab({
                     key={lead.id}
                     className={`thread-item ${activeLead?.id === lead.id ? "active" : ""}`}
                   >
-                    <Link className="thread-link" href={`/hq/businesses/${orgId}?tab=messages&leadId=${lead.id}`}>
+                    <Link
+                      className="thread-link"
+                      href={`/hq/businesses/${orgId}?tab=messages&leadId=${lead.id}`}
+                      scroll={false}
+                    >
                       <div className="thread-top">
                         <strong>{label}</strong>
                         <span className="muted">{lead._count.messages} msgs</span>

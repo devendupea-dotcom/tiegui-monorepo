@@ -16,6 +16,8 @@ export const CONVERSATIONAL_SMS_LLM_HANDOFF_CONFIDENCE = 0.7;
 const MAX_FIELD_LENGTH = 160;
 const MAX_REPLY_LENGTH = 220;
 const AUTOMATION_REVEAL_PATTERN = /\b(bot|a\.?i\.?|automated|automation|agent|handoff|human|representative|operator)\b/i;
+const HUMAN_REVIEW_PROMISE_PATTERN =
+  /\b(someone|office|team|estimator|owner|manager|cesar)\b.{0,80}\b(follow up|contact|call|get back|review)\b/i;
 
 function sanitizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -128,6 +130,10 @@ export function getTrustedConversationalSmsLlmReplyBody(
   }
 
   if (AUTOMATION_REVEAL_PATTERN.test(reply)) {
+    return null;
+  }
+
+  if (HUMAN_REVIEW_PROMISE_PATTERN.test(reply)) {
     return null;
   }
 

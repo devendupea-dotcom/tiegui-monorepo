@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { SessionProvider, signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { isPasswordWithinPolicy, PASSWORD_POLICY_MESSAGE } from "@/lib/password-policy";
+import { sanitizeRedirectPath, sanitizeSameOriginRedirectUrl } from "@/lib/safe-redirect";
 
 type SessionUserWithPasswordGate = {
   email?: string | null;
@@ -24,7 +26,7 @@ function SetPasswordScreen() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setNextPath(params.get("next") || "/");
+    setNextPath(sanitizeRedirectPath(params.get("next"), "/"));
   }, []);
 
   useEffect(() => {
@@ -43,8 +45,8 @@ function SetPasswordScreen() {
     event.preventDefault();
     if (submitting) return;
 
-    if (password.length < 8) {
-      setStatus("Password must be at least 8 characters.");
+    if (!isPasswordWithinPolicy(password)) {
+      setStatus(PASSWORD_POLICY_MESSAGE);
       return;
     }
     if (password !== confirm) {
@@ -83,7 +85,7 @@ function SetPasswordScreen() {
         return;
       }
 
-      router.push(nextPath);
+      router.push(sanitizeSameOriginRedirectUrl(signInResult?.url, window.location.origin, nextPath));
     } catch {
       setStatus("Something went wrong. Please try again.");
       setSubmitting(false);
@@ -105,7 +107,7 @@ function SetPasswordScreen() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="At least 8 characters"
+              placeholder="12 characters minimum"
               required
               disabled={sessionStatus !== "authenticated" || submitting}
             />

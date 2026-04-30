@@ -5,6 +5,7 @@ import { AppApiError } from "@/lib/app-api-permissions";
 import { normalizeE164 } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
+import { ensureAutomatedSmsCompliance } from "@/lib/sms-compliance";
 import { getSmsConsentState } from "@/lib/sms-consent";
 import {
   buildDispatchCustomerNotificationReadiness,
@@ -97,7 +98,11 @@ async function sendDispatchCustomerNotification(input: {
     throw new AppApiError(readiness.blockedReason || "Failed to send customer update.", 409);
   }
 
-  const body = readiness.previewBody;
+  const body = ensureAutomatedSmsCompliance({
+    body: readiness.previewBody,
+    locale: "EN",
+    messageType: "SYSTEM_NUDGE",
+  });
   const toNumberE164 = readiness.toNumberE164;
   const occurredAt = input.explicit ? new Date() : input.candidate.event.createdAt;
 

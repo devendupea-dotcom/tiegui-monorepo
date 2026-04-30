@@ -3,6 +3,7 @@ import { Barlow_Condensed, DM_Sans } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 import Providers from "./providers";
+import PreserveSamePathScroll from "./_components/preserve-same-path-scroll";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -64,7 +65,10 @@ export default function RootLayout({
       <body
         className={`${dmSans.variable} ${barlowCondensed.variable} ${geistMono.variable}`}
       >
-        <Providers>{children}</Providers>
+        <Providers>
+          <PreserveSamePathScroll />
+          {children}
+        </Providers>
       </body>
     </html>
   );

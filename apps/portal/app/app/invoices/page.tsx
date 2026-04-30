@@ -2,7 +2,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Prisma, type BillingInvoiceStatus } from "@prisma/client";
+import { Prisma, type BillingInvoiceStatus, type InvoiceTerms } from "@prisma/client";
 import SendInvoiceModal from "@/components/invoices/send-invoice-modal";
 import { getRequestTranslator } from "@/lib/i18n";
 import { sendInvoiceDelivery } from "@/lib/invoice-delivery";
@@ -11,12 +11,18 @@ import { formatDateTime } from "@/lib/hq";
 import {
   billingInvoiceStatusOptions,
   buildInvoiceWorkerLeadAccessWhere,
+  computeInvoiceDueDate,
   formatCurrency,
   formatInvoiceNumber,
   getInvoiceActionContext,
   getInvoiceActionRevalidationPaths,
   getInvoiceReadJobContext,
+  invoiceTermsOptions,
+  parseMoneyInput,
+  recomputeInvoiceTotals,
+  reserveNextInvoiceNumber,
 } from "@/lib/invoices";
+import { normalizeE164 } from "@/lib/phone";
 import { getConfiguredBaseUrl } from "@/lib/urls";
 import {
   canSendInvoiceReminder,
@@ -70,6 +76,10 @@ const COLLECTION_REPORT_STATUSES: BillingInvoiceStatus[] = [
 function appendQuery(path: string, key: string, value: string): string {
   const joiner = path.includes("?") ? "&" : "?";
   return `${path}${joiner}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function isInvoiceTerms(value: string): value is InvoiceTerms {
+  return invoiceTermsOptions.some((option) => option === value);
 }
 
 function buildInvoiceWorkspacePath(input: {
@@ -246,6 +256,124 @@ async function sendFreshReminderAction(formData: FormData) {
   redirect(appendQuery(scoped.returnPath, "saved", "fresh-link-reminder"));
 }
 
+async function createStandaloneInvoiceAction(formData: FormData) {
+  "use server";
+
+  const orgId = String(formData.get("orgId") || "").trim();
+  const returnPathRaw = String(formData.get("returnPath") || "").trim();
+  const fallbackPath = orgId ? `/app/invoices?orgId=${encodeURIComponent(orgId)}` : "/app/invoices";
+  const returnPath = returnPathRaw.startsWith("/app/invoices") ? returnPathRaw : fallbackPath;
+
+  if (!orgId) {
+    redirect(appendQuery(returnPath, "error", "invoice-create"));
+  }
+
+  const actor = await requireAppOrgActor("/app/invoices", orgId);
+  if (!actor.internalUser && (actor.calendarAccessRole === "READ_ONLY" || actor.calendarAccessRole === "WORKER")) {
+    redirect(appendQuery(returnPath, "error", "readonly"));
+  }
+
+  const customerName = String(formData.get("customerName") || "").trim();
+  const customerEmail = String(formData.get("customerEmail") || "").trim().toLowerCase();
+  const customerPhone = normalizeE164(String(formData.get("customerPhone") || ""));
+  const description = String(formData.get("description") || "").trim();
+  const amount = parseMoneyInput(String(formData.get("amount") || ""));
+  const termsRaw = String(formData.get("terms") || "").trim();
+  const terms = isInvoiceTerms(termsRaw) ? termsRaw : "NET_15";
+  const notes = String(formData.get("notes") || "").trim();
+
+  if (
+    !customerName ||
+    customerName.length > 160 ||
+    (customerEmail && customerEmail.length > 240) ||
+    !customerPhone ||
+    !description ||
+    description.length > 240 ||
+    !amount ||
+    amount.lte(0) ||
+    amount.gt(9999999) ||
+    notes.length > 1000
+  ) {
+    redirect(appendQuery(returnPath, "error", "invoice-create"));
+  }
+
+  const now = new Date();
+  const createdInvoice = await prisma.$transaction(async (tx) => {
+    const existingCustomer = await tx.customer.findFirst({
+      where: {
+        orgId,
+        phoneE164: customerPhone,
+      },
+      select: { id: true },
+    });
+    const customer = existingCustomer
+      ? await tx.customer.update({
+          where: { id: existingCustomer.id },
+          data: {
+            name: customerName,
+            email: customerEmail || null,
+          },
+          select: { id: true },
+        })
+      : await tx.customer.create({
+          data: {
+            orgId,
+            createdByUserId: actor.id ?? null,
+            name: customerName,
+            phoneE164: customerPhone,
+            email: customerEmail || null,
+          },
+          select: { id: true },
+        });
+
+    const config = await tx.orgDashboardConfig.upsert({
+      where: { orgId },
+      create: { orgId },
+      update: {},
+      select: { defaultTaxRate: true },
+    });
+    const invoiceNumber = await reserveNextInvoiceNumber(tx, orgId, now);
+    const invoice = await tx.invoice.create({
+      data: {
+        orgId,
+        customerId: customer.id,
+        invoiceNumber,
+        terms,
+        status: "DRAFT",
+        issueDate: now,
+        dueDate: computeInvoiceDueDate(now, terms),
+        taxRate: config.defaultTaxRate,
+        notes: notes || "Created from master invoice workspace.",
+        createdByUserId: actor.id ?? null,
+      },
+      select: { id: true },
+    });
+
+    await tx.invoiceLineItem.create({
+      data: {
+        invoiceId: invoice.id,
+        description,
+        quantity: new Prisma.Decimal(1),
+        unitPrice: amount,
+        lineTotal: amount,
+        sortOrder: 0,
+      },
+    });
+
+    await recomputeInvoiceTotals(tx, invoice.id);
+    return invoice;
+  });
+
+  revalidatePath("/app/invoices");
+  redirect(
+    withOrgQuery(
+      `/app/invoices/${createdInvoice.id}?saved=created`,
+      orgId,
+      actor.internalUser || actor.accessibleOrgs.length > 1,
+    ),
+  );
+}
+
 export default async function InvoicesPage(
   props: {
     searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -299,8 +427,16 @@ export default async function InvoicesPage(
     nextPath: "/app/invoices",
     orgId: scope.orgId,
   });
+  const includeOrgQuery = scope.internalUser || viewer.accessibleOrgCount > 1;
   const canTriggerInvoiceQueueActions =
     viewer.internalUser || viewer.calendarAccessRole !== "READ_ONLY";
+  const canCreateStandaloneInvoice =
+    viewer.internalUser ||
+    viewer.calendarAccessRole === "OWNER" ||
+    viewer.calendarAccessRole === "ADMIN";
+  const actorForOrgList = includeOrgQuery
+    ? await requireAppOrgActor("/app/invoices", scope.orgId)
+    : null;
   const workerScoped = isWorkerScopedPageViewer(viewer);
   const workerId = workerScoped ? viewer.id : null;
   const workerLeadAccessWhere = workerId
@@ -354,6 +490,7 @@ export default async function InvoicesPage(
     recentCollectionAttempts,
     recentFailedCollectionAttempts,
     latestAutomationRun,
+    accessibleOrganizations,
   ] = await Promise.all([
     prisma.invoice.findMany({
       where,
@@ -530,6 +667,23 @@ export default async function InvoicesPage(
         createdAt: "desc",
       },
     }),
+    viewer.internalUser
+      ? prisma.organization.findMany({
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+          take: 100,
+        })
+      : viewer.accessibleOrgCount > 1
+        ? prisma.organization.findMany({
+            where: {
+              id: {
+                in: actorForOrgList?.accessibleOrgs.map((item) => item.orgId) || [],
+              },
+            },
+            select: { id: true, name: true },
+            orderBy: { name: "asc" },
+          })
+        : Promise.resolve([]),
   ]);
 
   const counts = Object.fromEntries(
@@ -577,7 +731,7 @@ export default async function InvoicesPage(
     const invoiceHref = withOrgQuery(
       `/app/invoices/${row.id}`,
       scope.orgId,
-      scope.internalUser,
+      includeOrgQuery,
     );
     const pdfPreviewHref = `/api/invoices/${row.id}/pdf?inline=1`;
     const sendHref = `/api/invoices/${row.id}/send`;
@@ -591,13 +745,13 @@ export default async function InvoicesPage(
       ? withOrgQuery(
           `/app/jobs/records/${jobContext.operationalJobId}`,
           scope.orgId,
-          scope.internalUser,
+          includeOrgQuery,
         )
       : jobContext.crmLeadId
         ? withOrgQuery(
             `/app/jobs/${jobContext.crmLeadId}?tab=invoice`,
             scope.orgId,
-            scope.internalUser,
+            includeOrgQuery,
           )
         : null;
     const jobLabel = jobContext.primaryLabel || "-";
@@ -748,7 +902,7 @@ export default async function InvoicesPage(
     queue,
     aging,
     orgId: scope.orgId,
-    internalUser: scope.internalUser,
+    internalUser: includeOrgQuery,
   });
   const exportQuery = new URLSearchParams(
     Object.fromEntries(
@@ -763,7 +917,7 @@ export default async function InvoicesPage(
   const exportHref = withOrgQuery(
     `/api/invoices/collections-export${exportQuery ? `?${exportQuery}` : ""}`,
     scope.orgId,
-    scope.internalUser,
+    includeOrgQuery,
   );
 
   return (
@@ -918,7 +1072,7 @@ export default async function InvoicesPage(
                       href={withOrgQuery(
                         `/app/invoices/${attempt.invoice.id}`,
                         scope.orgId,
-                        scope.internalUser,
+                        includeOrgQuery,
                       )}
                     >
                       {formatInvoiceNumber(attempt.invoice.invoiceNumber)}
@@ -1077,13 +1231,81 @@ export default async function InvoicesPage(
             {t("invoices.collections.workerPermissionError")}
           </p>
         ) : null}
+        {error === "invoice-create" ? (
+          <p className="form-status" style={{ marginTop: 10 }}>
+            Check the customer name, phone, line item, and amount before creating the invoice.
+          </p>
+        ) : null}
+        {accessibleOrganizations.length > 1 ? (
+          <form className="filters" method="get" style={{ marginTop: 16 }}>
+            <label>
+              Workspace
+              <select name="orgId" defaultValue={scope.orgId}>
+                {accessibleOrganizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="btn secondary" type="submit">
+              Switch Workspace
+            </button>
+          </form>
+        ) : null}
+        {canCreateStandaloneInvoice ? (
+          <form
+            action={createStandaloneInvoiceAction}
+            className="filters"
+            style={{ marginTop: 16, alignItems: "flex-end" }}
+          >
+            <input type="hidden" name="orgId" value={scope.orgId} />
+            <input type="hidden" name="returnPath" value={workspacePath} />
+            <label>
+              Bill to
+              <input name="customerName" placeholder="Organization or customer" maxLength={160} required />
+            </label>
+            <label>
+              Email
+              <input name="customerEmail" type="email" placeholder="billing@example.com" maxLength={240} />
+            </label>
+            <label>
+              Phone
+              <input name="customerPhone" type="tel" placeholder="+12065550100" required />
+            </label>
+            <label>
+              Line item
+              <input name="description" placeholder="Website services" maxLength={240} required />
+            </label>
+            <label>
+              Amount
+              <input name="amount" inputMode="decimal" placeholder="500.00" required />
+            </label>
+            <label>
+              Terms
+              <select name="terms" defaultValue="NET_15">
+                <option value="DUE_ON_RECEIPT">Due on receipt</option>
+                <option value="NET_7">Net 7</option>
+                <option value="NET_15">Net 15</option>
+                <option value="NET_30">Net 30</option>
+              </select>
+            </label>
+            <label>
+              Notes
+              <input name="notes" placeholder="Optional invoice note" maxLength={1000} />
+            </label>
+            <button className="btn primary" type="submit">
+              New Invoice
+            </button>
+          </form>
+        ) : null}
         <div className="quick-links" style={{ marginTop: 12 }}>
           <Link
             className="btn secondary"
             href={withOrgQuery(
               "/app/invoices/recurring",
               scope.orgId,
-              scope.internalUser,
+              includeOrgQuery,
             )}
           >
             Recurring Billing
@@ -1093,7 +1315,7 @@ export default async function InvoicesPage(
             href={withOrgQuery(
               "/app/settings/invoice",
               scope.orgId,
-              scope.internalUser,
+              includeOrgQuery,
             )}
           >
             {t("invoices.collections.manageRules")}
@@ -1103,8 +1325,9 @@ export default async function InvoicesPage(
             href={withOrgQuery(
               "/app/invoices?status=OVERDUE",
               scope.orgId,
-              scope.internalUser,
+              includeOrgQuery,
             )}
+            scroll={false}
           >
             {t("invoices.collections.viewOverdue")}
           </Link>
@@ -1113,8 +1336,9 @@ export default async function InvoicesPage(
             href={withOrgQuery(
               "/app/invoices?openOnly=1",
               scope.orgId,
-              scope.internalUser,
+              includeOrgQuery,
             )}
+            scroll={false}
           >
             {t("invoices.collections.viewOpen")}
           </Link>
@@ -1123,8 +1347,9 @@ export default async function InvoicesPage(
             href={withOrgQuery(
               "/app/invoices?status=DRAFT",
               scope.orgId,
-              scope.internalUser,
+              includeOrgQuery,
             )}
+            scroll={false}
           >
             {t("invoices.collections.viewDrafts")}
           </Link>
@@ -1152,7 +1377,7 @@ export default async function InvoicesPage(
         </div>
 
         <form className="filters" method="get" style={{ marginTop: 12 }}>
-          {scope.internalUser ? (
+          {includeOrgQuery ? (
             <input type="hidden" name="orgId" value={scope.orgId} />
           ) : null}
 
@@ -1211,8 +1436,9 @@ export default async function InvoicesPage(
             href={withOrgQuery(
               "/app/invoices",
               scope.orgId,
-              scope.internalUser,
+              includeOrgQuery,
             )}
+            scroll={false}
           >
             {t("invoices.reset")}
           </Link>
@@ -1242,7 +1468,7 @@ export default async function InvoicesPage(
                 href={withOrgQuery(
                   "/app/jobs",
                   scope.orgId,
-                  scope.internalUser,
+                  includeOrgQuery,
                 )}
               >
                 {t("jobs.title")}
@@ -1252,7 +1478,7 @@ export default async function InvoicesPage(
                 href={withOrgQuery(
                   "/app/jobs/records",
                   scope.orgId,
-                  scope.internalUser,
+                  includeOrgQuery,
                 )}
               >
                 {t("jobs.openStructuredRecords")}

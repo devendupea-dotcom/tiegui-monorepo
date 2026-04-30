@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ensureAdminVaultUnlockAllowed,
   ensureCredentialLoginAllowed,
   ensureForgotPasswordAllowed,
   getClientIpFromHeaders,
@@ -103,6 +104,36 @@ test("ensureForgotPasswordAllowed checks both IP and email scopes", async () => 
       prefix: "rl:auth:forgot:email",
       limit: 5,
       windowSeconds: 60,
+    },
+  ]);
+});
+
+test("ensureAdminVaultUnlockAllowed checks IP and internal user scopes", async () => {
+  const calls = [];
+  const checker = async (input) => {
+    calls.push(input);
+    return { ok: true, remaining: 1, resetAtMs: 0 };
+  };
+
+  const result = await ensureAdminVaultUnlockAllowed({
+    email: "Admin@TieGui.com",
+    ip: "198.51.100.44",
+    checker,
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(calls, [
+    {
+      identifier: "198.51.100.44",
+      prefix: "rl:admin:vault:unlock:ip",
+      limit: 12,
+      windowSeconds: 300,
+    },
+    {
+      identifier: "admin@tiegui.com",
+      prefix: "rl:admin:vault:unlock:email",
+      limit: 6,
+      windowSeconds: 300,
     },
   ]);
 });
