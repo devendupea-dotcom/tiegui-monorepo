@@ -72,7 +72,7 @@ export default function ResetPasswordPage() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="12 characters minimum"
+              placeholder="7 characters minimum"
               required
               disabled={!token || submitting}
             />

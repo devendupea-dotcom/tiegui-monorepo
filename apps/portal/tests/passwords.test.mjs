@@ -4,8 +4,9 @@ import { hashPassword, isValidPassword, verifyPassword } from "../lib/passwords.
 
 test("isValidPassword enforces the minimum password length", () => {
   assert.equal(isValidPassword("short"), false);
-  assert.equal(isValidPassword("12345678901"), false);
-  assert.equal(isValidPassword("123456789012"), true);
+  assert.equal(isValidPassword("123456"), false);
+  assert.equal(isValidPassword("Homesnw"), true);
+  assert.equal(isValidPassword("1234567"), true);
   assert.equal(isValidPassword("a".repeat(257)), false);
 });
 

@@ -83,7 +83,6 @@ const navSections: NavSection[] = [
       {
         href: "/app/estimates",
         labelKey: "estimates",
-        builderLabelKey: "changeOrders",
         icon: (
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4" />

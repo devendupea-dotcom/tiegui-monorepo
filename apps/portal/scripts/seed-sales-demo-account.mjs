@@ -44,8 +44,8 @@ function assertSeedSafety() {
     throw new Error("SALES_DEMO_PASSWORD is required for seeded demo users.");
   }
 
-  if (DEMO_PASSWORD.length < 12) {
-    throw new Error("SALES_DEMO_PASSWORD must be at least 12 characters.");
+  if (DEMO_PASSWORD.length < 7) {
+    throw new Error("SALES_DEMO_PASSWORD must be at least 7 characters.");
   }
 }
 

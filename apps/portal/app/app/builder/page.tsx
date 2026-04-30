@@ -283,10 +283,10 @@ export default async function BuilderPortalPage({ searchParams }: BuilderPagePro
       action: "Open Schedule",
     },
     {
-      title: "Change Orders",
-      body: "Use estimates for buyer-facing changes, upgrade approvals, allowances, and project scope decisions.",
+      title: "Estimates",
+      body: "Use estimates for buyer-facing pricing, upgrade approvals, allowances, and project scope decisions.",
       href: "/app/estimates",
-      action: "Open Changes",
+      action: "Open Estimates",
     },
   ] as const;
 
@@ -298,7 +298,7 @@ export default async function BuilderPortalPage({ searchParams }: BuilderPagePro
           <h1>{organization.name}</h1>
           <p className="muted">
             A homebuilder workspace for buyers, build projects, private update
-            links, change orders, and communication.
+            links, estimates, and communication.
           </p>
         </div>
         <div className="portal-empty-actions">
@@ -411,7 +411,7 @@ export default async function BuilderPortalPage({ searchParams }: BuilderPagePro
                       <span>{contract.depositPaidAt ? "Deposit received" : "Deposit not marked paid"}</span>
                     </div>
                     <div className="stack-cell">
-                      <span className="muted">Change Orders</span>
+                      <span className="muted">Estimates</span>
                       <strong>{formatChangeOrderStatusLabel(contract.changeOrderStatus)}</strong>
                       <span>{contract.activeStartedAt ? "Active build started" : "Awaiting active build start"}</span>
                     </div>

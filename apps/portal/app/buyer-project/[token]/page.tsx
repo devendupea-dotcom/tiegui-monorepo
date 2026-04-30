@@ -195,7 +195,7 @@ export default async function BuyerProjectPage(
                   </span>
                 </article>
                 <article className="estimate-share-panel">
-                  <span className="muted">Change Orders</span>
+                  <span className="muted">Estimates</span>
                   <strong>{project.contractProject.changeOrderStatusLabel}</strong>
                   <span>
                     {project.contractProject.activeStartedAt

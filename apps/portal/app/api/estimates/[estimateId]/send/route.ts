@@ -37,6 +37,8 @@ async function getScopedEstimateOrThrow(estimateId: string) {
     select: {
       id: true,
       orgId: true,
+      status: true,
+      archivedAt: true,
       estimateNumber: true,
       title: true,
       customerName: true,
@@ -90,6 +92,17 @@ export async function POST(req: Request, props: RouteContext) {
     const scoped = await getScopedEstimateOrThrow(params.estimateId);
     assertOrgWriteAccess(actor, scoped.orgId);
 
+    if (scoped.archivedAt) {
+      throw new AppApiError("Archived estimates cannot be sent.", 400);
+    }
+
+    if (scoped.status === "CONVERTED" || scoped.status === "APPROVED") {
+      throw new AppApiError(
+        "This estimate is no longer sendable from the internal portal flow.",
+        400,
+      );
+    }
+
     const sendIssues = getEstimateCustomerFacingIssues({
       title: scoped.title,
       customerName: scoped.customerName,
@@ -117,7 +130,7 @@ export async function POST(req: Request, props: RouteContext) {
     const note = typeof payload?.note === "string" ? payload.note : null;
 
     let delivery: "manual-share" | "outlook" = "manual-share";
-    let message = "Estimate marked as sent. Share it manually from the internal portal workflow.";
+    let message = "Secure estimate link created. Copy the link and send it manually by email or text.";
     let shareUrl: string | null = null;
     let shareExpiresAt: string | null = null;
 
@@ -186,6 +199,24 @@ export async function POST(req: Request, props: RouteContext) {
 
       delivery = "outlook";
       message = `Estimate emailed from Outlook to ${recipientEmail}.`;
+      shareUrl = share.shareUrl;
+      shareExpiresAt = share.expiresAt;
+    }
+
+    if (delivery === "manual-share") {
+      const share = await createEstimateShareLink({
+        orgId: scoped.orgId,
+        estimateId: scoped.id,
+        actorId: actor.id,
+        baseUrl: getBaseUrlFromRequest(req),
+        payload: {
+          recipientName,
+          recipientEmail,
+          recipientPhoneE164,
+          expiresAt: payload?.expiresAt,
+        },
+      });
+
       shareUrl = share.shareUrl;
       shareExpiresAt = share.expiresAt;
     }

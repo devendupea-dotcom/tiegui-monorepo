@@ -1,4 +1,4 @@
-export const MIN_PASSWORD_LENGTH = 12;
+export const MIN_PASSWORD_LENGTH = 7;
 export const MAX_PASSWORD_LENGTH = 256;
 export const PASSWORD_POLICY_MESSAGE = `Password must be ${MIN_PASSWORD_LENGTH}-${MAX_PASSWORD_LENGTH} characters.`;
 

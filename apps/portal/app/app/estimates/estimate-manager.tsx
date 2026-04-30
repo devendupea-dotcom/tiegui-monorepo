@@ -232,6 +232,7 @@ type EstimateManagerCopy = {
     copying: string;
     copyLink: string;
     rawUrlMissing: string;
+    manualDeliveryHint: string;
     generating: string;
     refreshShareLink: string;
     createShareLink: string;
@@ -513,6 +514,8 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
         copyLink: "Copiar enlace",
         rawUrlMissing:
           "Existe un enlace seguro, pero la URL ya no puede recargarse desde almacenamiento. Genera un enlace nuevo si necesitas copiarlo otra vez.",
+        manualDeliveryHint:
+          "Copia este enlace y envialo manualmente por correo o texto si Outlook no esta conectado.",
         generating: "Generando...",
         refreshShareLink: "Refrescar enlace",
         createShareLink: "Crear enlace",
@@ -637,7 +640,7 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
           `El estimado no esta listo para enviarse. ${issues}`,
         failedSend: "No se pudo enviar el estimado.",
         sentManualShare:
-          "El estimado se marco como enviado para compartirlo manualmente.",
+          "Enlace seguro creado. Copia el enlace y envialo manualmente por correo o texto.",
         positiveTotalBeforeInvoice:
           "Define un total positivo antes de crear una factura desde este estimado.",
         failedConvert: "No se pudo convertir el estimado.",
@@ -796,6 +799,8 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
       copyLink: "Copy Link",
       rawUrlMissing:
         "A secure link exists but the raw URL cannot be reloaded from storage. Generate a fresh link if you need to copy it again.",
+      manualDeliveryHint:
+        "Copy this link and send it manually by email or text when Outlook is not connected.",
       generating: "Generating...",
       refreshShareLink: "Refresh Share Link",
       createShareLink: "Create Share Link",
@@ -913,7 +918,8 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
       saved: (estimateNumber) => `Estimate ${estimateNumber} saved.`,
       notReadyToSend: (issues) => `Estimate is not ready to send. ${issues}`,
       failedSend: "Failed to send estimate.",
-      sentManualShare: "Estimate marked as sent for manual sharing.",
+      sentManualShare:
+        "Secure estimate link created. Copy the link and send it manually by email or text.",
       positiveTotalBeforeInvoice:
         "Set a positive total before creating an invoice from this estimate.",
       failedConvert: "Failed to convert estimate.",
@@ -3080,6 +3086,9 @@ export default function EstimateManager({
                               : copy.share.copyLink}
                           </button>
                         </div>
+                        <p className="muted" style={{ marginTop: 8 }}>
+                          {copy.share.manualDeliveryHint}
+                        </p>
                       </div>
                     ) : selectedEstimate.latestShareLink ? (
                       <p className="muted" style={{ marginTop: 12 }}>
