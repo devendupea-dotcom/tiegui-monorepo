@@ -32,6 +32,10 @@ function resolveFromAddress(from?: string): string {
   return resolved;
 }
 
+export function isEmailDeliveryConfigured(): boolean {
+  return Boolean(resendApiKey && (resendFrom || emailFrom));
+}
+
 export async function sendEmail(params: {
   to: string;
   subject: string;

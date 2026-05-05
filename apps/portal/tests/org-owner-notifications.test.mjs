@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOwnerBookingNotificationSms,
+  buildOwnerNotificationEmail,
   buildOwnerLeadReviewNotificationSms,
   formatOwnerReminderLeadTime,
+  resolveOwnerAlertChannels,
   selectOrgDispatchNotificationCandidate,
 } from "../lib/org-owner-notification-core.ts";
 
@@ -76,6 +78,42 @@ test("owner lead review notification SMS truncates long inbound context", () => 
   assert.match(message, /Review needed for \+12535550123/);
   assert.match(message, /\.\.\."/);
   assert.ok(message.length < 260);
+});
+
+test("owner alert channels default to email and require explicit SMS opt-in", () => {
+  const defaultChannels = resolveOwnerAlertChannels({
+    ownerEmailAlertsEnabled: null,
+    ownerSmsAlertsEnabled: null,
+    organizationEmail: "Office@Example.com",
+    fallbackSmsNumberE164: "+12535550123",
+  });
+
+  assert.equal(defaultChannels.emailTo, "office@example.com");
+  assert.equal(defaultChannels.smsTo, null);
+  assert.equal(defaultChannels.hasAnyChannel, true);
+
+  const smsChannels = resolveOwnerAlertChannels({
+    ownerEmailAlertsEnabled: false,
+    ownerSmsAlertsEnabled: true,
+    ownerAlertPhoneE164: "(253) 555-0199",
+    organizationEmail: "office@example.com",
+  });
+
+  assert.equal(smsChannels.emailTo, null);
+  assert.equal(smsChannels.smsTo, "+12535550199");
+  assert.equal(smsChannels.hasAnyChannel, true);
+});
+
+test("owner notification email keeps the alert readable outside the app", () => {
+  const email = buildOwnerNotificationEmail({
+    orgName: "Velocity Landscapes",
+    summary: "Owner alert: Lead review needed",
+    body: "Velocity Landscapes: Review needed for Cindy. Customer waiting on reply. Open TieGui Inbox to reply.",
+  });
+
+  assert.equal(email.subject, "Velocity Landscapes: Lead review needed");
+  assert.match(email.text, /Review needed for Cindy/);
+  assert.match(email.text, /Open TieGui to review and reply\.$/);
 });
 
 test("dispatch owner notification candidate prefers scheduled and rescheduled scheduling moments", () => {

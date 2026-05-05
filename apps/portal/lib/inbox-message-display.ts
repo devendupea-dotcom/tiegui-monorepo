@@ -30,12 +30,13 @@ export function sanitizeConversationMessageBody(input: {
   if (!text) return "";
   if (!containsLegacyTemplatePollution(text)) return text;
 
+  if (input.direction === "outbound") {
+    return text;
+  }
+
   const status = String(input.status || "").toUpperCase();
   if (status === "FAILED") {
     return "Failed outbound SMS from a legacy imported template.";
-  }
-  if (input.direction === "outbound") {
-    return "Legacy outbound template message hidden for clarity.";
   }
   return "Legacy imported message hidden for clarity.";
 }
@@ -43,11 +44,15 @@ export function sanitizeConversationMessageBody(input: {
 export function sanitizeConversationSnippet(input: {
   body: string | null | undefined;
   status?: string | null;
+  direction?: "inbound" | "outbound" | null;
 }): string {
   const text = normalizeMessageText(input.body);
   if (!text) return "";
 
-  if (containsLegacyTemplatePollution(text)) {
+  if (
+    input.direction !== "outbound" &&
+    containsLegacyTemplatePollution(text)
+  ) {
     return String(input.status || "").toUpperCase() === "FAILED"
       ? "Failed outbound SMS"
       : "Legacy imported template message";

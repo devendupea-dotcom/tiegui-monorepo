@@ -22,7 +22,7 @@ test("sanitizes legacy imported bodies before they render in inbox threads", () 
       direction: "outbound",
       status: "SENT",
     }),
-    "Legacy outbound template message hidden for clarity.",
+    "[CUSTOMER FIRST NAME] this is [SALESPERSON FIRST NAME] @ Sunset Auto Wholsale.",
   );
 
   assert.equal(
@@ -31,7 +31,7 @@ test("sanitizes legacy imported bodies before they render in inbox threads", () 
       direction: "outbound",
       status: "FAILED",
     }),
-    "Failed outbound SMS from a legacy imported template.",
+    "[CUSTOMER FIRST NAME] this is [SALESPERSON FIRST NAME] @ Sunset Auto Wholsale.",
   );
 
   assert.equal(
@@ -47,8 +47,9 @@ test("sanitizes list previews without changing normal customer messages", () => 
     sanitizeConversationSnippet({
       body: "[CUSTOMER FIRST NAME] this is [SALESPERSON FIRST NAME] @ Sunset Auto Wholsale.",
       status: "SENT",
+      direction: "outbound",
     }),
-    "Legacy imported template message",
+    "[CUSTOMER FIRST NAME] this is [SALESPERSON FIRST NAME] @ Sunset Auto Wholsale.",
   );
 
   assert.equal(

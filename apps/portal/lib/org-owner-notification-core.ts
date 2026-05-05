@@ -1,6 +1,7 @@
 import type { EventType } from "@prisma/client";
 import type { DispatchStatusValue } from "@/lib/dispatch";
 import { formatDateTimeForDisplay } from "@/lib/calendar/dates";
+import { normalizeE164 } from "@/lib/phone";
 import {
   selectAutomaticDispatchCustomerNotificationCandidate,
   selectLatestDispatchScheduleChangeCandidate,
@@ -34,6 +35,27 @@ export type OwnerLeadReviewMessageInput = {
   inboundBody?: string | null;
 };
 
+export type OwnerAlertPreferencesInput = {
+  ownerEmailAlertsEnabled?: boolean | null;
+  ownerSmsAlertsEnabled?: boolean | null;
+  ownerAlertEmail?: string | null;
+  ownerAlertPhoneE164?: string | null;
+  organizationEmail?: string | null;
+  fallbackSmsNumberE164?: string | null;
+};
+
+export type OwnerAlertChannels = {
+  emailTo: string | null;
+  smsTo: string | null;
+  hasAnyChannel: boolean;
+};
+
+export type OwnerNotificationEmailInput = {
+  orgName: string;
+  summary: string;
+  body: string;
+};
+
 const DEFAULT_REMINDER_MINUTES_BEFORE = 120;
 const MAX_OWNER_REVIEW_SNIPPET_LENGTH = 120;
 
@@ -59,8 +81,49 @@ function truncateText(value: string, maxLength: number): string {
   return `${trimmed.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
 }
 
+function cleanEmail(value: string | null | undefined): string | null {
+  const trimmed = cleanText(value)?.toLowerCase() || null;
+  if (!trimmed || !trimmed.includes("@") || trimmed.length > 254) {
+    return null;
+  }
+  return trimmed;
+}
+
 export function resolveOwnerBookingType(value: EventType): "job" | "estimate" {
   return value === "ESTIMATE" ? "estimate" : "job";
+}
+
+export function resolveOwnerAlertChannels(
+  input: OwnerAlertPreferencesInput,
+): OwnerAlertChannels {
+  const emailTo =
+    input.ownerEmailAlertsEnabled === false
+      ? null
+      : cleanEmail(input.ownerAlertEmail) || cleanEmail(input.organizationEmail);
+  const smsTo =
+    input.ownerSmsAlertsEnabled === true
+      ? normalizeE164(input.ownerAlertPhoneE164 || null) ||
+        normalizeE164(input.fallbackSmsNumberE164 || null)
+      : null;
+
+  return {
+    emailTo,
+    smsTo,
+    hasAnyChannel: Boolean(emailTo || smsTo),
+  };
+}
+
+export function buildOwnerNotificationEmail(
+  input: OwnerNotificationEmailInput,
+): { subject: string; text: string } {
+  const orgName = cleanText(input.orgName) || "TieGui";
+  const summary = cleanText(input.summary) || "TieGui alert";
+  const body = cleanText(input.body) || "Open TieGui to review.";
+
+  return {
+    subject: `${orgName}: ${summary.replace(/^Owner alert:\s*/i, "")}`,
+    text: `${body}\n\nOpen TieGui to review and reply.`,
+  };
 }
 
 function formatEventDateTimeLabel(input: {

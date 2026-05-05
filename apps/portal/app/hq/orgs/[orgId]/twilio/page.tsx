@@ -435,6 +435,10 @@ async function sendTestSmsAction(formData: FormData) {
     toNumberE164: destination,
     body,
     allowPendingA2P: true,
+    compliance: {
+      audience: "INTERNAL_TEST",
+      useCase: "TEST",
+    },
   });
 
   const config = await prisma.organizationTwilioConfig.findUnique({

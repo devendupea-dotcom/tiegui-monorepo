@@ -41,7 +41,7 @@ type ConversationRow = {
   failedOutboundCount: number;
 };
 
-type InboxLane = "all" | "attention" | "spam";
+type InboxLane = "all" | "attention" | "sent" | "spam";
 
 type TimelineEvent = {
   id: string;
@@ -53,6 +53,20 @@ type TimelineEvent = {
   status?: "queued" | "sent" | "delivered" | "failed" | "read";
   createdAt: string;
   meta?: Record<string, unknown>;
+};
+
+type OutboundMessageRow = {
+  id: string;
+  leadId: string;
+  contactName: string;
+  phoneE164: string;
+  toNumberE164: string;
+  body: string;
+  bodyPreview: string;
+  type: "MANUAL" | "SYSTEM_NUDGE" | "AUTOMATION";
+  status: "QUEUED" | "SENT" | "DELIVERED" | "FAILED" | null;
+  providerMessageSid: string | null;
+  createdAt: string;
 };
 
 type UnifiedInboxProps = {
@@ -120,11 +134,16 @@ type InboxCopy = {
   searchAria: string;
   laneAll: string;
   laneAttention: string;
+  laneSent: string;
   laneSpam: string;
+  sentMessages: string;
+  sentMessagesBody: string;
   noSearchResultsTitle: string;
   noSearchResultsBody: string;
   noLaneResultsTitle: string;
   noLaneResultsBody: string;
+  noSentResultsTitle: string;
+  noSentResultsBody: string;
   clearSearch: string;
   overdue: string;
   atRisk: string;
@@ -193,11 +212,16 @@ function getInboxCopy(locale: string): InboxCopy {
       searchAria: "Buscar conversaciones",
       laneAll: "Todas",
       laneAttention: "Atencion",
+      laneSent: "Enviados",
       laneSpam: "Spam",
+      sentMessages: "Mensajes enviados",
+      sentMessagesBody: "SMS recientes enviados al cliente",
       noSearchResultsTitle: "No hay resultados para esta busqueda.",
       noSearchResultsBody: "Prueba otro nombre o numero de telefono.",
       noLaneResultsTitle: "No hay conversaciones en esta vista.",
       noLaneResultsBody: "Prueba otra vista o limpia la busqueda.",
+      noSentResultsTitle: "No hay mensajes enviados en esta vista.",
+      noSentResultsBody: "Cuando el equipo o la automatizacion envie SMS, apareceran aqui.",
       clearSearch: "Limpiar busqueda",
       overdue: "Vencido",
       atRisk: "En riesgo",
@@ -267,11 +291,16 @@ function getInboxCopy(locale: string): InboxCopy {
     searchAria: "Search conversations",
     laneAll: "All",
     laneAttention: "Attention",
+    laneSent: "Sent",
     laneSpam: "Spam",
+    sentMessages: "Sent messages",
+    sentMessagesBody: "Recent outbound SMS to customers",
     noSearchResultsTitle: "No conversations match this search.",
     noSearchResultsBody: "Try a different customer name or phone number.",
     noLaneResultsTitle: "No conversations match this view.",
     noLaneResultsBody: "Try another lane or clear the search.",
+    noSentResultsTitle: "No sent messages match this view.",
+    noSentResultsBody: "When the team or automation sends SMS, they will show here.",
     clearSearch: "Clear search",
     overdue: "Overdue",
     atRisk: "At risk",
@@ -391,6 +420,9 @@ function isOverdue(value: string | null | undefined): boolean {
 }
 
 function matchesInboxLane(row: ConversationRow, lane: InboxLane): boolean {
+  if (lane === "sent") {
+    return true;
+  }
   if (lane === "attention") {
     return row.atRisk || isOverdue(row.nextFollowUpAt);
   }
@@ -401,6 +433,43 @@ function matchesInboxLane(row: ConversationRow, lane: InboxLane): boolean {
     });
   }
   return true;
+}
+
+function normalizeSearch(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function matchesOutboundMessageSearch(
+  row: OutboundMessageRow,
+  search: string,
+): boolean {
+  const query = normalizeSearch(search);
+  if (!query) return true;
+
+  const queryDigits = digitsOnly(query);
+  const textFields = [
+    row.contactName,
+    row.phoneE164,
+    row.toNumberE164,
+    row.body,
+    row.type,
+    row.status || "",
+  ];
+
+  if (textFields.some((value) => value.toLowerCase().includes(query))) {
+    return true;
+  }
+
+  return (
+    queryDigits.length >= 3 &&
+    [row.phoneE164, row.toNumberE164].some((value) =>
+      digitsOnly(value).includes(queryDigits),
+    )
+  );
 }
 
 function sourceBadgeClass(sourceType: string): string {
@@ -543,6 +612,9 @@ export default function UnifiedInbox({
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
+  const [outboundMessages, setOutboundMessages] = useState<OutboundMessageRow[]>(
+    [],
+  );
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
     initialLeadId,
   );
@@ -588,11 +660,24 @@ export default function UnifiedInbox({
   }, [conversations, search]);
 
   const filteredConversations = useMemo(() => {
+    if (lane === "sent") {
+      return [];
+    }
     return searchedConversations.filter((row) => matchesInboxLane(row, lane));
   }, [lane, searchedConversations]);
 
+  const filteredOutboundMessages = useMemo(() => {
+    if (lane !== "sent") {
+      return [];
+    }
+    return outboundMessages.filter((row) =>
+      matchesOutboundMessageSearch(row, search),
+    );
+  }, [lane, outboundMessages, search]);
+
   useEffect(() => {
     if (!search.trim() && lane === "all") return;
+    if (lane === "sent") return;
 
     const nextLead = filteredConversations[0] || null;
     const selectionStillVisible = selectedLeadId
@@ -707,6 +792,28 @@ export default function UnifiedInbox({
     return payload.conversations;
   }
 
+  async function fetchOutboundMessages() {
+    const query = internalUser ? `?orgId=${encodeURIComponent(orgId)}` : "";
+    const response = await fetch(`/api/inbox/outbound${query}`, {
+      method: "GET",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+    });
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      outboundMessages?: OutboundMessageRow[];
+      error?: string;
+    } | null;
+    if (
+      !response.ok ||
+      !payload?.ok ||
+      !Array.isArray(payload.outboundMessages)
+    ) {
+      throw new Error(payload?.error || copy.errors.loadConversations);
+    }
+    return payload.outboundMessages;
+  }
+
   async function fetchThread(leadId: string) {
     const query = internalUser ? `?orgId=${encodeURIComponent(orgId)}` : "";
     const response = await fetch(
@@ -740,9 +847,14 @@ export default function UnifiedInbox({
     async function load() {
       try {
         setListError(null);
-        const rows = applyConversationSeenState(await fetchConversations());
+        const [conversationRows, outboundRows] = await Promise.all([
+          fetchConversations(),
+          fetchOutboundMessages(),
+        ]);
+        const rows = applyConversationSeenState(conversationRows);
         if (cancelled) return;
         setConversations(rows);
+        setOutboundMessages(outboundRows);
         setLoadingList(false);
         const currentSelectedLeadId = selectedLeadIdRef.current;
         if (!rows.length) {
@@ -990,17 +1102,18 @@ export default function UnifiedInbox({
         return;
       }
 
+      const confirmedMessage = payload.message;
       const confirmedEvent: TimelineEvent = {
-        id: payload.message.id,
+        id: confirmedMessage.id,
         type: "message",
         channel: "sms",
         direction:
-          payload.message.direction === "INBOUND" ? "inbound" : "outbound",
-        body: payload.message.body,
-        status: payload.message.status
-          ? (payload.message.status.toLowerCase() as TimelineEvent["status"])
+          confirmedMessage.direction === "INBOUND" ? "inbound" : "outbound",
+        body: confirmedMessage.body,
+        status: confirmedMessage.status
+          ? (confirmedMessage.status.toLowerCase() as TimelineEvent["status"])
           : undefined,
-        createdAt: new Date(payload.message.createdAt).toISOString(),
+        createdAt: new Date(confirmedMessage.createdAt).toISOString(),
       };
 
       setPendingEvents((current) =>
@@ -1028,6 +1141,22 @@ export default function UnifiedInbox({
             : row,
         ),
       );
+      setOutboundMessages((current) => [
+        {
+          id: confirmedMessage.id,
+          leadId: selectedLeadId,
+          contactName: leadTitle || leadContext?.phoneE164 || "",
+          phoneE164: leadContext?.phoneE164 || "",
+          toNumberE164: leadContext?.phoneE164 || "",
+          body: confirmedMessage.body,
+          bodyPreview: confirmedMessage.body,
+          type: "MANUAL",
+          status: confirmedMessage.status,
+          providerMessageSid: null,
+          createdAt: confirmedEvent.createdAt,
+        },
+        ...current.filter((row) => row.id !== confirmedMessage.id),
+      ]);
       setSendStatus(getSendStatusMessage(copy, payload));
     } catch {
       setPendingEvents((current) =>
@@ -1094,7 +1223,11 @@ export default function UnifiedInbox({
   const hasConversations = conversations.length > 0;
   const emptyState = !loadingList && hasConversations === false;
   const noSearchResults =
-    !loadingList && hasConversations && filteredConversations.length === 0;
+    !loadingList &&
+    hasConversations &&
+    (lane === "sent"
+      ? filteredOutboundMessages.length === 0
+      : filteredConversations.length === 0);
   const unreadThreadsCount = searchedConversations.filter(
     (row) => row.unreadCount > 0,
   ).length;
@@ -1104,6 +1237,7 @@ export default function UnifiedInbox({
   const spamThreadsCount = searchedConversations.filter((row) =>
     matchesInboxLane(row, "spam"),
   ).length;
+  const sentMessagesCount = outboundMessages.length;
 
   const leadTitle =
     leadContext?.contactName?.trim() ||
@@ -1142,8 +1276,14 @@ export default function UnifiedInbox({
         <div className="inbox-summary-strip">
           <article className="inbox-summary-stat">
             <span>{copy.activeThreads}</span>
-            <strong>{filteredConversations.length}</strong>
-            <small>{copy.activeThreadsBody}</small>
+            <strong>
+              {lane === "sent"
+                ? filteredOutboundMessages.length
+                : filteredConversations.length}
+            </strong>
+            <small>
+              {lane === "sent" ? copy.sentMessagesBody : copy.activeThreadsBody}
+            </small>
           </article>
           <article className="inbox-summary-stat">
             <span>{copy.unread}</span>
@@ -1154,6 +1294,11 @@ export default function UnifiedInbox({
             <span>{copy.needsAttention}</span>
             <strong>{attentionThreadsCount}</strong>
             <small>{copy.needsAttentionBody}</small>
+          </article>
+          <article className="inbox-summary-stat">
+            <span>{copy.sentMessages}</span>
+            <strong>{sentMessagesCount}</strong>
+            <small>{copy.sentMessagesBody}</small>
           </article>
           <article className="inbox-summary-stat">
             <span>{copy.spamReview}</span>
@@ -1235,6 +1380,13 @@ export default function UnifiedInbox({
                       {copy.laneAttention}
                     </button>
                     <button
+                      className={`btn ${lane === "sent" ? "primary" : "secondary"}`}
+                      type="button"
+                      onClick={() => setLane("sent")}
+                    >
+                      {copy.laneSent}
+                    </button>
+                    <button
                       className={`btn ${lane === "spam" ? "primary" : "secondary"}`}
                       type="button"
                       onClick={() => setLane("spam")}
@@ -1264,14 +1416,18 @@ export default function UnifiedInbox({
                 {noSearchResults ? (
                   <div className="portal-empty-state" style={{ marginTop: 0 }}>
                     <strong>
-                      {search.trim()
-                        ? copy.noSearchResultsTitle
-                        : copy.noLaneResultsTitle}
+                      {lane === "sent"
+                        ? copy.noSentResultsTitle
+                        : search.trim()
+                          ? copy.noSearchResultsTitle
+                          : copy.noLaneResultsTitle}
                     </strong>
                     <p className="muted">
-                      {search.trim()
-                        ? copy.noSearchResultsBody
-                        : copy.noLaneResultsBody}
+                      {lane === "sent"
+                        ? copy.noSentResultsBody
+                        : search.trim()
+                          ? copy.noSearchResultsBody
+                          : copy.noLaneResultsBody}
                     </p>
                     <div className="portal-empty-actions">
                       <button
@@ -1287,6 +1443,62 @@ export default function UnifiedInbox({
                       </button>
                     </div>
                   </div>
+                ) : lane === "sent" ? (
+                  <ul className="thread-list inbox-thread-list">
+                    {filteredOutboundMessages.map((message) => (
+                      <li
+                        key={message.id}
+                        className={`thread-item inbox-thread-item ${message.leadId === selectedLeadId ? "active" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className="thread-link inbox-thread-button"
+                          onClick={() => handleSelectLead(message.leadId)}
+                        >
+                          <div className="thread-top">
+                            <div className="inbox-thread-title">
+                              <strong>{message.contactName}</strong>
+                            </div>
+                            <span className="muted">
+                              {formatRelativeTimestamp(
+                                message.createdAt,
+                                locale,
+                                copy,
+                              )}
+                            </span>
+                          </div>
+
+                          <div className="inbox-thread-badges">
+                            <span className="badge status-active">
+                              {formatLabel(message.type)}
+                            </span>
+                            {message.status ? (
+                              <span
+                                className={`badge ${
+                                  message.status === "FAILED"
+                                    ? "status-overdue"
+                                    : "status-success"
+                                }`}
+                              >
+                                {formatLabel(message.status)}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <p className="inbox-thread-snippet">
+                            {message.bodyPreview || message.body}
+                          </p>
+
+                          <div className="inbox-thread-channels">
+                            <span className="inbox-channel-chip">SMS</span>
+                            <span className="inbox-channel-chip">
+                              {message.toNumberE164}
+                            </span>
+                          </div>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
                   <ul className="thread-list inbox-thread-list">
                     {filteredConversations.map((row) => {

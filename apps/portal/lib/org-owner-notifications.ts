@@ -18,11 +18,15 @@ import {
 import { dispatchStatusFromDb, type DispatchStatusValue } from "@/lib/dispatch";
 import {
   buildOwnerBookingNotificationSms,
+  buildOwnerNotificationEmail,
   buildOwnerLeadReviewNotificationSms,
+  resolveOwnerAlertChannels,
   resolveOwnerBookingType,
   selectOrgDispatchNotificationCandidate,
   type OwnerBookingNotificationKind,
+  type OwnerAlertChannels,
 } from "@/lib/org-owner-notification-core";
+import { isEmailDeliveryConfigured, sendEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { sendOutboundSms } from "@/lib/sms";
 import { ensureAutomatedSmsCompliance } from "@/lib/sms-compliance";
@@ -37,13 +41,14 @@ type OwnerNotificationContext = {
   orgName: string;
   timeZone: string;
   reminderMinutesBefore: number;
-  recipientNumberE164: string | null;
+  alertChannels: OwnerAlertChannels;
 };
 
 type OwnerBookingNotificationSendInput = {
   orgId: string;
   actorUserId?: string | null;
-  recipientNumberE164: string;
+  orgName: string;
+  alertChannels: OwnerAlertChannels;
   summary: string;
   body: string;
   idempotencyKey: string;
@@ -104,10 +109,19 @@ async function resolveOwnerNotificationContext(
     select: {
       id: true,
       name: true,
+      email: true,
       dashboardConfig: {
         select: {
           calendarTimezone: true,
           jobReminderMinutesBefore: true,
+        },
+      },
+      messagingSettings: {
+        select: {
+          ownerEmailAlertsEnabled: true,
+          ownerSmsAlertsEnabled: true,
+          ownerAlertEmail: true,
+          ownerAlertPhoneE164: true,
         },
       },
       twilioConfig: {
@@ -126,6 +140,15 @@ async function resolveOwnerNotificationContext(
     organizationId: orgId,
     configuredNumber: organization.twilioConfig?.voiceForwardingNumber || null,
   });
+  const alertChannels = resolveOwnerAlertChannels({
+    ownerEmailAlertsEnabled:
+      organization.messagingSettings?.ownerEmailAlertsEnabled,
+    ownerSmsAlertsEnabled: organization.messagingSettings?.ownerSmsAlertsEnabled,
+    ownerAlertEmail: organization.messagingSettings?.ownerAlertEmail,
+    ownerAlertPhoneE164: organization.messagingSettings?.ownerAlertPhoneE164,
+    organizationEmail: organization.email,
+    fallbackSmsNumberE164: recipientNumberE164,
+  });
 
   return {
     orgId,
@@ -137,7 +160,7 @@ async function resolveOwnerNotificationContext(
     reminderMinutesBefore:
       organization.dashboardConfig?.jobReminderMinutesBefore ||
       DEFAULT_REMINDER_MINUTES_BEFORE,
-    recipientNumberE164,
+    alertChannels,
   };
 }
 
@@ -166,14 +189,59 @@ async function sendOwnerNotification(
     locale: "EN",
     messageType: "SYSTEM_NUDGE",
   });
+  const sentChannels: string[] = [];
+  const failedChannels: string[] = [];
+  let smsProviderMessageSid: string | null = null;
+  let smsProviderStatus: string | null = null;
+  let smsFromNumberE164: string | null = null;
 
-  const dispatched = await sendOutboundSms({
-    orgId: input.orgId,
-    toNumberE164: input.recipientNumberE164,
-    body,
-  });
+  if (input.alertChannels.emailTo) {
+    if (isEmailDeliveryConfigured()) {
+      try {
+        const email = buildOwnerNotificationEmail({
+          orgName: input.orgName,
+          summary: input.summary,
+          body: input.body,
+        });
+        await sendEmail({
+          to: input.alertChannels.emailTo,
+          subject: email.subject,
+          text: email.text,
+        });
+        sentChannels.push("email");
+      } catch (error) {
+        failedChannels.push("email");
+        console.error("[owner-alert] email send failed", {
+          orgId: input.orgId,
+          error: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    } else {
+      failedChannels.push("email");
+    }
+  }
 
-  if (dispatched.suppressed || dispatched.status === "FAILED") {
+  if (input.alertChannels.smsTo) {
+    const dispatched = await sendOutboundSms({
+      orgId: input.orgId,
+      toNumberE164: input.alertChannels.smsTo,
+      body,
+      compliance: {
+        audience: "INTERNAL_ORG",
+        useCase: "INTERNAL_ALERT",
+      },
+    });
+    smsProviderMessageSid = dispatched.providerMessageSid;
+    smsProviderStatus = dispatched.status;
+    smsFromNumberE164 = dispatched.resolvedFromNumberE164;
+    if (dispatched.suppressed || dispatched.status === "FAILED") {
+      failedChannels.push("sms");
+    } else {
+      sentChannels.push("sms");
+    }
+  }
+
+  if (sentChannels.length === 0) {
     return "failed" as const;
   }
 
@@ -182,19 +250,22 @@ async function sendOwnerNotification(
       orgId: input.orgId,
       actorUserId: input.actorUserId || null,
       type: "OUTBOUND_SMS_SENT",
-      channel: "SMS",
+      channel: sentChannels.includes("sms") ? "SMS" : "SYSTEM",
       occurredAt,
       summary: input.summary,
       metadataJson: {
         ...input.metadata,
         ownerNotification: true,
-        toNumberE164: input.recipientNumberE164,
-        fromNumberE164: dispatched.resolvedFromNumberE164,
+        ownerAlertChannelsSent: sentChannels,
+        ownerAlertChannelsFailed: failedChannels,
+        emailTo: input.alertChannels.emailTo,
+        toNumberE164: input.alertChannels.smsTo,
+        fromNumberE164: smsFromNumberE164,
         body,
       },
-      provider: "TWILIO",
-      providerMessageSid: dispatched.providerMessageSid,
-      providerStatus: dispatched.status,
+      provider: sentChannels.includes("sms") ? "TWILIO" : "RESEND",
+      providerMessageSid: smsProviderMessageSid,
+      providerStatus: smsProviderStatus,
       idempotencyKey: input.idempotencyKey,
     });
   });
@@ -223,7 +294,7 @@ export async function maybeSendOrgDispatchNotifications(input: {
     }),
   ]);
 
-  if (!context?.recipientNumberE164 || !job) {
+  if (!context?.alertChannels.hasAnyChannel || !job) {
     return;
   }
 
@@ -270,7 +341,8 @@ export async function maybeSendOrgDispatchNotifications(input: {
   await sendOwnerNotification({
     orgId: input.orgId,
     actorUserId: input.actorUserId,
-    recipientNumberE164: context.recipientNumberE164,
+    orgName: context.orgName,
+    alertChannels: context.alertChannels,
     summary: buildOwnerBookingNotificationSummary({
       bookingType: "job",
       kind: candidate.kind,
@@ -282,7 +354,8 @@ export async function maybeSendOrgDispatchNotifications(input: {
       input.jobId,
       candidate.sourceEventId,
       candidate.kind,
-      context.recipientNumberE164,
+      context.alertChannels.emailTo || "no-email",
+      context.alertChannels.smsTo || "no-sms",
     ),
     metadata: {
       ownerNotificationKind: candidate.kind,
@@ -339,7 +412,7 @@ export async function maybeSendOwnerLeadReviewNotification(input: {
     }),
   ]);
 
-  if (!context?.recipientNumberE164 || !lead) {
+  if (!context?.alertChannels.hasAnyChannel || !lead) {
     return "skipped" as const;
   }
 
@@ -357,7 +430,8 @@ export async function maybeSendOwnerLeadReviewNotification(input: {
 
   return sendOwnerNotification({
     orgId: input.orgId,
-    recipientNumberE164: context.recipientNumberE164,
+    orgName: context.orgName,
+    alertChannels: context.alertChannels,
     summary: "Owner alert: Lead review needed",
     body,
     occurredAt,
@@ -367,7 +441,8 @@ export async function maybeSendOwnerLeadReviewNotification(input: {
       input.leadId,
       input.reason,
       latestInbound?.createdAt?.toISOString() || lead.lastInboundAt?.toISOString() || "no-inbound",
-      context.recipientNumberE164,
+      context.alertChannels.emailTo || "no-email",
+      context.alertChannels.smsTo || "no-sms",
     ),
     metadata: {
       ownerNotificationKind: "lead_review",
@@ -395,11 +470,6 @@ export async function processDueOrgOwnerBookingReminders(
   );
 
   const organizations = await prisma.organization.findMany({
-    where: {
-      twilioConfig: {
-        isNot: null,
-      },
-    },
     select: {
       id: true,
     },
@@ -417,7 +487,7 @@ export async function processDueOrgOwnerBookingReminders(
 
   for (const organization of organizations) {
     const context = await resolveOwnerNotificationContext(organization.id);
-    if (!context?.recipientNumberE164) {
+    if (!context?.alertChannels.hasAnyChannel) {
       skippedNoRecipient += 1;
       continue;
     }
@@ -475,7 +545,8 @@ export async function processDueOrgOwnerBookingReminders(
 
       const result = await sendOwnerNotification({
         orgId: organization.id,
-        recipientNumberE164: context.recipientNumberE164,
+        orgName: context.orgName,
+        alertChannels: context.alertChannels,
         summary: buildOwnerBookingNotificationSummary({
           bookingType,
           kind: "reminder",
@@ -488,7 +559,8 @@ export async function processDueOrgOwnerBookingReminders(
           event.id,
           event.startAt.toISOString(),
           context.reminderMinutesBefore,
-          context.recipientNumberE164,
+          context.alertChannels.emailTo || "no-email",
+          context.alertChannels.smsTo || "no-sms",
         ),
         metadata: {
           ownerNotificationKind: "reminder",

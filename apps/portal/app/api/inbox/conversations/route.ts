@@ -61,10 +61,12 @@ function callSnippet(status: CallStatus): string {
 function messageSnippet(input: {
   body: string;
   status: MessageStatus | null | undefined;
+  direction?: "inbound" | "outbound";
 }): string {
   return sanitizeConversationSnippet({
     body: input.body,
     status: input.status,
+    direction: input.direction,
   });
 }
 
@@ -216,6 +218,8 @@ export async function GET(req: Request) {
           lastSnippet = messageSnippet({
             body: lastMessage?.body || "",
             status: lastMessage?.status,
+            direction:
+              lastMessage?.direction === "OUTBOUND" ? "outbound" : "inbound",
           });
           lastChannel = "sms";
         } else if (lastCallAt) {

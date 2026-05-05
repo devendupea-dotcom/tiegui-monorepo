@@ -10,6 +10,7 @@ import {
 import { normalizeEnvValue } from "@/lib/env";
 import { assessInboundCallRisk } from "@/lib/inbound-call-risk";
 import { buildVoicemailFallbackTwiml } from "@/lib/twilio-voice-copy";
+import { shouldSendVoiceRiskToVoicemailOnly } from "@/lib/twilio-voice-routing";
 import { getBaseUrlFromRequest } from "@/lib/urls";
 
 function maskPhone(value: string): string {
@@ -71,7 +72,7 @@ export async function POST(req: Request) {
     stirVerstat: asTwilioString(form.get("StirVerstat")),
     excludeCallSid: callSid === "unknown" ? null : callSid,
   });
-  const suppressLeadCreation = riskAssessment.disposition === "VOICEMAIL_ONLY";
+  const voicemailOnlyRisk = shouldSendVoiceRiskToVoicemailOnly(riskAssessment.disposition);
 
   const shouldOfferVoicemailFallback =
     !voicemailFallbackStage &&
@@ -85,8 +86,8 @@ export async function POST(req: Request) {
       form,
       voicemailFallbackStage: false,
       riskAssessment,
-      allowLeadCreation: !suppressLeadCreation,
-      skipMissedCallRecovery: suppressLeadCreation,
+      allowLeadCreation: true,
+      skipMissedCallRecovery: voicemailOnlyRisk,
     });
     await recordVoiceVoicemailReached({
       context,
@@ -111,8 +112,8 @@ export async function POST(req: Request) {
     form,
     voicemailFallbackStage,
     riskAssessment,
-    allowLeadCreation: !suppressLeadCreation,
-    skipMissedCallRecovery: suppressLeadCreation,
+    allowLeadCreation: true,
+    skipMissedCallRecovery: voicemailOnlyRisk,
   });
 
   console.info(

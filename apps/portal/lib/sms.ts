@@ -13,8 +13,13 @@ import {
 import {
   type SmsFailureClassification,
 } from "@/lib/sms-failure-intelligence";
-import { getSmsConsentState } from "@/lib/sms-consent";
 import { getPackageEntitlements } from "@/lib/package-entitlements";
+import {
+  canSendSms,
+  type SmsOutboundAudience,
+  type SmsOutboundComplianceDecision,
+  type SmsOutboundUseCase,
+} from "@/lib/sms-outbound-compliance";
 
 type SendSmsInput = {
   orgId: string;
@@ -22,6 +27,13 @@ type SendSmsInput = {
   toNumberE164: string;
   body: string;
   allowPendingA2P?: boolean;
+  compliance?: {
+    audience?: SmsOutboundAudience;
+    useCase?: SmsOutboundUseCase;
+    leadId?: string | null;
+    legacyLeadStatus?: string | null;
+    requiresExplicitOptIn?: boolean;
+  };
 };
 
 type SendSmsResult = {
@@ -36,6 +48,7 @@ type SendSmsResult = {
   resolvedFromNumberE164: string | null;
   notice?: string;
   suppressed?: boolean;
+  compliance?: SmsOutboundComplianceDecision;
 };
 
 function isTwilioSendEnabled(): boolean {
@@ -147,40 +160,25 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     twilioConfig.phoneNumber;
 
   const normalizedToNumber = normalizeE164(input.toNumberE164) || input.toNumberE164;
-  const consent = await getSmsConsentState({
+  const compliance = await canSendSms({
     orgId: input.orgId,
-    phoneE164: normalizedToNumber,
+    toNumberE164: normalizedToNumber,
+    audience: input.compliance?.audience,
+    useCase: input.compliance?.useCase,
+    leadId: input.compliance?.leadId,
+    legacyLeadStatus: input.compliance?.legacyLeadStatus,
+    requiresExplicitOptIn: input.compliance?.requiresExplicitOptIn,
   });
 
-  if (consent.status === "OPTED_OUT") {
+  if (!compliance.allowed) {
     return {
       providerMessageSid: null,
       status: "FAILED",
       resolvedFromNumberE164,
-      notice: "Suppressed outbound SMS because the contact is opted out.",
+      notice: compliance.reason,
       suppressed: true,
+      compliance,
     };
-  }
-
-  if (consent.status !== "OPTED_IN") {
-    const optedOutLead = await prisma.lead.findFirst({
-      where: {
-        orgId: input.orgId,
-        phoneE164: normalizedToNumber,
-        status: "DNC",
-      },
-      select: { id: true },
-    });
-
-    if (optedOutLead) {
-      return {
-        providerMessageSid: null,
-        status: "FAILED",
-        resolvedFromNumberE164,
-        notice: "Suppressed outbound SMS because the contact is opted out.",
-        suppressed: true,
-      };
-    }
   }
 
   // Safe default for development: persist outbound rows without calling Twilio.
@@ -190,6 +188,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
       status: "QUEUED",
       resolvedFromNumberE164,
       notice: "Twilio sending is disabled. Message saved in CRM and marked QUEUED.",
+      compliance,
     };
   }
 
@@ -206,6 +205,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
       status: "FAILED",
       resolvedFromNumberE164,
       notice: "Too many messages to this number. Try again in a minute.",
+      compliance,
     };
   }
 
@@ -223,6 +223,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
       status: "FAILED",
       resolvedFromNumberE164,
       notice: "Organization not found.",
+      compliance,
     };
   }
 
@@ -256,6 +257,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
         status: "FAILED",
         resolvedFromNumberE164,
         notice: `SMS quota exceeded (${limit}/month). Sending blocked to prevent surprise charges.`,
+        compliance,
       };
     }
     usageReserved = true;
@@ -324,6 +326,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
         error instanceof Error
           ? error.message
           : "Twilio send failed before the provider accepted the message.",
+      compliance,
     };
   }
 
@@ -347,6 +350,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
       status: providerResponse.providerAcceptedUnknown ? "QUEUED" : "FAILED",
       resolvedFromNumberE164,
       notice: providerResponse.error,
+      compliance,
     };
   }
 
@@ -360,5 +364,6 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     failure: null,
     status: mapTwilioInitialSendStatus(providerResponse.providerStatus),
     resolvedFromNumberE164,
+    compliance,
   };
 }

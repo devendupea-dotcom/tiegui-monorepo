@@ -1690,6 +1690,10 @@ model OrganizationMessagingSettings {
   id                     String   @id @default(uuid())
   orgId                  String   @unique
   smsTone                SmsTone  @default(FRIENDLY)
+  ownerEmailAlertsEnabled Boolean @default(true)
+  ownerSmsAlertsEnabled   Boolean @default(false)
+  ownerAlertEmail         String?
+  ownerAlertPhoneE164     String?
   dispatchSmsEnabled     Boolean  @default(false)
   dispatchSmsScheduled   Boolean  @default(true)
   dispatchSmsOnTheWay    Boolean  @default(true)

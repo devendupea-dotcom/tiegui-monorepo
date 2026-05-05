@@ -110,6 +110,13 @@ function parseMessageLanguage(value: string): "EN" | "ES" | "AUTO" | null {
   return null;
 }
 
+function normalizeAlertEmail(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  if (!trimmed.includes("@") || trimmed.length > 254) return null;
+  return trimmed;
+}
+
 function parseSmsTone(
   value: string,
 ):
@@ -796,6 +803,7 @@ async function updateSettingsAction(formData: FormData) {
   const currentOrganization = await prisma.organization.findUnique({
     where: { id: orgId },
     select: {
+      email: true,
       autoReplyEnabled: true,
       followUpsEnabled: true,
       autoBookingEnabled: true,
@@ -812,6 +820,10 @@ async function updateSettingsAction(formData: FormData) {
           autoReplyEnabled: true,
           followUpsEnabled: true,
           autoBookingEnabled: true,
+          ownerEmailAlertsEnabled: true,
+          ownerSmsAlertsEnabled: true,
+          ownerAlertEmail: true,
+          ownerAlertPhoneE164: true,
         },
       },
     },
@@ -835,6 +847,16 @@ async function updateSettingsAction(formData: FormData) {
   ).trim();
   const messageLanguageRaw = String(
     formData.get("messageLanguage") || "",
+  ).trim();
+  const ownerEmailAlertsEnabled =
+    String(formData.get("ownerEmailAlertsEnabled") || "") === "on";
+  const ownerSmsAlertsEnabled =
+    String(formData.get("ownerSmsAlertsEnabled") || "") === "on";
+  const ownerAlertEmailRaw = String(
+    formData.get("ownerAlertEmail") || "",
+  ).trim();
+  const ownerAlertPhoneRaw = String(
+    formData.get("ownerAlertPhoneE164") || "",
   ).trim();
   const smsToneRaw = String(formData.get("smsTone") || "").trim();
   const autoReplyEnabled =
@@ -1004,6 +1026,41 @@ async function updateSettingsAction(formData: FormData) {
     redirect(
       withOrgQuery(
         "/app/settings?error=invalid-message-language",
+        orgId,
+        internalUser,
+      ),
+    );
+  }
+
+  const ownerAlertEmail = ownerAlertEmailRaw
+    ? normalizeAlertEmail(ownerAlertEmailRaw)
+    : null;
+  if (ownerAlertEmailRaw && !ownerAlertEmail) {
+    redirect(
+      withOrgQuery(
+        "/app/settings?error=invalid-owner-alert-email",
+        orgId,
+        internalUser,
+      ),
+    );
+  }
+
+  const ownerAlertPhoneE164 = ownerAlertPhoneRaw
+    ? normalizeE164(ownerAlertPhoneRaw)
+    : null;
+  if (ownerAlertPhoneRaw && !ownerAlertPhoneE164) {
+    redirect(
+      withOrgQuery(
+        "/app/settings?error=invalid-owner-alert-phone",
+        orgId,
+        internalUser,
+      ),
+    );
+  }
+  if (ownerSmsAlertsEnabled && !ownerAlertPhoneE164) {
+    redirect(
+      withOrgQuery(
+        "/app/settings?error=invalid-owner-alert-phone",
         orgId,
         internalUser,
       ),
@@ -1314,6 +1371,26 @@ async function updateSettingsAction(formData: FormData) {
   const currentAutoBookingEnabled =
     currentOrganization.messagingSettings?.autoBookingEnabled ??
     currentOrganization.autoBookingEnabled;
+  const currentOwnerEmailAlertsEnabled =
+    currentOrganization.messagingSettings?.ownerEmailAlertsEnabled ?? true;
+  const currentOwnerSmsAlertsEnabled =
+    currentOrganization.messagingSettings?.ownerSmsAlertsEnabled ?? false;
+  const currentOwnerAlertEmail =
+    currentOrganization.messagingSettings?.ownerAlertEmail || null;
+  const currentOwnerAlertPhoneE164 =
+    currentOrganization.messagingSettings?.ownerAlertPhoneE164 || null;
+  const nextOwnerEmailAlertsEnabled = canManageLeadEntrySetting
+    ? ownerEmailAlertsEnabled
+    : currentOwnerEmailAlertsEnabled;
+  const nextOwnerSmsAlertsEnabled = canManageLeadEntrySetting
+    ? ownerSmsAlertsEnabled
+    : currentOwnerSmsAlertsEnabled;
+  const nextOwnerAlertEmail = canManageLeadEntrySetting
+    ? ownerAlertEmail
+    : currentOwnerAlertEmail;
+  const nextOwnerAlertPhoneE164 = canManageLeadEntrySetting
+    ? ownerAlertPhoneE164
+    : currentOwnerAlertPhoneE164;
   const nextMissedCallAutoReplyOn = canManageLiveAutomation
     ? missedCallAutoReplyOn
     : currentOrganization.missedCallAutoReplyOn;
@@ -1438,6 +1515,10 @@ async function updateSettingsAction(formData: FormData) {
       where: { orgId },
       update: {
         smsTone: smsTone!,
+        ownerEmailAlertsEnabled: nextOwnerEmailAlertsEnabled,
+        ownerSmsAlertsEnabled: nextOwnerSmsAlertsEnabled,
+        ownerAlertEmail: nextOwnerAlertEmail,
+        ownerAlertPhoneE164: nextOwnerAlertPhoneE164,
         autoReplyEnabled: nextAutoReplyEnabled,
         followUpsEnabled: nextFollowUpsEnabled,
         autoBookingEnabled: nextAutoBookingEnabled,
@@ -1456,6 +1537,10 @@ async function updateSettingsAction(formData: FormData) {
       create: {
         orgId,
         smsTone: smsTone || "FRIENDLY",
+        ownerEmailAlertsEnabled: nextOwnerEmailAlertsEnabled,
+        ownerSmsAlertsEnabled: nextOwnerSmsAlertsEnabled,
+        ownerAlertEmail: nextOwnerAlertEmail,
+        ownerAlertPhoneE164: nextOwnerAlertPhoneE164,
         autoReplyEnabled: nextAutoReplyEnabled,
         followUpsEnabled: nextFollowUpsEnabled,
         autoBookingEnabled: nextAutoBookingEnabled,
@@ -1528,6 +1613,7 @@ export default async function ClientSettingsPage(
     select: {
       id: true,
       name: true,
+      email: true,
       allowWorkerLeadCreate: true,
       ghostBustingEnabled: true,
       voiceNotesEnabled: true,
@@ -1573,6 +1659,10 @@ export default async function ClientSettingsPage(
       messagingSettings: {
         select: {
           smsTone: true,
+          ownerEmailAlertsEnabled: true,
+          ownerSmsAlertsEnabled: true,
+          ownerAlertEmail: true,
+          ownerAlertPhoneE164: true,
           autoReplyEnabled: true,
           followUpsEnabled: true,
           autoBookingEnabled: true,
@@ -1689,6 +1779,15 @@ export default async function ClientSettingsPage(
   );
   const googleConfigured = googleConnectedCount > 0;
   const messagingSettings = organization.messagingSettings;
+  const effectiveOwnerAlertEmail =
+    messagingSettings?.ownerAlertEmail || organization.email || "";
+  const effectiveOwnerEmailAlertsEnabled =
+    (messagingSettings?.ownerEmailAlertsEnabled ?? true) &&
+    Boolean(effectiveOwnerAlertEmail);
+  const effectiveOwnerSmsAlertsEnabled =
+    messagingSettings?.ownerSmsAlertsEnabled ?? false;
+  const effectiveOwnerAlertPhone =
+    messagingSettings?.ownerAlertPhoneE164 || "";
   const effectiveTone = messagingSettings?.smsTone || organization.smsTone;
   const effectiveAutoReplyEnabled =
     messagingSettings?.autoReplyEnabled ?? organization.autoReplyEnabled;
@@ -1792,6 +1891,18 @@ export default async function ClientSettingsPage(
           "Deja cualquier campo vacio para usar el pack SMS Voice seleccionado. La logica STOP, la cadencia de seguimiento y el estado de conversacion siguen bloqueados por confiabilidad.",
         stopNotice:
           "La primera respuesta automatica a llamada perdida siempre incluye la linea STOP requerida.",
+        ownerAlertsTitle: "Alertas fuera de TieGui",
+        ownerAlertsBody:
+          "Mantén esto simple: avisa al dueño cuando alguien necesita revisar la bandeja o viene una cita.",
+        ownerEmailAlerts: "Enviar alertas por email",
+        ownerAlertEmail: "Email para alertas",
+        ownerSmsAlerts: "Enviar alertas por texto al equipo",
+        ownerAlertPhone: "Teléfono del equipo para alertas",
+        ownerSmsAlertsHelp:
+          "Solo para el dueño o el equipo. Los SMS de clientes usan consentimiento separado.",
+        invalidOwnerAlertEmail: "Agrega un email válido para alertas.",
+        invalidOwnerAlertPhone:
+          "Agrega un teléfono válido para alertas por texto.",
         invalidSmsTone: "Selecciona una voz SMS valida.",
         invoiceTemplatesTitle: "Plantillas de factura",
         invoiceTemplatesBody:
@@ -1826,6 +1937,17 @@ export default async function ClientSettingsPage(
           "Leave any field blank to fall back to the selected SMS Voice template pack. STOP handling, follow-up cadence, and conversation state logic remain locked for reliability.",
         stopNotice:
           "The first automated missed-call reply always includes the required STOP opt-out line.",
+        ownerAlertsTitle: "Outside-App Alerts",
+        ownerAlertsBody:
+          "Keep it simple: notify the owner when someone needs to check the inbox or an appointment is coming up.",
+        ownerEmailAlerts: "Send email alerts",
+        ownerAlertEmail: "Alert email",
+        ownerSmsAlerts: "Send team text alerts",
+        ownerAlertPhone: "Team alert phone",
+        ownerSmsAlertsHelp:
+          "For the owner or staff only. Customer SMS consent is handled separately.",
+        invalidOwnerAlertEmail: "Add a valid alert email.",
+        invalidOwnerAlertPhone: "Add a valid phone for text alerts.",
         invalidSmsTone: "Invalid SMS voice selection.",
         invoiceTemplatesTitle: "Invoice Templates",
         invoiceTemplatesBody:
@@ -2118,6 +2240,53 @@ export default async function ClientSettingsPage(
                     </option>
                   </select>
                 </label>
+
+                <article className="settings-integration-card">
+                  <strong>{settingsCopy.ownerAlertsTitle}</strong>
+                  <p className="muted" style={{ marginTop: 8 }}>
+                    {settingsCopy.ownerAlertsBody}
+                  </p>
+                  <label className="inline-toggle">
+                    <input
+                      type="checkbox"
+                      name="ownerEmailAlertsEnabled"
+                      defaultChecked={effectiveOwnerEmailAlertsEnabled}
+                      disabled={!canManageLeadEntrySetting}
+                    />
+                    {settingsCopy.ownerEmailAlerts}
+                  </label>
+                  <label>
+                    {settingsCopy.ownerAlertEmail}
+                    <input
+                      type="email"
+                      name="ownerAlertEmail"
+                      defaultValue={effectiveOwnerAlertEmail}
+                      placeholder="owner@example.com"
+                      disabled={!canManageLeadEntrySetting}
+                    />
+                  </label>
+                  <label className="inline-toggle">
+                    <input
+                      type="checkbox"
+                      name="ownerSmsAlertsEnabled"
+                      defaultChecked={effectiveOwnerSmsAlertsEnabled}
+                      disabled={!canManageLeadEntrySetting}
+                    />
+                    {settingsCopy.ownerSmsAlerts}
+                  </label>
+                  <label>
+                    {settingsCopy.ownerAlertPhone}
+                    <input
+                      name="ownerAlertPhoneE164"
+                      defaultValue={effectiveOwnerAlertPhone}
+                      placeholder="+12535550123"
+                      disabled={!canManageLeadEntrySetting}
+                    />
+                  </label>
+                  <p className="muted settings-toggle-help">
+                    {settingsCopy.ownerSmsAlertsHelp}
+                  </p>
+                </article>
 
                 <SmsVoiceSection
                   businessName={organization.name}
@@ -2487,6 +2656,16 @@ export default async function ClientSettingsPage(
           {error === "invalid-message-language" ? (
             <p className="form-status">
               {t("settings.errors.invalidMessageLanguage")}
+            </p>
+          ) : null}
+          {error === "invalid-owner-alert-email" ? (
+            <p className="form-status">
+              {settingsCopy.invalidOwnerAlertEmail}
+            </p>
+          ) : null}
+          {error === "invalid-owner-alert-phone" ? (
+            <p className="form-status">
+              {settingsCopy.invalidOwnerAlertPhone}
             </p>
           ) : null}
           {error === "invalid-sms-tone" ? (

@@ -32,19 +32,6 @@ export async function ensureLeadAndContactForInboundPhone(
     SELECT pg_advisory_xact_lock(hashtext(${input.orgId}), hashtext(${input.phoneE164}))
   `;
 
-  const blockedCaller = await findBlockedCallerByPhone({
-    orgId: input.orgId,
-    phone: input.phoneE164,
-    tx,
-  });
-
-  if (blockedCaller) {
-    return {
-      leadId: null,
-      contactId: null,
-    };
-  }
-
   const lead =
     (input.existingLeadId
       ? await tx.lead.findFirst({
@@ -78,8 +65,14 @@ export async function ensureLeadAndContactForInboundPhone(
       },
     }));
 
+  const blockedCaller = await findBlockedCallerByPhone({
+    orgId: input.orgId,
+    phone: input.phoneE164,
+    tx,
+  });
+
   if (!lead) {
-    if (input.allowCreateLead === false) {
+    if (blockedCaller || input.allowCreateLead === false) {
       return {
         leadId: null,
         contactId: null,

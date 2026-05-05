@@ -867,6 +867,10 @@ async function saveMessagingAction(formData: FormData) {
       toNumberE164: toNumber,
       body: "TieGui onboarding test: this confirms SMS routing is configured.",
       allowPendingA2P: true,
+      compliance: {
+        audience: "INTERNAL_TEST",
+        useCase: "TEST",
+      },
     });
     const notice = result.notice ? encodeURIComponent(result.notice) : "sent";
     redirect(onboardingUrl(orgId, actor.internalUser, 4, { smsTest: notice }));

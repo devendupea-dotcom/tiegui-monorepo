@@ -1,12 +1,11 @@
 import { normalizeEnvValue } from "@/lib/env";
 import { assessInboundCallRisk } from "@/lib/inbound-call-risk";
 import { normalizeE164 } from "@/lib/phone";
-import { isWithinSmsSendWindow } from "@/lib/sms-quiet-hours";
 import { buildForwardDialTwiml, buildVoicemailFallbackTwiml } from "@/lib/twilio-voice-copy";
+import { shouldSendVoiceRiskToVoicemailOnly } from "@/lib/twilio-voice-routing";
 import { getBaseUrlFromRequest } from "@/lib/urls";
 import {
   asTwilioString,
-  getVoiceCalendarTimezone,
   maskTwilioAccountSid,
   recordVoiceForwarding,
   recordVoiceVoicemailReached,
@@ -74,13 +73,13 @@ export async function POST(req: Request) {
     stirVerstat: asTwilioString(form.get("StirVerstat")),
     excludeCallSid: asTwilioString(form.get("CallSid")) || null,
   });
-  const suppressLeadCreation = riskAssessment.disposition === "VOICEMAIL_ONLY";
+  const voicemailOnlyRisk = shouldSendVoiceRiskToVoicemailOnly(riskAssessment.disposition);
 
   const trackedCall = await trackVoiceCallStart({
     context,
     form,
     riskAssessment,
-    allowLeadCreation: !suppressLeadCreation,
+    allowLeadCreation: true,
   });
 
   console.info(
@@ -89,12 +88,6 @@ export async function POST(req: Request) {
 
   const afterCallUrl = getAfterCallActionUrl(req);
   const voicemailAfterCallUrl = getAfterCallActionUrl(req, { voicemailFallback: "1" });
-  const inVoiceForwardingWindow = isWithinSmsSendWindow({
-    at: new Date(),
-    timeZone: getVoiceCalendarTimezone(context),
-    startMinute: context.organization.smsQuietHoursStartMinute,
-    endMinute: context.organization.smsQuietHoursEndMinute,
-  });
 
   if (context.twilioConfig.status === "PAUSED") {
     await recordVoiceVoicemailReached({
@@ -112,9 +105,9 @@ export async function POST(req: Request) {
     });
   }
 
-  if (!inVoiceForwardingWindow) {
+  if (voicemailOnlyRisk) {
     console.info(
-      `[twilio:voice] quiet-hours voicemail fallback callSid=${asTwilioString(form.get("CallSid")) || "unknown"} orgId=${context.organization.id} timezone=${getVoiceCalendarTimezone(context)} startMinute=${context.organization.smsQuietHoursStartMinute} endMinute=${context.organization.smsQuietHoursEndMinute}`,
+      `[twilio:voice] voicemail-only risk fallback callSid=${asTwilioString(form.get("CallSid")) || "unknown"} orgId=${context.organization.id} risk=${riskAssessment.disposition}:${riskAssessment.score}`,
     );
     await recordVoiceVoicemailReached({
       context,
@@ -122,7 +115,7 @@ export async function POST(req: Request) {
       leadId: trackedCall.leadId,
       contactId: trackedCall.contactId,
       callId: trackedCall.callId,
-      reason: "quiet_hours",
+      reason: "spam_high_risk",
       riskAssessment,
     });
     return buildVoicemailFallbackTwiml({
@@ -156,23 +149,6 @@ export async function POST(req: Request) {
     callId: trackedCall.callId,
     forwardedTo: forwardingNumber,
   });
-
-  if (riskAssessment.disposition === "VOICEMAIL_ONLY") {
-    await recordVoiceVoicemailReached({
-      context,
-      form,
-      leadId: trackedCall.leadId,
-      contactId: trackedCall.contactId,
-      callId: trackedCall.callId,
-      reason: "spam_high_risk",
-      forwardedTo: forwardingNumber,
-      riskAssessment,
-    });
-    return buildVoicemailFallbackTwiml({
-      afterCallUrl: voicemailAfterCallUrl,
-      businessName: context.organization.name,
-    });
-  }
 
   const originalCallerId = normalizeE164(asTwilioString(form.get("From")));
   const fallbackCallerId = normalizeE164(context.twilioConfig.phoneNumber) || context.twilioConfig.phoneNumber;

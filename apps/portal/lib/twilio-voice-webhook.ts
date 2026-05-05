@@ -17,19 +17,17 @@ import {
   type TwilioVoiceSnapshot,
 } from "@/lib/twilio-communication-events";
 import { decryptTwilioAuthToken, maskSid } from "@/lib/twilio-config-crypto";
-import { resolveTwilioVoiceForwardingNumber } from "@/lib/twilio-org";
+import {
+  resolveExplicitVoiceForwardTarget,
+  voiceConfigOwnsCalledNumber,
+} from "@/lib/twilio-voice-routing";
 
 type VoiceOrganization = {
   id: string;
   name: string;
   smsFromNumberE164: string | null;
-  smsQuietHoursStartMinute: number;
-  smsQuietHoursEndMinute: number;
   messageLanguage: "EN" | "ES" | "AUTO";
   missedCallAutoReplyOn: boolean;
-  dashboardConfig: {
-    calendarTimezone: string | null;
-  } | null;
 };
 
 type VoiceConfigRecord = {
@@ -74,15 +72,8 @@ const voiceConfigSelect = {
       id: true,
       name: true,
       smsFromNumberE164: true,
-      smsQuietHoursStartMinute: true,
-      smsQuietHoursEndMinute: true,
       messageLanguage: true,
       missedCallAutoReplyOn: true,
-      dashboardConfig: {
-        select: {
-          calendarTimezone: true,
-        },
-      },
     },
   },
 } satisfies Prisma.OrganizationTwilioConfigSelect;
@@ -136,8 +127,22 @@ export async function resolveTwilioVoiceWebhookContext(form: FormData): Promise<
   const toNumber = normalizeE164(asTwilioString(form.get("To"))) || normalizeE164(asTwilioString(form.get("Called")));
   const accountSid = asTwilioString(form.get("AccountSid"));
 
-  const config = (await getVoiceConfigByCalledNumber(toNumber)) || (await getVoiceConfigByAccountSid(accountSid));
+  const config = accountSid
+    ? await getVoiceConfigByAccountSid(accountSid)
+    : await getVoiceConfigByCalledNumber(toNumber);
   if (!config) {
+    return null;
+  }
+  if (
+    !voiceConfigOwnsCalledNumber({
+      configPhoneNumber: config.phoneNumber,
+      organizationSmsFromNumberE164: config.organization.smsFromNumberE164,
+      calledNumber: toNumber,
+    })
+  ) {
+    console.warn(
+      `[twilio:voice] rejected account/number mismatch account=${maskSid(config.twilioSubaccountSid)} orgId=${config.organizationId} called=${toNumber || "unknown"}`,
+    );
     return null;
   }
 
@@ -357,15 +362,8 @@ export async function trackVoiceCallStart(input: {
   });
 }
 
-export function getVoiceCalendarTimezone(context: TwilioVoiceWebhookContext): string {
-  return context.organization.dashboardConfig?.calendarTimezone || "America/Los_Angeles";
-}
-
 export async function resolveForwardTarget(context: TwilioVoiceWebhookContext): Promise<string | null> {
-  return resolveTwilioVoiceForwardingNumber({
-    organizationId: context.twilioConfig.organizationId,
-    configuredNumber: context.twilioConfig.voiceForwardingNumber,
-  });
+  return resolveExplicitVoiceForwardTarget(context.twilioConfig.voiceForwardingNumber);
 }
 
 export async function recordVoiceForwarding(input: {
