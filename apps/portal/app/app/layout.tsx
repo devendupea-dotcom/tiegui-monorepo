@@ -14,6 +14,7 @@ import ClientPortalNav from "./client-portal-nav";
 import LogoutButton from "./logout-button";
 import QuickAddLeadButton from "./quick-add-lead-button";
 import MobileActionBar from "./mobile-action-bar";
+import MobilePortalMenu from "./mobile-portal-menu";
 import ThemeToggle from "./theme-toggle";
 import LocaleToggle from "./locale-toggle";
 import MobileModeFlag from "./mobile-mode-flag";
@@ -156,6 +157,14 @@ export default async function ClientPortalLayout({
         </aside>
 
         <section className="portal-content">
+          <MobilePortalMenu
+            calendarAccessRole={calendarAccessRole}
+            defaultOrgId={defaultOrgId}
+            displayName={displayName}
+            email={user.email || ""}
+            internalUser={internalUser}
+            portalVertical={portalVertical}
+          />
           <header className="portal-topbar">
             <div className="portal-topbar-copy">
               <p>{quickAddLabel}</p>

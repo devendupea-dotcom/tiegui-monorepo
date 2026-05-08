@@ -17,7 +17,9 @@
     "internalQuickAddDescription": "Estás viendo un espacio de cliente como admin de TieGui. Usa HQ para controles entre clientes.",
     "onboardingPausedTitle": "Bienvenido: termina la configuración para activar automatizaciones clave.",
     "onboardingPausedDescription": "Completa la configuración rápida en 5 pasos para desbloquear agenda, mensajería y reportes.",
-    "resumeOnboarding": "Continuar onboarding"
+    "resumeOnboarding": "Continuar onboarding",
+    "openNavigation": "Abrir navegación",
+    "closeNavigation": "Cerrar navegación"
   },
   "appNav": {
     "navigationLabel": "Navegación del espacio",

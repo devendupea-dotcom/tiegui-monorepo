@@ -9,7 +9,10 @@ import {
 } from "@/lib/calendar/dates";
 import { formatLabel } from "@/lib/hq";
 import { matchesInboxConversationSearch } from "@/lib/inbox-search";
-import { mergeInboxTimelineEvents } from "@/lib/inbox-ui";
+import {
+  buildInboxHistoryUrl,
+  mergeInboxTimelineEvents,
+} from "@/lib/inbox-ui";
 import { shouldRouteLeadToSpamReview } from "@/lib/lead-spam-lane";
 import type { TwilioMessagingReadinessCode } from "@/lib/twilio-readiness";
 import InboxContextPanel, {
@@ -637,7 +640,74 @@ export default function UnifiedInbox({
   const sendingRef = useRef(false);
   const seenConversationAtRef = useRef<Record<string, string>>({});
   const initialContextRequestRef = useRef(Boolean(initialOpenContextEditor));
+  const primedInitialThreadHistoryRef = useRef(false);
+  const managedThreadHistoryRef = useRef(false);
   const closeContextDrawer = () => setShowContextDrawer(false);
+
+  function buildCurrentInboxHistoryUrl(
+    leadId: string | null,
+    openContextEditor = false,
+  ): string | null {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    return buildInboxHistoryUrl({
+      pathname: window.location.pathname,
+      search: window.location.search,
+      orgId,
+      internalUser,
+      leadId,
+      openContextEditor,
+    });
+  }
+
+  function replaceInboxHistoryUrl(
+    leadId: string | null,
+    openContextEditor = false,
+  ) {
+    const nextUrl = buildCurrentInboxHistoryUrl(leadId, openContextEditor);
+    if (!nextUrl) return;
+    window.history.replaceState({ tieguiInbox: true }, "", nextUrl);
+  }
+
+  function pushInboxThreadHistory(leadId: string) {
+    const nextUrl = buildCurrentInboxHistoryUrl(leadId);
+    if (!nextUrl) return;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (currentUrl === nextUrl) {
+      return;
+    }
+    managedThreadHistoryRef.current = true;
+    window.history.pushState({ tieguiInbox: true }, "", nextUrl);
+  }
+
+  function syncInboxViewFromLocation() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const urlLeadId = params.get("leadId");
+    const openContextEditor = params.get("context") === "edit";
+    initialContextRequestRef.current = openContextEditor;
+
+    if (urlLeadId) {
+      shouldStickThreadToBottomRef.current = true;
+      setSelectedLeadId(urlLeadId);
+      if (isNarrow) {
+        setView("thread");
+        setShowContextDrawer(openContextEditor);
+      }
+      return;
+    }
+
+    if (isNarrow) {
+      managedThreadHistoryRef.current = false;
+      setShowContextDrawer(false);
+      setView("list");
+    }
+  }
 
   useEffect(() => {
     selectedLeadIdRef.current = selectedLeadId;
@@ -1011,6 +1081,37 @@ export default function UnifiedInbox({
   }, [isNarrow, showContextDrawer]);
 
   useEffect(() => {
+    if (!isNarrow || !initialLeadId || primedInitialThreadHistoryRef.current) {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("leadId") !== initialLeadId) {
+      return;
+    }
+
+    primedInitialThreadHistoryRef.current = true;
+    replaceInboxHistoryUrl(null);
+    managedThreadHistoryRef.current = true;
+    const threadUrl = buildCurrentInboxHistoryUrl(
+      initialLeadId,
+      initialOpenContextEditor,
+    );
+    if (threadUrl) {
+      window.history.pushState({ tieguiInbox: true }, "", threadUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLeadId, initialOpenContextEditor, isNarrow]);
+
+  useEffect(() => {
+    if (!isNarrow) return;
+
+    window.addEventListener("popstate", syncInboxViewFromLocation);
+    return () => window.removeEventListener("popstate", syncInboxViewFromLocation);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNarrow]);
+
+  useEffect(() => {
     if (!isNarrow) {
       setView("thread");
     } else if (view !== "list" && !selectedLeadId) {
@@ -1190,11 +1291,28 @@ export default function UnifiedInbox({
         ),
       );
       if (isNarrow) {
+        pushInboxThreadHistory(nextLeadId);
         setView("thread");
       }
     },
     [conversations, isNarrow, markConversationSeen],
   );
+
+  function handleBackToInboxList() {
+    closeContextDrawer();
+    if (
+      isNarrow &&
+      managedThreadHistoryRef.current &&
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).has("leadId")
+    ) {
+      window.history.back();
+      return;
+    }
+
+    setView("list");
+    replaceInboxHistoryUrl(null);
+  }
 
   function handleLeadContextSaved(nextLead: InboxLeadContext) {
     setLeadContext(nextLead);
@@ -1606,7 +1724,7 @@ export default function UnifiedInbox({
                   <button
                     className="btn secondary inbox-back"
                     type="button"
-                    onClick={() => setView("list")}
+                    onClick={handleBackToInboxList}
                   >
                     {copy.back}
                   </button>

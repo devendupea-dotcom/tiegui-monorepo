@@ -17,7 +17,9 @@
     "internalQuickAddDescription": "You are viewing one client workspace as TieGui admin. Use HQ for cross-client controls.",
     "onboardingPausedTitle": "Welcome - finish setup to activate key automation features.",
     "onboardingPausedDescription": "Complete the quick 5-step setup to unlock scheduling, messaging, and reporting.",
-    "resumeOnboarding": "Resume onboarding"
+    "resumeOnboarding": "Resume onboarding",
+    "openNavigation": "Open navigation",
+    "closeNavigation": "Close navigation"
   },
   "appNav": {
     "navigationLabel": "Workspace navigation",

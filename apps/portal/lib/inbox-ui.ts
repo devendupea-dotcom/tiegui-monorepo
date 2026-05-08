@@ -76,3 +76,35 @@ export function parseRevenueInputToCents(value: string): number | null {
 
   return Math.round(parsed * 100);
 }
+
+export function buildInboxHistoryUrl(input: {
+  pathname: string;
+  search: string;
+  orgId: string;
+  internalUser: boolean;
+  leadId?: string | null;
+  openContextEditor?: boolean;
+}): string {
+  const params = new URLSearchParams(
+    input.search.startsWith("?") ? input.search.slice(1) : input.search,
+  );
+
+  if (input.internalUser) {
+    params.set("orgId", input.orgId);
+  }
+
+  if (input.leadId) {
+    params.set("leadId", input.leadId);
+  } else {
+    params.delete("leadId");
+  }
+
+  if (input.openContextEditor && input.leadId) {
+    params.set("context", "edit");
+  } else {
+    params.delete("context");
+  }
+
+  const query = params.toString();
+  return query ? `${input.pathname}?${query}` : input.pathname;
+}

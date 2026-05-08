@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildInboxHistoryUrl,
   formatRevenueInputCents,
   fromDateTimeLocalInputValue,
   mergeInboxTimelineEvents,
@@ -48,4 +49,26 @@ test("datetime-local helpers round trip through ISO", () => {
   assert.ok(localValue.includes("T"));
   assert.ok(isoValue);
   assert.equal(Number.isNaN(new Date(isoValue).getTime()), false);
+});
+
+test("inbox history URL switches between list and thread without losing mobile/internal scope", () => {
+  const threadUrl = buildInboxHistoryUrl({
+    pathname: "/app/inbox",
+    search: "?mobile=1&orgId=stale&leadId=old&context=edit",
+    orgId: "org_1",
+    internalUser: true,
+    leadId: "lead_1",
+  });
+
+  assert.equal(threadUrl, "/app/inbox?mobile=1&orgId=org_1&leadId=lead_1");
+
+  const listUrl = buildInboxHistoryUrl({
+    pathname: "/app/inbox",
+    search: "?mobile=1&orgId=org_1&leadId=lead_1&context=edit",
+    orgId: "org_1",
+    internalUser: true,
+    leadId: null,
+  });
+
+  assert.equal(listUrl, "/app/inbox?mobile=1&orgId=org_1");
 });

@@ -2228,6 +2228,10 @@ textarea {
   max-width: 100%;
 }
 
+.estimate-mobile-guide {
+  display: none;
+}
+
 .estimate-module-list {
   display: grid;
   gap: 10px;
@@ -3179,19 +3183,89 @@ textarea {
   }
 
   .revenue-workspace-backdrop {
-    padding: 10px;
+    display: block;
+    padding: 0;
+    background: var(--bg);
+    backdrop-filter: none;
   }
 
   .revenue-workspace-modal {
-    max-height: calc(100dvh - 20px);
-    border-radius: 14px;
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    background: var(--bg);
+    box-shadow: none;
     padding: 14px;
   }
 
   .revenue-workspace-modal-header {
+    position: sticky;
     top: -14px;
     margin: -14px -14px 14px;
     padding: 14px;
+    border-radius: 0;
+    background: color-mix(in srgb, var(--bg) 96%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .estimate-mobile-guide {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--brand-gold) 30%, var(--surface-card-border));
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 94%, var(--brand-gold) 6%);
+  }
+
+  .estimate-mobile-guide strong {
+    font-size: 0.95rem;
+  }
+
+  .estimate-mobile-guide ol {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+
+  .estimate-proposal-grid,
+  .estimate-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .estimate-proposal-card,
+  .estimate-share-internal-card,
+  .estimate-scope-editor-card,
+  .estimate-summary-card {
+    border-radius: 12px;
+    background: var(--surface-card);
+    box-shadow: none;
+  }
+
+  .estimate-scope-editor-card {
+    padding: 14px;
+  }
+
+  .estimate-scope-editor-total {
+    width: 100%;
+    min-width: 0;
+    justify-items: start;
+    background: color-mix(in srgb, var(--surface) 92%, var(--brand-gold) 8%);
+  }
+
+  .estimate-module-line-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .estimate-share-link-box input {
+    font-size: 0.85rem;
   }
 
   .dispatch-summary-grid {
@@ -4110,6 +4184,15 @@ textarea {
   background: rgba(199, 165, 75, 0.2);
   color: #ffffff;
   border-color: rgba(199, 165, 75, 0.66);
+}
+
+.mobile-portal-bar,
+.mobile-portal-drawer {
+  display: none;
+}
+
+body.mobile-portal-menu-open {
+  overflow: hidden;
 }
 
 .portal-content {
@@ -7596,27 +7679,187 @@ html[data-mobile-mode="1"] textarea {
   }
 
   .portal-sidebar {
-    position: static;
-    max-height: none;
-    border-right: 0;
-    border-bottom: 1px solid rgba(255,255,255,0.2);
+    display: none;
   }
 
   .portal-content {
     padding: 18px 14px 90px;
+    gap: 12px;
+  }
+
+  .mobile-portal-bar {
+    position: sticky;
+    top: 0;
+    z-index: 88;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 58px;
+    margin: -18px -14px 0;
+    padding: calc(8px + env(safe-area-inset-top)) 14px 8px;
+    border-bottom: 1px solid var(--surface-card-border);
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .mobile-portal-menu-btn {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 5px;
+    border-radius: 12px;
+    border: 1px solid var(--btn-secondary-border);
+    background: var(--btn-secondary-bg);
+    color: var(--btn-secondary-text);
+    box-shadow: var(--shadow-1);
+  }
+
+  .mobile-portal-menu-btn span {
+    width: 18px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+
+  .mobile-portal-brand-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    color: var(--text);
+  }
+
+  .mobile-portal-brand-mark {
+    display: inline-flex;
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--brand-gold) 36%, var(--surface-card-border));
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+  }
+
+  .mobile-portal-brand-text {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+    line-height: 1.1;
+  }
+
+  .mobile-portal-brand-text strong {
+    overflow: hidden;
+    font-size: 0.98rem;
+    font-weight: 780;
+    letter-spacing: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-portal-brand-text span {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-family: var(--font-meta);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .mobile-portal-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: block;
+  }
+
+  .mobile-portal-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    border: 0;
+    background: rgba(6, 14, 26, 0.58);
+    backdrop-filter: blur(2px);
+  }
+
+  .mobile-portal-drawer-card {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(344px, calc(100vw - 42px));
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: calc(18px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom));
+    border-right: 1px solid rgba(255, 255, 255, 0.14);
+    background:
+      radial-gradient(340px 200px at 22% -6%, rgba(199, 165, 75, 0.22), transparent 58%),
+      linear-gradient(180deg, color-mix(in srgb, var(--brand-ink) 94%, #000000 6%) 0%, var(--brand-ink) 100%);
+    color: #eef2f9;
+    box-shadow: 18px 0 42px rgba(0, 0, 0, 0.3);
+  }
+
+  .mobile-portal-drawer-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 42px;
+    gap: 10px;
+    align-items: start;
+  }
+
+  .mobile-portal-close-btn {
+    display: inline-flex;
+    width: 42px;
+    height: 42px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    border: 1px solid rgba(231, 239, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+    color: #eef2f9;
+  }
+
+  .mobile-portal-close-btn svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   .portal-topbar {
     flex-direction: column;
     align-items: stretch;
-    position: sticky;
-    top: 0;
-    z-index: 35;
+    position: static;
     background: color-mix(in srgb, var(--bg) 92%, transparent);
     border: 1px solid var(--surface-card-border);
-    border-radius: 0 0 18px 18px;
-    margin: -18px -14px 4px;
+    border-radius: 16px;
+    margin: 0;
     padding: 12px 14px;
+  }
+
+  html[data-mobile-mode="1"] .mobile-portal-bar {
+    margin: -14px -12px 0;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  html[data-mobile-mode="1"] .portal-topbar {
+    position: static;
+    top: auto;
+    z-index: auto;
+    border-radius: 16px;
+    margin: 0;
+    padding: 12px;
   }
 
   .portal-quick-add-btn {

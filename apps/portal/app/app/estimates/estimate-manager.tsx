@@ -139,6 +139,12 @@ type EstimateManagerCopy = {
     emptyTitle: string;
     emptyBody: string;
   };
+  mobileGuide: {
+    title: string;
+    basics: string;
+    scope: string;
+    send: string;
+  };
   cards: {
     projectSummary: string;
     customerReady: string;
@@ -413,6 +419,12 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
         loading: "Cargando estimado...",
         emptyTitle: "No hay estimado seleccionado.",
         emptyBody: "Elige un estimado de la lista o crea uno nuevo.",
+      },
+      mobileGuide: {
+        title: "Flujo rapido del estimado",
+        basics: "Completa cliente, direccion, tipo de proyecto y terminos.",
+        scope: "Agrega mano de obra, materiales o partidas personalizadas.",
+        send: "Guarda, crea el enlace seguro y envia cuando este listo.",
       },
       cards: {
         projectSummary: "Resumen del proyecto",
@@ -698,6 +710,12 @@ function getEstimateManagerCopy(locale: string): EstimateManagerCopy {
       loading: "Loading estimate...",
       emptyTitle: "No estimate selected.",
       emptyBody: "Choose an estimate from the list or create a new one.",
+    },
+    mobileGuide: {
+      title: "Quick estimate flow",
+      basics: "Fill in customer, site address, project type, and terms.",
+      scope: "Add labor, materials, or custom line items.",
+      send: "Save, create the secure link, then send when ready.",
     },
     cards: {
       projectSummary: "Project Summary",
@@ -2226,6 +2244,15 @@ export default function EstimateManager({
             {error}
           </p>
         ) : null}
+
+        <aside className="estimate-mobile-guide">
+          <strong>{copy.mobileGuide.title}</strong>
+          <ol>
+            <li>{copy.mobileGuide.basics}</li>
+            <li>{copy.mobileGuide.scope}</li>
+            <li>{copy.mobileGuide.send}</li>
+          </ol>
+        </aside>
       </section>
 
       <div className="estimate-module-grid estimate-module-grid--list-only">
