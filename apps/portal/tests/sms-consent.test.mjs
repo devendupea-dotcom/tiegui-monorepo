@@ -5,6 +5,7 @@ import {
   backfillSmsConsentFromLegacyDnc,
   getSmsConsentState,
   getSmsSendBlockState,
+  recordManualSmsConsentChange,
   recordSmsStart,
   recordSmsStop,
   safeSmsConsentBodyPreview,
@@ -171,6 +172,30 @@ test("START and UNSTOP create or update SmsConsent as OPTED_IN without changing 
   assert.equal(consent.status, "OPTED_IN");
   assert.equal(consent.source, "TWILIO_START");
   assert.equal(consent.lastKeyword, "UNSTOP");
+  assert.equal(consent.optedInAt?.toISOString(), "2026-04-28T12:05:00.000Z");
+});
+
+test("manual consent changes can preserve a non-keyword opt-in source marker", async () => {
+  const client = makeSmsConsentClient();
+
+  const consent = await recordManualSmsConsentChange({
+    client,
+    orgId: "org_1",
+    phoneE164: "+12533300042",
+    leadId: "lead_1",
+    customerId: "customer_1",
+    status: "OPTED_IN",
+    keyword: "WEB_FORM",
+    body: "I agree to receive customer service and appointment texts. Reply STOP to opt out.",
+    occurredAt: new Date("2026-04-28T12:05:00.000Z"),
+    metadataJson: {
+      consentMethod: "signed_website_lead_form",
+    },
+  });
+
+  assert.equal(consent.status, "OPTED_IN");
+  assert.equal(consent.source, "MANUAL");
+  assert.equal(consent.lastKeyword, "WEB_FORM");
   assert.equal(consent.optedInAt?.toISOString(), "2026-04-28T12:05:00.000Z");
 });
 

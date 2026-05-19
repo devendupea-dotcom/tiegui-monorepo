@@ -19,6 +19,8 @@ import {
   type TwilioMessagingReadinessCode,
 } from "@/lib/twilio-readiness";
 import type { SmsFailureClassification } from "@/lib/sms-failure-intelligence";
+import { ensureInitialManualSmsCompliance } from "@/lib/sms-compliance";
+import { resolveMessageLocale } from "@/lib/message-language";
 
 type ManualLeadContext = {
   id: string;
@@ -92,6 +94,8 @@ export async function sendManualLeadSms(input: {
   const organization = await prisma.organization.findUnique({
     where: { id: input.lead.orgId },
     select: {
+      name: true,
+      messageLanguage: true,
       package: true,
       smsFromNumberE164: true,
       messagingLaunchMode: true,
@@ -159,11 +163,43 @@ export async function sendManualLeadSms(input: {
     };
   }
 
+  const priorOutbound = await prisma.message.findFirst({
+    where: {
+      orgId: input.lead.orgId,
+      leadId: input.lead.id,
+      direction: "OUTBOUND",
+      toNumberE164: input.lead.phoneE164,
+    },
+    select: { id: true },
+  });
+  const bodyForSend = priorOutbound
+    ? input.body
+    : ensureInitialManualSmsCompliance({
+        body: input.body,
+        bizName: organization?.name || "Our office",
+        locale: resolveMessageLocale({
+          organizationLanguage: organization?.messageLanguage,
+          leadPreferredLanguage: null,
+        }),
+      });
+
+  if (bodyForSend.length > 1600) {
+    return {
+      ok: false,
+      httpStatus: 400,
+      error:
+        "Message is too long after adding the required first-message sender and STOP disclosure. Shorten the note and try again.",
+      deliveryState: "SUPPRESSED",
+      liveSend: false,
+      readinessCode: readiness.code,
+    };
+  }
+
   const providerResult = await sendOutboundSms({
     orgId: input.lead.orgId,
     fromNumberE164: resolvedFromNumber,
     toNumberE164: input.lead.phoneE164,
-    body: input.body,
+    body: bodyForSend,
   });
   const finalFromNumber =
     providerResult.resolvedFromNumberE164 || resolvedFromNumber;
@@ -208,7 +244,7 @@ export async function sendManualLeadSms(input: {
         type: "MANUAL",
         fromNumberE164: finalFromNumber,
         toNumberE164: input.lead.phoneE164,
-        body: input.body,
+        body: bodyForSend,
         provider: "TWILIO",
         providerMessageSid: providerResult.providerMessageSid,
         status: providerResult.status,
@@ -234,7 +270,7 @@ export async function sendManualLeadSms(input: {
       conversationId: input.lead.conversationState?.id || null,
       messageId: message.id,
       actorUserId: input.actor.id || null,
-      body: input.body,
+      body: bodyForSend,
       fromNumberE164: finalFromNumber,
       toNumberE164: input.lead.phoneE164,
       providerMessageSid: providerResult.providerMessageSid,

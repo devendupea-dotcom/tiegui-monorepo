@@ -34,6 +34,12 @@ function hasDisclosure(body: string, disclosure: string): boolean {
   return normalizeWhitespace(body).includes(normalizeWhitespace(disclosure));
 }
 
+function hasSenderIdentity(body: string, bizName: string): boolean {
+  const normalizedBody = normalizeWhitespace(body);
+  const normalizedBizName = normalizeWhitespace(bizName);
+  return Boolean(normalizedBizName && normalizedBody.includes(normalizedBizName));
+}
+
 function normalizeInboundKeyword(body: string): string {
   return body.trim().toUpperCase().split(/\s+/)[0] || "";
 }
@@ -66,6 +72,25 @@ export function ensureAutomatedSmsCompliance(input: {
   }
 
   return ensureSmsOptOutHint(trimmed, input.locale);
+}
+
+export function ensureInitialManualSmsCompliance(input: {
+  body: string;
+  bizName: string;
+  locale: ResolvedMessageLocale;
+}): string {
+  const trimmed = input.body.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const bizName = input.bizName.trim();
+  const withSenderIdentity =
+    bizName && !hasSenderIdentity(trimmed, bizName)
+      ? `${bizName}: ${trimmed}`
+      : trimmed;
+
+  return ensureSmsOptOutHint(withSenderIdentity, input.locale);
 }
 
 export function getSmsA2POpenerDisclosure(variant: "EN" | "BILINGUAL"): string {

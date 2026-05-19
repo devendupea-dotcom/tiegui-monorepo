@@ -476,7 +476,7 @@ Required env vars in `apps/portal/.env.local`:
 TWILIO_TOKEN_ENCRYPTION_KEY=... # base64-encoded 32-byte key
 TWILIO_SEND_ENABLED=false
 TWILIO_VALIDATE_SIGNATURE=false
-TWILIO_ALLOW_UNSIGNED_WEBHOOKS=true # local/test only; never set this in production
+TWILIO_ALLOW_UNSIGNED_WEBHOOKS=false # fail-closed default; set true only for local unsigned webhook testing
 TWILIO_SMS_COST_ESTIMATE_CENTS=1
 CRON_SECRET=...
 TWILIO_VOICE_AFTER_CALL_URL=... # optional override; defaults to /api/webhooks/twilio/after-call
@@ -535,7 +535,7 @@ STOP/quiet-hours behavior:
 
 Local testing notes:
 
-1. Set `TWILIO_VALIDATE_SIGNATURE=false` and `TWILIO_ALLOW_UNSIGNED_WEBHOOKS=true` for local webhook testing.
+1. Temporarily set `TWILIO_VALIDATE_SIGNATURE=false` and `TWILIO_ALLOW_UNSIGNED_WEBHOOKS=true` for local unsigned webhook testing only. Reset `TWILIO_ALLOW_UNSIGNED_WEBHOOKS=false` afterward.
 2. Run portal and post form-data test payloads:
    - `curl -X POST http://localhost:3001/api/webhooks/twilio/voice -d "AccountSid=ACsubaccount123&CallSid=CA123&From=+12065550199&To=+12065550100&Direction=inbound&CallStatus=ringing"`
    - `curl -X POST http://localhost:3001/api/webhooks/twilio/after-call -d "AccountSid=ACsubaccount123&CallSid=CA123&From=+12065550199&To=+12065550100&Direction=inbound&DialCallStatus=no-answer&CallStatus=completed"`

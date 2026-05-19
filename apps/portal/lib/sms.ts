@@ -26,7 +26,6 @@ type SendSmsInput = {
   fromNumberE164?: string | null;
   toNumberE164: string;
   body: string;
-  allowPendingA2P?: boolean;
   compliance?: {
     audience?: SmsOutboundAudience;
     useCase?: SmsOutboundUseCase;
@@ -144,8 +143,7 @@ export async function sendOutboundSms(input: SendSmsInput): Promise<SendSmsResul
     };
   }
 
-  const canSendForStatus = twilioConfig.status === "ACTIVE" || input.allowPendingA2P === true;
-  if (!canSendForStatus) {
+  if (twilioConfig.status !== "ACTIVE") {
     return {
       providerMessageSid: null,
       status: "FAILED",

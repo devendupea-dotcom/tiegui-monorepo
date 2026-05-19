@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildSmsComplianceReply,
   ensureAutomatedSmsCompliance,
+  ensureInitialManualSmsCompliance,
   ensureSmsA2POpenerDisclosure,
   ensureSmsOptOutHint,
   parseSmsComplianceKeyword,
@@ -48,6 +49,24 @@ test("ensureAutomatedSmsCompliance leaves manual operator texts unchanged", () =
   });
 
   assert.equal(body, "I can come by Thursday afternoon.");
+});
+
+test("ensureInitialManualSmsCompliance adds sender identity and opt-out language once", () => {
+  const body = ensureInitialManualSmsCompliance({
+    body: "I can come by Thursday afternoon.",
+    bizName: "Acme Roofing",
+    locale: "EN",
+  });
+
+  assert.equal(body, "Acme Roofing: I can come by Thursday afternoon.\n\nReply STOP to opt out.");
+
+  const alreadyCompliant = ensureInitialManualSmsCompliance({
+    body: "Acme Roofing: I can come by Thursday afternoon.\n\nReply STOP to opt out.",
+    bizName: "Acme Roofing",
+    locale: "EN",
+  });
+
+  assert.equal(alreadyCompliant, "Acme Roofing: I can come by Thursday afternoon.\n\nReply STOP to opt out.");
 });
 
 test("ensureAutomatedSmsCompliance does not duplicate existing A2P disclosure", () => {

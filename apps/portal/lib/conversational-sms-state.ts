@@ -195,7 +195,6 @@ export async function sendConversationMessage(input: {
   body: string;
   messageType: "AUTOMATION" | "SYSTEM_NUDGE" | "MANUAL";
   allowWhenStopped?: boolean;
-  allowPendingA2P?: boolean;
 }) {
   if (!input.allowWhenStopped) {
     const smsBlock = await getSmsSendBlockState({
@@ -230,7 +229,6 @@ export async function sendConversationMessage(input: {
     fromNumberE164: input.organization.smsFromNumberE164 || null,
     toNumberE164: input.lead.phoneE164,
     body: text,
-    allowPendingA2P: input.allowPendingA2P,
   });
 
   if (outbound.suppressed) {

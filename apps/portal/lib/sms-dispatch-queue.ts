@@ -365,7 +365,6 @@ export async function processDueSmsDispatchQueue(input?: {
       fromNumberE164: liveJob.fromNumberE164,
       toNumberE164: liveJob.toNumberE164,
       body: compliantBody,
-      allowPendingA2P: liveJob.kind === "MISSED_CALL_INTRO",
     });
 
     if (providerResult.suppressed) {

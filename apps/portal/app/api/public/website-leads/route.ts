@@ -4,6 +4,7 @@ import { getClientIpFromHeaders } from "@/lib/auth-rate-limit";
 import { createBuyerProjectForWebsiteLead } from "@/lib/buyer-projects";
 import { decryptIntegrationToken } from "@/lib/integrations/crypto";
 import { prisma } from "@/lib/prisma";
+import { recordManualSmsConsentChange } from "@/lib/sms-consent";
 import {
   classifyWebsiteLeadReceiptReplay,
   hashWebsiteLeadRequestBody,
@@ -106,6 +107,11 @@ function getPublicBaseUrl(req: Request): string {
     return `${forwardedProto || "https"}://${forwardedHost}`;
   }
   return new URL(req.url).origin;
+}
+
+function parseConsentCapturedAt(value: string): Date {
+  const parsed = value ? new Date(value) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
 }
 
 async function enforceRateLimit(input: {
@@ -304,6 +310,29 @@ async function createLeadForSubmission(input: {
           body: note,
         },
       });
+
+      if (input.payload.smsOptIn) {
+        await recordManualSmsConsentChange({
+          client: tx,
+          orgId: input.source.orgId,
+          phoneE164: input.payload.phoneE164,
+          leadId: lead.id,
+          customerId: customer.id,
+          status: "OPTED_IN",
+          keyword: "WEB_FORM",
+          body: input.payload.smsConsentText,
+          occurredAt: parseConsentCapturedAt(input.payload.smsConsentCapturedAt),
+          metadataJson: {
+            consentMethod: "signed_website_lead_form",
+            websiteLeadSourceId: input.source.id,
+            websiteLeadIdempotencyKey: input.idempotencyKey,
+            smsConsentText: input.payload.smsConsentText,
+            smsConsentCapturedAt: input.payload.smsConsentCapturedAt || null,
+            smsConsentPageUrl: input.payload.smsConsentPageUrl || null,
+            sourcePath: input.payload.sourcePath || null,
+          },
+        });
+      }
 
       const buyerProject =
         input.source.portalVertical === "HOMEBUILDER"

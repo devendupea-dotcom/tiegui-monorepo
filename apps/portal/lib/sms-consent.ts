@@ -216,6 +216,7 @@ export async function recordManualSmsConsentChange(input: {
   leadId?: string | null;
   customerId?: string | null;
   status: SmsConsentStatus;
+  keyword?: string | null;
   body?: string | null;
   occurredAt?: Date | null;
   metadataJson?: Prisma.InputJsonValue | null;
@@ -223,7 +224,9 @@ export async function recordManualSmsConsentChange(input: {
   return upsertSmsConsent({
     ...input,
     source: "MANUAL",
-    keyword: input.status === "OPTED_OUT" ? "STOP" : input.status === "OPTED_IN" ? "START" : "UNKNOWN",
+    keyword:
+      input.keyword ||
+      (input.status === "OPTED_OUT" ? "STOP" : input.status === "OPTED_IN" ? "START" : "UNKNOWN"),
   });
 }
 

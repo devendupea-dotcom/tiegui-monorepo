@@ -550,7 +550,6 @@ export async function startConversationalSmsFromMissedCall(input: {
     stateId: state.id,
     body: kickoff.immediateBody,
     messageType: "AUTOMATION",
-    allowPendingA2P: true,
   });
 
   if (!initialSend.ok) {

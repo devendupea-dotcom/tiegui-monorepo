@@ -866,7 +866,6 @@ async function saveMessagingAction(formData: FormData) {
       fromNumberE164: sender,
       toNumberE164: toNumber,
       body: "TieGui onboarding test: this confirms SMS routing is configured.",
-      allowPendingA2P: true,
       compliance: {
         audience: "INTERNAL_TEST",
         useCase: "TEST",

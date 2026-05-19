@@ -249,3 +249,11 @@ test("website lead route no longer accepts the legacy global-secret org override
   assert.match(source, /rl:public:website-leads:source/);
   assert.match(source, /idempotencyKey/);
 });
+
+test("website lead route records checked SMS opt-in into structured consent", async () => {
+  const source = await readFile(new URL("app/api/public/website-leads/route.ts", portalRoot), "utf8");
+
+  assert.match(source, /recordManualSmsConsentChange/);
+  assert.match(source, /keyword:\s*"WEB_FORM"/);
+  assert.match(source, /consentMethod:\s*"signed_website_lead_form"/);
+});

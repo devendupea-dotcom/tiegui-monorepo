@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   resolveTwilioWebhookValidationMode,
   validateTwilioWebhook,
 } from "../lib/twilio.ts";
+
+const portalRoot = new URL("..", import.meta.url);
 
 async function withEnv(overrides, callback) {
   const previous = new Map();
@@ -151,4 +154,9 @@ test("Twilio unsigned webhook bypass is explicit and non-production only", async
       assert.deepEqual(result, { ok: true });
     },
   );
+});
+
+test("example env keeps unsigned Twilio webhook bypass disabled by default", async () => {
+  const example = await readFile(new URL(".env.example", portalRoot), "utf8");
+  assert.match(example, /^TWILIO_ALLOW_UNSIGNED_WEBHOOKS=false$/m);
 });
