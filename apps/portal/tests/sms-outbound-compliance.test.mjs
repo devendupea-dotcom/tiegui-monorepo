@@ -68,6 +68,41 @@ test("customer SMS is blocked until explicit opt-in exists", async () => {
   assert.equal(decision.code, "MISSING_EXPLICIT_OPT_IN");
 });
 
+test("manual conversational replies can send without explicit opt-in", async () => {
+  const decision = await canSendSms({
+    client: makeComplianceClient(),
+    orgId: "org_1",
+    toNumberE164: "+12533300042",
+    useCase: "CONVERSATIONAL",
+    requiresExplicitOptIn: false,
+  });
+
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.code, "CUSTOMER_EXPLICIT_OPT_IN_NOT_REQUIRED");
+});
+
+test("manual conversational replies still block opted-out contacts", async () => {
+  const decision = await canSendSms({
+    client: makeComplianceClient({
+      consents: [
+        {
+          orgId: "org_1",
+          phoneE164: "+12533300042",
+          status: "OPTED_OUT",
+          source: "TWILIO_STOP",
+        },
+      ],
+    }),
+    orgId: "org_1",
+    toNumberE164: "+12533300042",
+    useCase: "CONVERSATIONAL",
+    requiresExplicitOptIn: false,
+  });
+
+  assert.equal(decision.allowed, false);
+  assert.equal(decision.code, "SMS_CONSENT_OPTED_OUT");
+});
+
 test("customer SMS is allowed with accepted explicit opt-in source", async () => {
   const decision = await canSendSms({
     client: makeComplianceClient({

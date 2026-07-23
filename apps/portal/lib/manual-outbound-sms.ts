@@ -164,6 +164,12 @@ export async function sendManualLeadSms(input: {
     fromNumberE164: resolvedFromNumber,
     toNumberE164: input.lead.phoneE164,
     body: input.body,
+    compliance: {
+      audience: "CUSTOMER",
+      useCase: "CONVERSATIONAL",
+      leadId: input.lead.id,
+      requiresExplicitOptIn: false,
+    },
   });
   const finalFromNumber =
     providerResult.resolvedFromNumberE164 || resolvedFromNumber;
