@@ -89,6 +89,21 @@ export type LeadConversationIntegrityRepairResult = {
   }>;
 };
 
+export type LeadConversationCommunicationRepairResult = {
+  scannedStates: number;
+  repairableTimestampStates: number;
+  repairedTimestampStates: number;
+  repairableConversationLinks: number;
+  repairedConversationLinks: number;
+  samples: Array<{
+    stateId: string;
+    leadId: string;
+    lastInboundAt: Date | null;
+    lastOutboundAt: Date | null;
+    missingConversationLinkCount: number;
+  }>;
+};
+
 export type ConservativeBookedSnapshotRepair = {
   canRepair: boolean;
   bookedCalendarEventId: string | null;
@@ -103,6 +118,29 @@ type LeadConversationCommunicationSnapshot = {
   missingConversationLinkCount: number;
   latestMissingConversationLinkAt: Date | null;
 };
+
+export function resolveConversationCommunicationRepair(input: {
+  state: Pick<LeadConversationIntegrityStateRecord, "lastInboundAt" | "lastOutboundAt">;
+  communication: LeadConversationCommunicationSnapshot;
+}) {
+  const nextInboundAt =
+    input.communication.latestInboundAt
+    && (!input.state.lastInboundAt || input.communication.latestInboundAt > input.state.lastInboundAt)
+      ? input.communication.latestInboundAt
+      : null;
+  const nextOutboundAt =
+    input.communication.latestOutboundAt
+    && (!input.state.lastOutboundAt || input.communication.latestOutboundAt > input.state.lastOutboundAt)
+      ? input.communication.latestOutboundAt
+      : null;
+
+  return {
+    nextInboundAt,
+    nextOutboundAt,
+    hasTimestampRepair: Boolean(nextInboundAt || nextOutboundAt),
+    missingConversationLinkCount: input.communication.missingConversationLinkCount,
+  };
+}
 
 function sameTimestamp(left: Date | null, right: Date | null) {
   if (!left && !right) return true;
@@ -498,6 +536,104 @@ export async function repairLeadConversationBookedSnapshots(input: {
     scannedStates,
     repairableSnapshots,
     repairedSnapshots,
+    samples,
+  };
+}
+
+export async function repairLeadConversationCommunicationState(input: {
+  orgId?: string | null;
+  limit?: number;
+  sampleLimit?: number;
+  apply?: boolean;
+}): Promise<LeadConversationCommunicationRepairResult> {
+  const limit = Math.max(1, Math.min(5000, input.limit || 500));
+  const sampleLimit = Math.max(1, Math.min(100, input.sampleLimit || 25));
+  const apply = input.apply === true;
+  let repairableTimestampStates = 0;
+  let repairedTimestampStates = 0;
+  let repairableConversationLinks = 0;
+  let repairedConversationLinks = 0;
+  const samples: LeadConversationCommunicationRepairResult["samples"] = [];
+
+  const { scannedStates } = await scanLeadConversationStates({
+    orgId: input.orgId || null,
+    limit,
+    async onState(state, related) {
+      const repair = resolveConversationCommunicationRepair({
+        state,
+        communication: related.communication,
+      });
+      const {
+        nextInboundAt,
+        nextOutboundAt,
+        hasTimestampRepair,
+        missingConversationLinkCount: missingLinkCount,
+      } = repair;
+
+      if (!hasTimestampRepair && missingLinkCount === 0) {
+        return;
+      }
+
+      if (hasTimestampRepair) {
+        repairableTimestampStates += 1;
+      }
+      repairableConversationLinks += missingLinkCount;
+
+      if (samples.length < sampleLimit) {
+        samples.push({
+          stateId: state.id,
+          leadId: state.leadId,
+          lastInboundAt: nextInboundAt || state.lastInboundAt,
+          lastOutboundAt: nextOutboundAt || state.lastOutboundAt,
+          missingConversationLinkCount: missingLinkCount,
+        });
+      }
+
+      if (!apply) {
+        return;
+      }
+
+      await prisma.$transaction(async (tx) => {
+        if (hasTimestampRepair) {
+          const updated = await tx.leadConversationState.updateMany({
+            where: {
+              id: state.id,
+              orgId: state.orgId,
+              leadId: state.leadId,
+            },
+            data: {
+              ...(nextInboundAt ? { lastInboundAt: nextInboundAt } : {}),
+              ...(nextOutboundAt ? { lastOutboundAt: nextOutboundAt } : {}),
+            },
+          });
+          if (updated.count === 1) {
+            repairedTimestampStates += 1;
+          }
+        }
+
+        if (missingLinkCount > 0) {
+          const linked = await tx.communicationEvent.updateMany({
+            where: {
+              orgId: state.orgId,
+              leadId: state.leadId,
+              conversationId: null,
+            },
+            data: {
+              conversationId: state.id,
+            },
+          });
+          repairedConversationLinks += linked.count;
+        }
+      });
+    },
+  });
+
+  return {
+    scannedStates,
+    repairableTimestampStates,
+    repairedTimestampStates,
+    repairableConversationLinks,
+    repairedConversationLinks,
     samples,
   };
 }

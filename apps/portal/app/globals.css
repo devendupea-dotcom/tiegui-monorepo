@@ -4198,8 +4198,7 @@ html[data-mobile-mode="1"] .portal-content {
 }
 
 html[data-mobile-mode="1"] .portal-topbar {
-  flex-direction: column;
-  align-items: stretch;
+  align-items: center;
   position: sticky;
   top: 0;
   z-index: 35;
@@ -4212,21 +4211,18 @@ html[data-mobile-mode="1"] .portal-topbar {
 }
 
 html[data-mobile-mode="1"] .portal-topbar-actions {
-  width: 100%;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 8px;
+  width: auto;
+  display: flex;
 }
 
-html[data-mobile-mode="1"] .portal-quick-add-btn,
-html[data-mobile-mode="1"] .theme-toggle,
-html[data-mobile-mode="1"] .locale-toggle {
-  width: 100%;
+html[data-mobile-mode="1"] .portal-topbar-copy,
+html[data-mobile-mode="1"] .portal-topbar .theme-toggle,
+html[data-mobile-mode="1"] .portal-topbar .locale-toggle {
+  display: none;
 }
 
-html[data-mobile-mode="1"] .theme-toggle-btn,
-html[data-mobile-mode="1"] .locale-toggle-btn {
-  flex: 1 1 0;
+html[data-mobile-mode="1"] .portal-quick-add-btn {
+  width: auto;
 }
 
 html[data-mobile-mode="1"] .portal-content .card {
@@ -4282,7 +4278,7 @@ html[data-mobile-mode="1"] .mobile-list-cards {
 }
 
 html[data-mobile-mode="1"] .mobile-action-bar {
-  display: none !important;
+  display: grid;
 }
 
 html[data-mobile-mode="1"] .filters {
@@ -6190,6 +6186,37 @@ html[data-mobile-mode="1"] textarea {
   color: #151515;
 }
 
+.more-destination-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.more-destination-card {
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  padding: 18px;
+  border: 1px solid var(--surface-card-border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.more-destination-card:hover,
+.more-destination-card:focus-visible {
+  border-color: color-mix(in srgb, var(--brand-gold) 62%, var(--surface-card-border));
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.more-destination-card span {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
 .jobcal-day-panel {
   position: fixed;
   right: 24px;
@@ -7596,10 +7623,7 @@ html[data-mobile-mode="1"] textarea {
   }
 
   .portal-sidebar {
-    position: static;
-    max-height: none;
-    border-right: 0;
-    border-bottom: 1px solid rgba(255,255,255,0.2);
+    display: none;
   }
 
   .portal-content {
@@ -7607,8 +7631,7 @@ html[data-mobile-mode="1"] textarea {
   }
 
   .portal-topbar {
-    flex-direction: column;
-    align-items: stretch;
+    align-items: center;
     position: sticky;
     top: 0;
     z-index: 35;
@@ -7620,31 +7643,19 @@ html[data-mobile-mode="1"] textarea {
   }
 
   .portal-quick-add-btn {
-    width: 100%;
+    width: auto;
     justify-content: center;
   }
 
   .portal-topbar-actions {
-    width: 100%;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    width: auto;
+    display: flex;
   }
 
-  .theme-toggle {
-    width: 100%;
-  }
-
-  .theme-toggle-btn {
-    flex: 1 1 0;
-  }
-
-  .locale-toggle {
-    width: 100%;
-  }
-
-  .locale-toggle-btn {
-    flex: 1 1 0;
+  .portal-topbar-copy,
+  .portal-topbar .theme-toggle,
+  .portal-topbar .locale-toggle {
+    display: none;
   }
 
   .next-job-actions .btn {
@@ -7865,12 +7876,30 @@ html[data-mobile-mode="1"] textarea {
     bottom: 0;
     z-index: 70;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--surface-card-border);
     background: color-mix(in srgb, var(--surface) 90%, transparent);
     backdrop-filter: blur(8px);
+  }
+
+  .mobile-action-btn {
+    min-height: 46px;
+    padding: 6px 3px;
+    border-color: transparent;
+    background: transparent;
+    font-size: 0.76rem;
+  }
+
+  .mobile-action-btn.primary {
+    background: color-mix(in srgb, var(--brand-gold) 20%, transparent);
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--brand-gold) 38%, transparent);
+  }
+
+  .more-destination-grid {
+    grid-template-columns: 1fr;
   }
 
   .quicklead-backdrop {

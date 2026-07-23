@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   analyzeLeadConversationIntegrity,
+  resolveConversationCommunicationRepair,
   resolveConservativeBookedSnapshotRepair,
 } from "../lib/lead-conversation-integrity.ts";
 
@@ -121,4 +122,24 @@ test("analyzeLeadConversationIntegrity flags non-booking events linked into book
 
   assert.deepEqual(analysis.issues.map((issue) => issue.kind), ["booked_snapshot_event_not_booking"]);
   assert.equal(analysis.repair.canRepair, false);
+});
+
+test("resolveConversationCommunicationRepair advances stale activity without moving timestamps backward", () => {
+  const repair = resolveConversationCommunicationRepair({
+    state: stateRecord({
+      lastInboundAt: new Date("2026-04-09T10:00:00.000Z"),
+      lastOutboundAt: new Date("2026-04-09T14:00:00.000Z"),
+    }),
+    communication: {
+      latestInboundAt: new Date("2026-04-09T12:00:00.000Z"),
+      latestOutboundAt: new Date("2026-04-09T13:00:00.000Z"),
+      missingConversationLinkCount: 2,
+      latestMissingConversationLinkAt: new Date("2026-04-09T13:30:00.000Z"),
+    },
+  });
+
+  assert.equal(repair.hasTimestampRepair, true);
+  assert.equal(repair.nextInboundAt?.toISOString(), "2026-04-09T12:00:00.000Z");
+  assert.equal(repair.nextOutboundAt, null);
+  assert.equal(repair.missingConversationLinkCount, 2);
 });

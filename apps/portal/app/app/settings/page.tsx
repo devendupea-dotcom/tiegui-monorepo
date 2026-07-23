@@ -2004,7 +2004,9 @@ export default async function ClientSettingsPage(
           {t("settings.subtitle", { organizationName: organization.name })}
         </p>
         <div className="settings-integrations-grid" style={{ marginTop: 12 }}>
-          <article className="settings-integration-card">
+          {scope.internalUser ? (
+            <>
+            <article className="settings-integration-card">
             <strong>{t("settings.integrationGoogle")}</strong>
             <p
               className={`settings-integration-status ${googleConfigured ? "connected" : "warning"}`}
@@ -2053,6 +2055,8 @@ export default async function ClientSettingsPage(
               {settingsCopy.configureIntakeTemplates}
             </a>
           </article>
+            </>
+          ) : null}
 
           <article className="settings-integration-card">
             <strong>{settingsCopy.brandingTitle}</strong>
@@ -2206,22 +2210,38 @@ export default async function ClientSettingsPage(
                   >
                     {twilioStatusLabel}
                   </p>
-                  <p className="muted">{twilioReadinessBody}</p>
-                  {!twilioAutomationReady ? (
+                  {scope.internalUser ? (
+                    <p className="muted">{twilioReadinessBody}</p>
+                  ) : (
+                    <p className="muted">
+                      {twilioAutomationReady
+                        ? "Texting is connected and ready."
+                        : "Texting needs attention. Contact TieGui support for setup help."}
+                    </p>
+                  )}
+                  {scope.internalUser && !twilioAutomationReady ? (
                     <p className="muted">
                       {t("settings.twilioAutomationLocked")}
                     </p>
                   ) : null}
                 </article>
 
-                <label>
-                  {t("settings.outboundNumberLabel")}
+                {scope.internalUser ? (
+                  <label>
+                    {t("settings.outboundNumberLabel")}
+                    <input
+                      name="smsFromNumberE164"
+                      defaultValue={organization.smsFromNumberE164 || ""}
+                      placeholder={t("settings.outboundNumberPlaceholder")}
+                    />
+                  </label>
+                ) : (
                   <input
+                    type="hidden"
                     name="smsFromNumberE164"
-                    defaultValue={organization.smsFromNumberE164 || ""}
-                    placeholder={t("settings.outboundNumberPlaceholder")}
+                    value={organization.smsFromNumberE164 || ""}
                   />
-                </label>
+                )}
 
                 <label>
                   {t("settings.messageLanguageLabel")}

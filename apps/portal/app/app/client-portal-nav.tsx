@@ -180,6 +180,27 @@ const navSections: NavSection[] = [
   },
 ];
 
+const ownerPrimaryLinks: NavLink[] = [
+  navSections[0]!.links[0]!,
+  navSections[0]!.links[1]!,
+  {
+    ...navSections[0]!.links[3]!,
+    labelKey: "schedule",
+  },
+  navSections[0]!.links[2]!,
+  {
+    href: "/app/more",
+    labelKey: "more",
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="5" cy="12" r="1.5" />
+        <circle cx="12" cy="12" r="1.5" />
+        <circle cx="19" cy="12" r="1.5" />
+      </svg>
+    ),
+  },
+];
+
 function withPortalQuery(
   path: string,
   orgId: string | null,
@@ -220,10 +241,16 @@ export default function ClientPortalNav({
   const workerScoped =
     calendarAccessRole === "WORKER" || calendarAccessRole === "READ_ONLY";
   const builderWorkspace = !internalUser && portalVertical === "HOMEBUILDER";
+  const visibleSections = internalUser
+    ? navSections
+    : [{
+        labelKey: "commandSection" as AppNavMessageKey,
+        links: ownerPrimaryLinks,
+      }];
 
   return (
     <nav className="app-nav" aria-label={t("navigationLabel")}>
-      {navSections
+      {visibleSections
         .filter((section) => !section.internalOnly || internalUser)
         .map((section) => (
           <div key={section.labelKey} className="app-nav-section">

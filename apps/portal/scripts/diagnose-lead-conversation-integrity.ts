@@ -10,7 +10,11 @@ function getArgValue(name: string): string | null {
 const envFile = getArgValue("--env-file");
 loadPrismaEnv(envFile || undefined);
 
-const { getLeadConversationIntegrityDiagnostics, repairLeadConversationBookedSnapshots } = await import(
+const {
+  getLeadConversationIntegrityDiagnostics,
+  repairLeadConversationBookedSnapshots,
+  repairLeadConversationCommunicationState,
+} = await import(
   new URL("../lib/lead-conversation-integrity.ts", import.meta.url).href
 );
 
@@ -117,6 +121,24 @@ async function main() {
   for (const sample of repair.samples) {
     console.log(`[diagnose-lead-conversation-integrity] repair ${formatRepairSample(sample)}`);
   }
+
+  const communicationRepair = await repairLeadConversationCommunicationState({
+    orgId: ORG_ID || null,
+    limit: LIMIT,
+    sampleLimit: SAMPLE_LIMIT,
+    apply: APPLY,
+  });
+
+  console.log(
+    [
+      "[diagnose-lead-conversation-integrity]",
+      `communicationRepairMode=${APPLY ? "apply" : "preview"}`,
+      `repairableTimestampStates=${communicationRepair.repairableTimestampStates}`,
+      `repairedTimestampStates=${communicationRepair.repairedTimestampStates}`,
+      `repairableConversationLinks=${communicationRepair.repairableConversationLinks}`,
+      `repairedConversationLinks=${communicationRepair.repairedConversationLinks}`,
+    ].join(" "),
+  );
 }
 
 await main();

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { BillingInvoiceStatus, LeadSourceChannel } from "@prisma/client";
+import type { LeadSourceChannel } from "@prisma/client";
 import {
   DEFAULT_CALENDAR_TIMEZONE,
   addDaysToDateKey,
@@ -11,13 +11,12 @@ import {
 import type { AnalyticsViewer } from "@/lib/portal-analytics";
 import { getRequestLocale, getRequestTranslator } from "@/lib/i18n";
 import { translateStatusLabel } from "@/lib/i18n-labels";
-import { summarizeInvoiceCollectionsOwnerReport } from "@/lib/invoice-collections";
 import { formatCurrency, formatInvoiceNumber } from "@/lib/invoices";
 import { getPortalSummaryMetrics } from "@/lib/portal-analytics";
 import { prisma } from "@/lib/prisma";
 import type { AppScope } from "./_lib/portal-scope";
 import { withOrgQuery } from "./_lib/portal-scope";
-import { KpiCard, PanelCard, StatusPill } from "./dashboard-ui";
+import { PanelCard, StatusPill } from "./dashboard-ui";
 import WorkflowGuidanceCard from "./workflow-guidance-card";
 
 type OwnerCommandCenterProps = {
@@ -25,24 +24,7 @@ type OwnerCommandCenterProps = {
   viewer: AnalyticsViewer;
 };
 
-const COLLECTION_REPORT_STATUSES: BillingInvoiceStatus[] = [
-  "SENT",
-  "PARTIAL",
-  "OVERDUE",
-  "PAID",
-];
-
 type DashboardTranslator = Awaited<ReturnType<typeof getRequestTranslator>>;
-
-function formatNumber(value: number, locale: string): string {
-  return new Intl.NumberFormat(locale).format(value);
-}
-
-function formatMetricValue(value: number, locale: string, maximumFractionDigits = 1): string {
-  return new Intl.NumberFormat(locale, {
-    maximumFractionDigits,
-  }).format(value);
-}
 
 function sourceLabel(channel: LeadSourceChannel, t: DashboardTranslator): string {
   switch (channel) {
@@ -57,20 +39,6 @@ function sourceLabel(channel: LeadSourceChannel, t: DashboardTranslator): string
     default:
       return t("dashboard.owner.sources.other");
   }
-}
-
-function formatResponseTime(value: number | null, locale: string, t: DashboardTranslator): string {
-  if (value === null) return t("dashboard.common.emptyValue");
-  if (value < 1) return t("dashboard.common.lessThanMinute");
-  if (value >= 60) {
-    const hours = value / 60;
-    return t("dashboard.common.hoursShort", {
-      value: formatMetricValue(hours, locale, hours >= 10 ? 0 : 1),
-    });
-  }
-  return t("dashboard.common.minutesShort", {
-    value: formatMetricValue(value, locale, value >= 10 ? 0 : 1),
-  });
 }
 
 function formatDateLabel(value: Date, locale: string): string {
@@ -127,8 +95,6 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
     newestLeads,
     upcomingJobs,
     reviewLeads,
-    organization,
-    collectionReportRows,
     recentFailedCollectionAttempts,
   ] = await Promise.all([
     summaryMonthPromise,
@@ -214,40 +180,6 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
         },
       },
     }),
-    prisma.organization.findUnique({
-      where: { id: scope.orgId },
-      select: {
-        invoiceCollectionsUrgentAfterDays: true,
-        invoiceCollectionsFinalAfterDays: true,
-      },
-    }),
-    prisma.invoice.findMany({
-      where: {
-        orgId: scope.orgId,
-        status: { in: COLLECTION_REPORT_STATUSES },
-      },
-      select: {
-        status: true,
-        amountPaid: true,
-        balanceDue: true,
-        dueDate: true,
-        payments: {
-          select: {
-            amount: true,
-            date: true,
-          },
-        },
-        collectionAttempts: {
-          select: {
-            source: true,
-            outcome: true,
-            createdAt: true,
-          },
-        },
-      },
-      orderBy: [{ dueDate: "asc" }, { updatedAt: "desc" }],
-      take: 500,
-    }),
     prisma.invoiceCollectionAttempt.findMany({
       where: {
         orgId: scope.orgId,
@@ -287,19 +219,10 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
   const calendarHref = withOrgQuery("/app/calendar", scope.orgId, scope.internalUser);
   const invoicesHref = withOrgQuery("/app/invoices", scope.orgId, scope.internalUser);
   const settingsHref = withOrgQuery("/app/settings", scope.orgId, scope.internalUser);
-  const collectionsReport = summarizeInvoiceCollectionsOwnerReport(
-    collectionReportRows,
-    {
-      urgentAfterDays: organization?.invoiceCollectionsUrgentAfterDays ?? 7,
-      finalAfterDays: organization?.invoiceCollectionsFinalAfterDays ?? 21,
-    },
-    now,
-  );
   const allSystemsReady =
     summaryMonth.systemHealth.messaging === "ACTIVE" &&
     summaryMonth.systemHealth.calendar === "CONNECTED" &&
     summaryMonth.systemHealth.integrations === "CONFIGURED";
-  const missedCallRecoveryCount = summaryWeek.missedCallsRecoveredCount || 0;
   const reviewQueueCount = reviewLeads.length;
   const todayLabel = formatDateTimeForDisplay(now, {
     weekday: "long",
@@ -384,29 +307,6 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
             actionHref={inboxHref}
             actionLabel={t("dashboard.owner.leadEngine.action")}
           >
-            <section className="dashboard-kpi-grid" style={{ gridTemplateColumns: missedCallRecoveryCount ? "repeat(3, minmax(0, 1fr))" : "repeat(2, minmax(0, 1fr))" }}>
-              <KpiCard
-                label={t("dashboard.owner.leadEngine.newLeadsLabel")}
-                value={formatNumber(summaryWeek.newLeadsCount, locale)}
-                hint={t("dashboard.owner.leadEngine.newLeadsHint")}
-                href={inboxHref}
-              />
-              <KpiCard
-                label={t("dashboard.owner.leadEngine.responseTimeLabel")}
-                value={formatResponseTime(summaryWeek.avgResponseTimeMinutes, locale, t)}
-                hint={t("dashboard.owner.leadEngine.responseTimeHint")}
-                href={inboxHref}
-              />
-              {missedCallRecoveryCount ? (
-                <KpiCard
-                  label={t("dashboard.owner.leadEngine.recoveredCallsLabel")}
-                  value={formatNumber(missedCallRecoveryCount, locale)}
-                  hint={t("dashboard.owner.leadEngine.recoveredCallsHint")}
-                  href={inboxHref}
-                />
-              ) : null}
-            </section>
-
             {newestLeads.length === 0 ? (
               <div className="dashboard-empty-state">
                 <strong>{t("dashboard.owner.leadEngine.emptyTitle")}</strong>
@@ -534,35 +434,6 @@ export default async function OwnerCommandCenter({ scope, viewer }: OwnerCommand
             actionHref={invoicesHref}
             actionLabel={t("dashboard.owner.collections.action")}
           >
-            <section className="dashboard-kpi-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-              <KpiCard
-                label={t("dashboard.owner.collections.atRiskLabel")}
-                value={formatCurrency(collectionsReport.stillAtRiskTotal)}
-                hint={t("dashboard.owner.collections.atRiskHint")}
-                href={withOrgQuery("/app/invoices?status=OVERDUE", scope.orgId, scope.internalUser)}
-              />
-              <KpiCard
-                label={t("dashboard.owner.collections.recoveredLabel")}
-                value={formatCurrency(collectionsReport.recoveredAfterCollectionTotal)}
-                hint={t("dashboard.owner.collections.recoveredHint")}
-                href={invoicesHref}
-              />
-              <KpiCard
-                label={t("dashboard.owner.collections.finalNoticeLabel")}
-                value={formatCurrency(collectionsReport.escalation.final.balanceDue)}
-                hint={t("dashboard.owner.collections.invoiceCountHint", {
-                  count: collectionsReport.escalation.final.count,
-                })}
-                href={withOrgQuery("/app/invoices?aging=61_plus", scope.orgId, scope.internalUser)}
-              />
-              <KpiCard
-                label={t("dashboard.owner.collections.failedLabel")}
-                value={formatNumber(recentFailedCollectionAttempts.length, locale)}
-                hint={t("dashboard.owner.collections.failedHint")}
-                href={invoicesHref}
-              />
-            </section>
-
             {recentFailedCollectionAttempts.length === 0 ? (
               <div className="dashboard-empty-state">
                 <strong>{t("dashboard.owner.collections.emptyTitle")}</strong>

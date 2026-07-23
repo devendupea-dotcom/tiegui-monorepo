@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 function withPortalQuery(path: string, orgId: string | null, mobileMode: boolean): string {
   if (!orgId && !mobileMode) {
@@ -19,39 +19,37 @@ function withPortalQuery(path: string, orgId: string | null, mobileMode: boolean
 }
 
 export default function MobileActionBar() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const orgId = searchParams.get("orgId");
   const mobileMode = searchParams.get("mobile") === "1";
 
-  function openQuickAdd() {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("quickAdd", "1");
-    if (orgId) {
-      params.set("orgId", orgId);
-    }
-    if (mobileMode) {
-      params.set("mobile", "1");
-    }
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }
-
-  const scheduleHref = withPortalQuery("/app/calendar?quickAction=schedule", orgId, mobileMode);
-  const blockHref = withPortalQuery("/app/calendar?quickAction=block", orgId, mobileMode);
+  const links = [
+    { href: "/app", label: "Today" },
+    { href: "/app/inbox", label: "Inbox" },
+    { href: "/app/calendar", label: "Schedule" },
+    { href: "/app/jobs", label: "Jobs" },
+    { href: "/app/more", label: "More" },
+  ];
 
   return (
-    <nav className="mobile-action-bar" aria-label="Quick actions">
-      <button type="button" className="mobile-action-btn primary" onClick={openQuickAdd}>
-        +Lead
-      </button>
-      <Link className="mobile-action-btn" href={scheduleHref} prefetch={false}>
-        +Schedule
-      </Link>
-      <Link className="mobile-action-btn" href={blockHref} prefetch={false}>
-        +Block Time
-      </Link>
+    <nav className="mobile-action-bar" aria-label="Primary navigation">
+      {links.map((link) => {
+        const active = link.href === "/app"
+          ? pathname === "/app"
+          : pathname === link.href || pathname.startsWith(`${link.href}/`);
+        return (
+          <Link
+            key={link.href}
+            className={`mobile-action-btn ${active ? "primary" : ""}`}
+            href={withPortalQuery(link.href, orgId, mobileMode)}
+            prefetch={false}
+            aria-current={active ? "page" : undefined}
+          >
+            {link.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }

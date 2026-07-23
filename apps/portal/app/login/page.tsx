@@ -28,7 +28,7 @@ export default function LoginPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSubmitting, setPasswordSubmitting] = useState(false);
-  const [nextPath, setNextPath] = useState("/");
+  const [nextPath, setNextPath] = useState("/app");
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [showRequestAccess, setShowRequestAccess] = useState(false);
   const [requestName, setRequestName] = useState("");
@@ -38,7 +38,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setNextPath(sanitizeRedirectPath(params.get("next"), "/"));
+    setNextPath(sanitizeRedirectPath(params.get("next"), "/app"));
     setErrorCode(params.get("error"));
   }, []);
 
@@ -106,8 +106,8 @@ export default function LoginPage() {
   return (
     <main className="page auth-surface">
       <section className="auth-card">
-        <h1>Client Command Center</h1>
-        <p className="muted">Invite-only access for active TieGui clients.</p>
+        <h1>Sign in to TieGui</h1>
+        <p className="muted">Manage customers, messages, jobs, and your schedule.</p>
         <form onSubmit={handlePasswordSignIn} className="auth-form">
           <label>
             Email
@@ -162,7 +162,7 @@ export default function LoginPage() {
           </div>
 
           <button className="btn primary" type="submit" disabled={passwordSubmitting}>
-            {passwordSubmitting ? "Signing in…" : "Access Dashboard"}
+            {passwordSubmitting ? "Signing in…" : "Sign in"}
           </button>
           <p className="form-status">
             New here? We’ll send you a temporary password when your account is created — you can change it after your

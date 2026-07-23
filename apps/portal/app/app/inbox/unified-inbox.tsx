@@ -1237,8 +1237,6 @@ export default function UnifiedInbox({
   const spamThreadsCount = searchedConversations.filter((row) =>
     matchesInboxLane(row, "spam"),
   ).length;
-  const sentMessagesCount = outboundMessages.length;
-
   const leadTitle =
     leadContext?.contactName?.trim() ||
     leadContext?.businessName?.trim() ||
@@ -1271,42 +1269,6 @@ export default function UnifiedInbox({
           </Link>
         ) : null}
       </div>
-
-      {!loadingList && !listError && !emptyState ? (
-        <div className="inbox-summary-strip">
-          <article className="inbox-summary-stat">
-            <span>{copy.activeThreads}</span>
-            <strong>
-              {lane === "sent"
-                ? filteredOutboundMessages.length
-                : filteredConversations.length}
-            </strong>
-            <small>
-              {lane === "sent" ? copy.sentMessagesBody : copy.activeThreadsBody}
-            </small>
-          </article>
-          <article className="inbox-summary-stat">
-            <span>{copy.unread}</span>
-            <strong>{unreadThreadsCount}</strong>
-            <small>{copy.unreadBody}</small>
-          </article>
-          <article className="inbox-summary-stat">
-            <span>{copy.needsAttention}</span>
-            <strong>{attentionThreadsCount}</strong>
-            <small>{copy.needsAttentionBody}</small>
-          </article>
-          <article className="inbox-summary-stat">
-            <span>{copy.sentMessages}</span>
-            <strong>{sentMessagesCount}</strong>
-            <small>{copy.sentMessagesBody}</small>
-          </article>
-          <article className="inbox-summary-stat">
-            <span>{copy.spamReview}</span>
-            <strong>{spamThreadsCount}</strong>
-            <small>{copy.spamReviewBody}</small>
-          </article>
-        </div>
-      ) : null}
 
       {loadingList ? (
         <p className="muted" style={{ marginTop: 12 }}>
@@ -1378,13 +1340,6 @@ export default function UnifiedInbox({
                       onClick={() => setLane("attention")}
                     >
                       {copy.laneAttention}
-                    </button>
-                    <button
-                      className={`btn ${lane === "sent" ? "primary" : "secondary"}`}
-                      type="button"
-                      onClick={() => setLane("sent")}
-                    >
-                      {copy.laneSent}
                     </button>
                     <button
                       className={`btn ${lane === "spam" ? "primary" : "secondary"}`}
@@ -1535,39 +1490,26 @@ export default function UnifiedInbox({
                             </div>
 
                             <div className="inbox-thread-badges">
-                              <span
-                                className={`badge status-${row.status.toLowerCase()}`}
-                              >
-                                {formatLabel(row.status)}
-                              </span>
-                              <span
-                                className={`badge priority-${row.priority.toLowerCase()}`}
-                              >
-                                {formatLabel(row.priority)}
-                              </span>
-                              <span className={`badge ${sourceClass}`}>
-                                {formatLabel(row.sourceType)}
-                              </span>
-                              {overdueFollowUp ? (
+                              {row.failedOutboundCount > 0 ? (
                                 <span className="badge status-overdue">
-                                  {copy.overdue}
+                                  {copy.failedSms}
                                 </span>
-                              ) : null}
-                              {row.atRisk ? (
-                                <span className="badge status-overdue">
-                                  {copy.atRisk}
-                                </span>
-                              ) : null}
-                              {row.potentialSpam ? (
+                              ) : row.potentialSpam ? (
                                 <span className="badge status-overdue">
                                   {copy.potentialSpam}
                                 </span>
-                              ) : null}
-                              {row.failedOutboundCount > 0 ? (
+                              ) : row.unreadCount ? (
+                                <span className="badge status-active">
+                                  {copy.unread}
+                                </span>
+                              ) : overdueFollowUp || row.atRisk ? (
                                 <span className="badge status-overdue">
-                                  {copy.failedSms}: {row.failedOutboundCount}
+                                  {copy.needsAttention}
                                 </span>
                               ) : null}
+                              <span className={`badge ${sourceClass}`}>
+                                {formatLabel(row.sourceType)}
+                              </span>
                             </div>
 
                             <p
